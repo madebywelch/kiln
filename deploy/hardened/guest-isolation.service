@@ -1,0 +1,12 @@
+[Unit]
+Description=Block KILN workload access to other tailnet devices
+After=network-pre.target
+Before=docker.service tailscaled.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/nft -f /etc/kiln/guest-isolation.nft
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,34 @@
+name: Feature request
+description: Propose a focused change to KILN
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        KILN is deliberately small and issue-first. Explain the problem first,
+        then the smallest change that solves it. A maintainer implements accepted
+        changes; do not open a pull request.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What can you not do today, and why does it matter?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: Describe the behavior, API, or workflow fields you want.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Existing primitives, configuration, or external tools you tried.
+  - type: textarea
+    id: risks
+    attributes:
+      label: Scope and risks
+      description: Does this affect durability, trust boundaries, concurrency, publication, or backward compatibility?

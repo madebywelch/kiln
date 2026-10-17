@@ -1,0 +1,42 @@
+version: 1
+name: scoped-dependency-update
+repository:
+  github: OWNER/REPO
+  base: main
+entry: start
+exit: end
+max_steps: 12
+nodes:
+  start:
+    type: start
+    next: {success: update}
+  update:
+    type: agent
+    provider: openrouter
+    model: deepseek/deepseek-v3.2
+    skills: [dependency-maintenance]
+    mcp: [docs]
+    timeout: 10m
+    max_visits: 2
+    prompt: |
+      Update compatible Go dependencies, consulting the selected documentation MCP
+      server as needed. Follow the dependency-maintenance skill. Preserve public
+      behavior, update go.mod/go.sum, and run the tests. Do not publish anything.
+      {{ with index .outputs "test" }}Previous test output: {{ .output }}{{ end }}
+    next: {success: test}
+  test:
+    type: command
+    command: go test ./...
+    max_visits: 2
+    next: {success: approve, failure: update}
+  approve:
+    type: human
+    prompt: 'Tests passed. Accept this workspace for inspection?'
+    choices: [accept, reject]
+    next: {accept: end, reject: rejected}
+  rejected:
+    type: command
+    command: exit 1
+    next: {success: end}
+  end:
+    type: end

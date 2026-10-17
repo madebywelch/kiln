@@ -1,0 +1,24 @@
+listen: 0.0.0.0:8741
+# Only the container loopback-published port is exposed to the guest.
+data_dir: /data/state
+workers: 2
+token_env: KILN_TOKEN
+webhook_secret_env: KILN_GITHUB_WEBHOOK_SECRET
+allow_local_repositories: false
+inherit_env:
+  - MISE_DATA_DIR
+  - MISE_CACHE_DIR
+  - CARGO_HOME
+  - RUSTUP_HOME
+  - GOMODCACHE
+  - GOCACHE
+  - COREPACK_HOME
+  - COREPACK_ENABLE_DOWNLOAD_PROMPT
+  - npm_config_cache
+  - PIP_CACHE_DIR
+cache_dirs:
+  - /data/cache
+providers:
+  openrouter:
+    url: https://openrouter.ai/api/v1
+    key_env: OPENROUTER_API_KEY

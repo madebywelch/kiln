@@ -1,0 +1,20 @@
+add table inet kiln_tailnet_isolation
+flush table inet kiln_tailnet_isolation
+table inet kiln_tailnet_isolation {
+  # Normal operation uses --tun=userspace-networking with no tailscale0.
+  # Fail closed if TUN mode is accidentally restored; native VM services must
+  # never become reachable through the tailnet.
+  chain input {
+    type filter hook input priority -20; policy accept;
+    iifname "tailscale0" drop
+  }
+  # Workflows must not acquire a kernel route to private tailnet services.
+  chain output {
+    type filter hook output priority -20; policy accept;
+    oifname "tailscale0" reject
+  }
+  chain forward {
+    type filter hook forward priority -20; policy accept;
+    oifname "tailscale0" reject
+  }
+}

@@ -1,0 +1,34 @@
+# KILN runtime state and local evidence
+.kiln/
+.firecrawl/
+coverage.out
+coverage.html
+*.log
+
+# Build output
+bin/
+dist/
+kiln
+*.test
+
+# Agent runtimes
+harness/node_modules/
+node_modules/
+
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Python
+__pycache__/
+*.pyc
+.venv/

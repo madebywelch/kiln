@@ -1,0 +1,32 @@
+version: 1
+name: repair-demo
+description: A deterministic failing build, repair loop, and durable human gate.
+entry: start
+exit: end
+max_steps: 20
+nodes:
+  start:
+    type: start
+    next: {success: build}
+  build:
+    type: command
+    command: |
+      test -f fixed || { echo "Missing fix"; exit 1; }
+      echo "Build passed"
+    max_visits: 3
+    next: {success: review, failure: repair}
+  repair:
+    type: command
+    command: touch fixed
+    next: {success: build}
+  review:
+    type: human
+    prompt: "Build result: {{ .outputs.build.output }}. Approve?"
+    choices: [approve, revise, reject]
+    next: {approve: end, revise: repair, reject: rejected}
+  rejected:
+    type: command
+    command: echo "Rejected by operator"; exit 1
+    next: {success: end}
+  end:
+    type: end

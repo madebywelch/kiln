@@ -1,0 +1,34 @@
+services:
+  kiln:
+    image: ${KILN_IMAGE:?Set KILN_IMAGE to the deployed image ID}
+    container_name: kiln
+    init: true
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8741:8741"
+    env_file:
+      - /etc/kiln/credentials.env
+    environment:
+      HOME: /data/home
+      CODEX_HOME: /data/codex
+    volumes:
+      - /var/lib/kiln:/data
+      - /etc/kiln/server.yaml:/etc/kiln/server.yaml:ro
+    read_only: true
+    tmpfs:
+      # Executable: toolchain installers and Go test binaries run from /tmp.
+      - /tmp:rw,exec,nosuid,nodev,size=512m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=/etc/kiln/seccomp.json
+      - apparmor=kiln-container
+    mem_limit: 2g
+    cpus: 3
+    pids_limit: 256
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

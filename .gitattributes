@@ -1,0 +1,12 @@
+* text=auto eol=lf
+
+*.go text diff=golang
+*.yaml text
+*.yml text
+*.md text
+*.sh text eol=lf
+*.py text eol=lf
+
+docs/openapi.json linguist-generated=true
+bin/** linguist-vendored
+testdata/** linguist-documentation=false

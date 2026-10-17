@@ -1,0 +1,107 @@
+version: 1
+name: interval-repair
+entry: start
+exit: end
+max_steps: 30
+repository:
+  github: OWNER/REPO
+  base: main
+inputs:
+  goal: Repair merge_intervals without changing its tests.
+nodes:
+  start:
+    type: start
+    next: {success: plan}
+  plan:
+    type: llm
+    provider: openrouter
+    model: deepseek/deepseek-v3.2
+    max_tokens: 1024
+    timeout: 2m
+    prompt: |
+      In at most 120 words, plan this Python task: {{ .inputs.goal }}
+      merge_intervals takes a list of [start, end] integer pairs with start <= end.
+      Return sorted merged intervals, merging touching endpoints too.
+      Handle empty, unsorted, negative, nested, duplicate, and point intervals.
+      Do not mutate or alias any input lists. Use only the standard library.
+    next: {success: build}
+  build:
+    type: command
+    command: python3 -m unittest -v
+    timeout: 30s
+    max_visits: 4
+    next: {success: reviewer, failure: repair}
+  repair:
+    type: agent
+    provider: openrouter
+    model: deepseek/deepseek-v3.2
+    timeout: 8m
+    max_visits: 3
+    prompt: |
+      Read intervals.py and test_intervals.py, then repair merge_intervals in place.
+      Only modify intervals.py. Do not change tests or create additional repository files.
+      Run python3 -m unittest -v to verify your changes. Use Python stdin for extra
+      checks, not scratch files. Once tests pass, finish with a brief summary.
+      Merge touching endpoints. Handle empty, unsorted, negative, nested, duplicate,
+      and point intervals. Do not mutate or alias inputs. Use the standard library.
+      Plan: {{ .outputs.plan.output }}
+      Last test output: {{ .outputs.build.output }}
+      {{ with index .outputs "review_verdict" }}Reviewer: {{ .output }}{{ end }}
+      {{ with index .outputs "candidate" }}Publication validation: {{ .error }} {{ .output }}{{ end }}
+      {{ with .decision }}Operator: {{ .comment }}{{ end }}
+    next: {success: build}
+  reviewer:
+    type: agent
+    timeout: 5m
+    max_visits: 3
+    provider: codex
+    model: gpt-6-sol
+    prompt: |
+      Review intervals.py against test_intervals.py. Read both files, inspect correctness,
+      edge cases, input mutation, and output aliasing. You may run the tests.
+      Do not modify any files or create commits. Your final answer must be ONLY JSON
+      with two fields: approved (boolean, true only if correct), and notes (concise string).
+      No Markdown fences.
+      Do not add attribution, signatures, or tool links.
+    next: {success: review_verdict, failure: review_failure}
+  review_verdict:
+    type: command
+    command: |
+      python3 -c 'import json, os; c=json.load(open(os.environ["KILN_CONTEXT_FILE"])); r=json.loads(c["outputs"]["reviewer"]["output"]); print(r["notes"]); raise SystemExit(0 if r["approved"] is True else 1)'
+    next: {success: candidate, failure: repair}
+  review_failure:
+    type: human
+    prompt: 'Reviewer failed: {{ .outputs.reviewer.error }}. Retry or stop?'
+    choices: [retry, stop]
+    next: {retry: reviewer, stop: rejected}
+  candidate:
+    type: changeset
+    files: [intervals.py]
+    command: python3 -m unittest -v
+    title: 'fix(intervals): merge without mutating inputs'
+    body: |
+      Merge overlapping and touching intervals while preserving the caller's lists.
+      Handle empty input, negative ranges, duplicates, and point intervals.
+
+      Validation: eight unittest cases pass in a clean candidate checkout;
+      independent model review completed.
+    next: {success: approval, failure: repair}
+  approval:
+    type: human
+    prompt: |
+      Candidate {{ .run.candidate.commit_sha }} passed clean-checkout tests.
+      Reviewer verdict: {{ .outputs.review_verdict.output }}
+      Create a draft PR, request another repair, or reject?
+    choices: [approve, revise, reject]
+    next: {approve: publish, revise: repair, reject: rejected}
+  publish:
+    type: pull_request
+    draft: true
+    timeout: 2m
+    next: {success: end}
+  rejected:
+    type: command
+    command: echo 'Stopped by operator'; exit 1
+    next: {success: end}
+  end:
+    type: end

@@ -1,0 +1,24 @@
+listen: 127.0.0.1:8741
+data_dir: .kiln
+workers: 4
+token_env: KILN_TOKEN
+webhook_secret_env: KILN_GITHUB_WEBHOOK_SECRET
+allow_local_repositories: false
+# Daemon variables forwarded to every command and agent, in addition to PATH
+# and LANG. Every run gets a private HOME and TMPDIR regardless.
+# inherit_env: [CARGO_HOME, GOMODCACHE, GOCACHE]
+# Shared toolchain caches outside any run; the Codex sandbox may write there.
+# cache_dirs: [/var/cache/kiln]
+# Pi-backed nodes may explicitly select registered MCP names.
+# mcp_servers:
+#   docs:
+#     url: https://docs.example.com/mcp
+#     headers:
+#       Authorization: Bearer ${DOCS_TOKEN}
+providers:
+  openrouter:
+    url: https://openrouter.ai/api/v1
+    key_env: OPENROUTER_API_KEY
+  # A second OpenAI-compatible provider can be configured independently.
+  # local:
+  #   url: http://127.0.0.1:1234/v1

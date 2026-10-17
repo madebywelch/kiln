@@ -1,0 +1,57 @@
+name: Bug report
+description: Report a reproducible defect in KILN
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include bearer tokens, provider keys, private source code, or
+        personal infrastructure details. Report security issues privately via
+        the Security tab, not here.
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Output of `kiln version`, or the commit SHA.
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installation
+      options:
+        - Native binary
+        - Docker image
+        - Built from source
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: A minimal workflow, API request, or repository fixture that reproduces the problem.
+      placeholder: |
+        1. Register this workflow: ...
+        2. Submit a run with: ...
+        3. Observe: ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include the run status, last attempt, and relevant structured log lines with secrets removed.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Go/container version, and agent runtime versions.

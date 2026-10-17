@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Contribution policy
+    url: https://github.com/madebywelch/kiln/blob/main/CONTRIBUTING.md
+    about: KILN is issue-first. Do not open unsolicited pull requests.
+  - name: Security report
+    url: https://github.com/madebywelch/kiln/security/advisories/new
+    about: Report vulnerabilities privately; do not open a public issue.

@@ -1,0 +1,10 @@
+{
+  "name": "kiln-agent-runtimes",
+  "private": true,
+  "version": "0.1.0",
+  "engines": { "node": ">=22.19.0" },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "1.2.0",
+    "@openai/codex": "0.162.1"
+  }
+}

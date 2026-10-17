@@ -1,0 +1,19 @@
+[Unit]
+Description=Publish the authenticated KILN API through Tailscale Funnel
+Requires=kiln.service tailscaled.service
+PartOf=kiln.service tailscaled.service
+After=kiln.service tailscaled.service network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/tailscale funnel --bg --https=443 http://127.0.0.1:8741
+ExecStop=/usr/bin/tailscale funnel --https=443 off
+Restart=on-failure
+RestartSec=30
+TimeoutStartSec=20
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

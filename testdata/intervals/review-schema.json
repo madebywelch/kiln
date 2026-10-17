@@ -1,0 +1,16 @@
+{
+  "type": "object",
+  "properties": {
+    "approved": {
+      "type": "boolean"
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "approved",
+    "notes"
+  ],
+  "additionalProperties": false
+}

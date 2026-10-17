@@ -1,0 +1,77 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.2'
+          cache: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.19.0'
+          cache: npm
+          cache-dependency-path: harness/package-lock.json
+      - run: npm ci --prefix harness
+      - run: PATH="$PWD/harness/node_modules/.bin:$PATH" KILN_PI_INTEGRATION=1 make check
+      - run: make schema && git diff --exit-code -- docs/openapi.json
+      - run: make release VERSION=0.1.0
+      - uses: actions/upload-artifact@v7
+        with:
+          name: binaries
+          path: bin/
+
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - run: make docker-test
+      - name: Prepare native Codex sandbox profiles
+        run: |
+          mkdir -p .kiln/sandbox
+          python3 deploy/hardened/prepare-seccomp.py .kiln/sandbox/seccomp.json
+          sudo apparmor_parser -r deploy/hardened/apparmor.profile
+      - run: docker build -t kiln:0.1.0 .
+      - run: python3 scripts/container_smoke.py --sandbox --network --seccomp "$PWD/.kiln/sandbox/seccomp.json"
+
+  secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  vulnerabilities:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.2'
+          cache: true
+      - uses: golang/govulncheck-action@v1
+        with:
+          go-package: ./...

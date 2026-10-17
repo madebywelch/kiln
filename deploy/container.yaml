@@ -1,0 +1,25 @@
+listen: 0.0.0.0:8741
+data_dir: /data/state
+workers: 4
+token_env: KILN_TOKEN
+webhook_secret_env: KILN_GITHUB_WEBHOOK_SECRET
+# Image-provided toolchain and cache locations reach every command and agent.
+# Every run still gets its own private HOME and TMPDIR.
+inherit_env:
+  - MISE_DATA_DIR
+  - MISE_CACHE_DIR
+  - CARGO_HOME
+  - RUSTUP_HOME
+  - GOMODCACHE
+  - GOCACHE
+  - COREPACK_HOME
+  - COREPACK_ENABLE_DOWNLOAD_PROMPT
+  - npm_config_cache
+  - PIP_CACHE_DIR
+# Shared caches that builds inside the Codex sandbox may write to.
+cache_dirs:
+  - /data/cache
+providers:
+  openrouter:
+    url: https://openrouter.ai/api/v1
+    key_env: OPENROUTER_API_KEY

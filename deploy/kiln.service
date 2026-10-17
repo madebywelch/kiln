@@ -1,0 +1,27 @@
+[Unit]
+Description=KILN software workflow daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kiln
+Group=kiln
+WorkingDirectory=/var/lib/kiln
+StateDirectory=kiln
+EnvironmentFile=/etc/kiln/credentials.env
+ExecStart=/usr/local/bin/kiln serve -config /etc/kiln/server.yaml
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/kiln
+Environment=HOME=/var/lib/kiln
+
+[Install]
+WantedBy=multi-user.target

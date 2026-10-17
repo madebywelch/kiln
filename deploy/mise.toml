@@ -1,0 +1,20 @@
+# Default toolchains for every run. Installed read-only into the image as mise
+# system installs. A repository's own pins (.node-version, .nvmrc, package.json
+# packageManager, go.mod toolchain, rust-toolchain.toml, .python-version,
+# .tool-versions, mise.toml) override these and are installed on first use into
+# the shared cache volume. Rust defaults to the image's /opt/rust binaries;
+# mise only steps in for a pinned rust-toolchain.toml.
+[tools]
+node = "24.21.0"
+pnpm = "10.33.0"
+go = "1.27.2"
+
+[settings]
+idiomatic_version_file_enable_tools = ["node", "pnpm", "yarn", "bun", "go", "rust", "python", "zig"]
+# A go.mod `go` directive is a minimum, not the build version; Go itself
+# upgrades through GOTOOLCHAIN=auto when a module requires something newer.
+idiomatic_version_file_ignore_minimum_versions = true
+# Worktrees live under the data directory; their configuration is trusted
+# because the same repository's commands already run with this account.
+trusted_config_paths = ["/data/state"]
+yes = true
