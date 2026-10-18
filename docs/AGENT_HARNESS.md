@@ -15,7 +15,7 @@ Pi Durable is not used: it is experimental, and conversation durability would no
 - Pi uses a conservative 32K context window, 8K maximum output per model response, thinking off, and no automatic transport retries. KILN bounds its observed assistant messages to 100 and raw transcript to 32 MiB. Node timeouts bound both backends.
 - Plans, scratch files, logs and temporary reports belong in `KILN_ARTIFACT_DIR`, not the repository. Agent instructions request this; changeset classification and separate publication ancestry enforce the publication boundary even if an agent leaves residue.
 - Git checkpoints are private and always enabled for repository runs. Agents are instructed not to commit or publish; the graph owns those operations.
-- In a [sandbox](WORKFLOWS.md#sandbox) workflow, Pi runs inside the run's boat.dev machine from that machine's `PATH`, with the same private per-attempt configuration written there. Codex nodes stay on the daemon host and are rejected in such workflows.
+- In a [sandbox](WORKFLOWS.md#sandbox) workflow, Pi runs inside the run's remote machine (boat.dev or agent37) from that machine's `PATH`, with the same private per-attempt configuration written there. Codex nodes stay on the daemon host and are rejected in such workflows.
 
 ## Select resources per node
 

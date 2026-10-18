@@ -23,29 +23,48 @@ import (
 // provider. Workflows reference the provider by name and never see the key.
 type SandboxProvider struct {
 	URL         string `yaml:"url,omitempty" json:"url,omitempty"`
+	ExecURL     string `yaml:"exec_url,omitempty" json:"exec_url,omitempty"`
 	KeyEnv      string `yaml:"key_env,omitempty" json:"key_env,omitempty"`
 	IdleTimeout string `yaml:"idle_timeout,omitempty" json:"idle_timeout,omitempty"`
 }
 
-var idPattern = regexp.MustCompile("^[0-9a-f]{32}$")
-
-const boatDefaultURL = "https://boat.dev/api/v1"
-const boatDefaultKeyEnv = "BOAT_API_KEY"
 const sandboxDefaultIdle = time.Hour
 const sandboxMaxTTL = 30 * 24 * time.Hour
+
+var idPattern = regexp.MustCompile("^[0-9a-f]{32}$")
 
 // sandboxPoll paces state polling after create, resume and stop.
 var sandboxPoll = 2 * time.Second
 
+var sandboxProviders = map[string]struct{ url, keyEnv string }{
+	"boat":    {boatDefaultURL, boatDefaultKeyEnv},
+	"agent37": {agent37DefaultURL, agent37DefaultKeyEnv},
+}
+
+func validateAPIURL(field, raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("%s must be an http(s) base URL without credentials, query or fragment", field)
+	}
+	return nil
+}
+
 func ValidateSandboxes(providers map[string]SandboxProvider) error {
 	for name, p := range providers {
-		if name != "boat" {
-			return fmt.Errorf("sandboxes: unsupported provider %q; boat is the only provider", name)
+		if _, ok := sandboxProviders[name]; !ok {
+			return fmt.Errorf("sandboxes: unsupported provider %q; boat and agent37 are the providers", name)
 		}
 		if p.URL != "" {
-			u, err := url.Parse(p.URL)
-			if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-				return fmt.Errorf("sandboxes.%s: url must be an http(s) base URL without credentials, query or fragment", name)
+			if err := validateAPIURL("sandboxes."+name+".url", p.URL); err != nil {
+				return err
+			}
+		}
+		if p.ExecURL != "" {
+			if name != "agent37" {
+				return fmt.Errorf("sandboxes.%s: exec_url applies to agent37 only", name)
+			}
+			if err := validateAPIURL("sandboxes."+name+".exec_url", p.ExecURL); err != nil {
+				return err
 			}
 		}
 		if p.KeyEnv != "" && !envPattern.MatchString(p.KeyEnv) {
@@ -69,17 +88,34 @@ func (p SandboxProvider) idle() time.Duration {
 	return d
 }
 
-func (x *Executor) boat(r Run) (*boatClient, SandboxProvider, error) {
+// machine is one provider's transport to a run's remote computer. The sync
+// protocol, the runner script, the lease, and the lifecycle policy are shared;
+// a provider supplies creation, readiness, short synchronous scripts, a
+// detached node process with streamed output, file transfer, stop and delete.
+type machine interface {
+	create(ctx context.Context, r Run, idle time.Duration) (*SandboxState, error)
+	ready(ctx context.Context, r Run, idle time.Duration) error
+	exec(ctx context.Context, r Run, script string, timeout time.Duration) (string, error)
+	launch(ctx context.Context, r Run, l remoteLayout, attempt string, stdout, stderr func([]byte) error) (wait func() (int, error), kill func(), err error)
+	upload(ctx context.Context, r Run, path string, data []byte) error
+	download(ctx context.Context, r Run, path string, limit int64) ([]byte, error)
+	stop(ctx context.Context, r Run) error
+	remove(ctx context.Context, r Run) error
+}
+
+func (x *Executor) machine(r Run) (machine, SandboxProvider, error) {
 	if r.Workflow.Sandbox == nil {
 		return nil, SandboxProvider{}, errors.New("workflow has no sandbox")
 	}
-	p, ok := x.Sandboxes[r.Workflow.Sandbox.Provider]
+	name := r.Workflow.Sandbox.Provider
+	p, ok := x.Sandboxes[name]
 	if !ok {
-		return nil, SandboxProvider{}, fmt.Errorf("sandbox provider %q is not configured", r.Workflow.Sandbox.Provider)
+		return nil, SandboxProvider{}, fmt.Errorf("sandbox provider %q is not configured", name)
 	}
+	defaults := sandboxProviders[name]
 	keyEnv := p.KeyEnv
 	if keyEnv == "" {
-		keyEnv = boatDefaultKeyEnv
+		keyEnv = defaults.keyEnv
 	}
 	key := os.Getenv(keyEnv)
 	if key == "" {
@@ -87,13 +123,22 @@ func (x *Executor) boat(r Run) (*boatClient, SandboxProvider, error) {
 	}
 	base := p.URL
 	if base == "" {
-		base = boatDefaultURL
+		base = defaults.url
 	}
 	client := x.HTTP
 	if client == nil {
 		client = &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	}
-	return &boatClient{base: base, key: key, http: client}, p, nil
+	switch name {
+	case "boat":
+		return &boatMachine{client: &boatClient{base: base, key: key, http: client}}, p, nil
+	default:
+		execURL := p.ExecURL
+		if execURL == "" {
+			execURL = agent37DefaultExecURL
+		}
+		return &agent37Machine{client: &agent37Client{base: base, exec: execURL, key: key, http: client}}, p, nil
+	}
 }
 
 // remoteLayout places every run file under one directory in the sandbox
@@ -138,127 +183,49 @@ func shQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) 
 // even on failure, so a retried preparation reuses the recorded sandbox and the
 // idempotency key covers a lost create response.
 func (x *Executor) prepareSandbox(ctx context.Context, r Run) (Run, error) {
-	client, provider, err := x.boat(r)
+	m, provider, err := x.machine(r)
 	if err != nil {
 		return r, err
 	}
-	idle := int(provider.idle() / time.Second)
 	if r.Sandbox == nil {
-		spec := r.Workflow.Sandbox
-		s, err := client.create(ctx, boatCreateRequest{Type: spec.Type, From: spec.Snapshot, TTLSeconds: idle, NoEnv: true, Monitoring: false, Env: map[string]string{"KILN_RUN_ID": r.ID}}, "kiln-run-"+r.ID)
+		state, err := m.create(ctx, r, provider.idle())
 		if err != nil {
 			return r, fmt.Errorf("create sandbox: %w", err)
 		}
-		r.Sandbox = &SandboxState{Provider: spec.Provider, ID: s.ID, Type: s.Type}
-		slog.Info("sandbox created", "run_id", r.ID, "sandbox", s.ID, "type", s.Type)
+		r.Sandbox = state
+		slog.Info("sandbox created", "run_id", r.ID, "provider", state.Provider, "sandbox", state.ID, "type", state.Type)
 	}
-	if err := x.ensureRunning(ctx, client, provider, r); err != nil {
+	if err := m.ready(ctx, r, provider.idle()); err != nil {
 		return r, err
 	}
 	if r.Sandbox.Home == "" {
-		out, err := client.run(ctx, r.Sandbox.ID, `printf '%s' "$HOME"`, time.Minute)
+		home, err := m.exec(ctx, r, `printf '%s' "$HOME"`, time.Minute)
 		if err != nil {
 			return r, fmt.Errorf("query sandbox home: %w", err)
 		}
-		home := strings.TrimSpace(out.Stdout)
-		if out.ExitCode == nil || *out.ExitCode != 0 || !strings.HasPrefix(home, "/") || strings.ContainsAny(home, "'\n\x00") {
-			return r, fmt.Errorf("sandbox did not report an absolute home directory: %q %s", home, out.Stderr)
+		home = strings.TrimSpace(home)
+		if !strings.HasPrefix(home, "/") || strings.ContainsAny(home, "'\n\x00") {
+			return r, fmt.Errorf("sandbox did not report an absolute home directory: %q", home)
 		}
 		r.Sandbox.Home = home
 	}
 	l := layoutFor(r)
 	setup := "set -eu\nmkdir -p " + shQuote(l.root+"/sync") + " " + shQuote(l.root+"/attempts") + " " + shQuote(l.root+"/agents") + " " + shQuote(l.artifacts()) + " " + shQuote(l.work()) + "\n"
-	if _, err := x.remoteScript(ctx, client, r, setup, 2*time.Minute); err != nil {
+	if _, err := m.exec(ctx, r, setup, 2*time.Minute); err != nil {
 		return r, err
 	}
 	if r.Workflow.Repository != nil {
-		if err := x.pushWorkspace(ctx, client, r, l, l.work(), false, nil, nil); err != nil {
+		if err := x.pushWorkspace(ctx, m, r, l, l.work(), false, nil, nil); err != nil {
 			return r, fmt.Errorf("seed sandbox repository: %w", err)
 		}
 	}
 	return r, nil
 }
 
-// ensureRunning brings the machine to a command-accepting state and moves its
-// auto-stop deadline past the current operation. Error states are reported,
-// not papered over: the operator decides whether to recover or start over.
-func (x *Executor) ensureRunning(ctx context.Context, client *boatClient, provider SandboxProvider, r Run) error {
-	id := r.Sandbox.ID
-	ttl := provider.idle()
-	if deadline, ok := ctx.Deadline(); ok {
-		ttl += time.Until(deadline) + 10*time.Minute
-	}
-	if ttl > sandboxMaxTTL {
-		ttl = sandboxMaxTTL
-	}
-	seconds := int(ttl / time.Second)
-	resumed := false
-	for {
-		s, err := client.get(ctx, id)
-		if err != nil {
-			return fmt.Errorf("inspect sandbox %s: %w", id, err)
-		}
-		switch s.State {
-		case "ready", "idle", "running":
-			if err := client.extend(ctx, id, seconds); err != nil {
-				return fmt.Errorf("extend sandbox %s auto-stop: %w", id, err)
-			}
-			if resumed {
-				slog.Info("sandbox resumed", "run_id", r.ID, "sandbox", id)
-			}
-			return nil
-		case "archived":
-			if resumed {
-				return fmt.Errorf("sandbox %s did not start after resume", id)
-			}
-			if err := client.resume(ctx, id, seconds); err != nil {
-				return fmt.Errorf("resume sandbox %s: %w", id, err)
-			}
-			resumed = true
-		case "init", "provisioning", "provisioned", "cloning", "archiving":
-		case "error":
-			reason := ""
-			if s.Error != nil {
-				reason = *s.Error
-			}
-			return fmt.Errorf("sandbox %s is in error state (%s); recover or resume it with the boat CLI, then retry", id, reason)
-		case "cancelled":
-			return fmt.Errorf("sandbox %s was cancelled by the provider before it got a machine", id)
-		default:
-			return fmt.Errorf("sandbox %s reports unknown state %q", id, s.State)
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("waiting for sandbox %s (%s): %w", id, s.State, ctx.Err())
-		case <-time.After(sandboxPoll):
-		}
-	}
-}
-
-// remoteScript runs a short administrative script synchronously and returns
-// its stdout. Node processes never go through here.
-func (x *Executor) remoteScript(ctx context.Context, client *boatClient, r Run, script string, timeout time.Duration) (string, error) {
-	out, err := client.run(ctx, r.Sandbox.ID, "sh -c "+shQuote(script), timeout)
-	if err != nil {
-		return "", err
-	}
-	if out.TimedOut {
-		return "", errors.New("sandbox maintenance command timed out")
-	}
-	if out.ExitCode == nil || *out.ExitCode != 0 {
-		code := -1
-		if out.ExitCode != nil {
-			code = *out.ExitCode
-		}
-		return "", fmt.Errorf("sandbox maintenance command failed (exit %d): %s", code, strings.TrimSpace(out.Stderr+"\n"+out.Stdout))
-	}
-	return out.Stdout, nil
-}
-
 // pushWorkspace makes the sandbox checkout equal to the host checkout's HEAD.
 // Only objects the sandbox lacks travel, as a Git bundle inside the inbound
 // tar that also carries per-attempt files and artifacts.
-func (x *Executor) pushWorkspace(ctx context.Context, client *boatClient, r Run, l remoteLayout, dir string, candidate bool, files map[string][]byte, artifacts map[string][]byte) error {
+func (x *Executor) pushWorkspace(ctx context.Context, m machine, r Run, l remoteLayout, dir string, candidate bool, files map[string][]byte, artifacts map[string][]byte) error {
 	entries := map[string][]byte{}
 	for k, v := range files {
 		entries[k] = v
@@ -268,7 +235,7 @@ func (x *Executor) pushWorkspace(ctx context.Context, client *boatClient, r Run,
 	}
 	var gitSteps strings.Builder
 	if r.Workflow.Repository != nil {
-		have, err := x.remoteScript(ctx, client, r, "root="+shQuote(l.root)+"\nif [ -d \"$root/work/.git\" ]; then git -C \"$root/work\" rev-parse HEAD 2>/dev/null || echo none; else echo none; fi\n", 2*time.Minute)
+		have, err := m.exec(ctx, r, "root="+shQuote(l.root)+"\nif [ -d \"$root/work/.git\" ]; then git -C \"$root/work\" rev-parse HEAD 2>/dev/null || echo none; else echo none; fi\n", 2*time.Minute)
 		if err != nil {
 			return err
 		}
@@ -306,13 +273,13 @@ func (x *Executor) pushWorkspace(ctx context.Context, client *boatClient, r Run,
 		if err != nil {
 			return err
 		}
-		if err := client.upload(ctx, r.Sandbox.ID, l.root+"/sync/in.tar", data); err != nil {
+		if err := m.upload(ctx, r, l.root+"/sync/in.tar", data); err != nil {
 			return fmt.Errorf("upload to sandbox: %w", err)
 		}
 		script += "tar -xf \"$root/sync/in.tar\" -C \"$root\"\nrm -f \"$root/sync/in.tar\"\n"
 	}
 	script += gitSteps.String()
-	if _, err := x.remoteScript(ctx, client, r, script, 10*time.Minute); err != nil {
+	if _, err := m.exec(ctx, r, script, 10*time.Minute); err != nil {
 		return fmt.Errorf("apply workspace to sandbox: %w", err)
 	}
 	return nil
@@ -346,7 +313,7 @@ func (x *Executor) bundle(ctx context.Context, workspace, have string) ([]byte, 
 // pullWorkspace brings the sandbox's working tree back into the host checkout
 // as staged changes for the ordinary checkpoint, and merges remote artifacts.
 // Candidate worktrees are removed from the sandbox afterwards.
-func (x *Executor) pullWorkspace(ctx context.Context, client *boatClient, r Run, l remoteLayout, dir string, candidate bool) error {
+func (x *Executor) pullWorkspace(ctx context.Context, m machine, r Run, l remoteLayout, dir string, candidate bool, attempt string) error {
 	// COPYFILE_DISABLE keeps bsdtar from adding AppleDouble entries when the
 	// provider is simulated on macOS; GNU tar ignores it.
 	script := "set -eu\nexport COPYFILE_DISABLE=1\nroot=" + shQuote(l.root) + "\nrm -rf \"$root/sync/out\" \"$root/sync/out.tar\"\nmkdir -p \"$root/sync/out\"\n"
@@ -362,10 +329,12 @@ func (x *Executor) pullWorkspace(ctx context.Context, client *boatClient, r Run,
 	}
 	script += "tar -cf \"$root/sync/out.tar\" -C \"$root/sync/out\" .\n"
 	script += "if [ -n \"$(ls -A \"$root/artifacts\")\" ]; then tar -rf \"$root/sync/out.tar\" -C \"$root\" artifacts; fi\nrm -rf \"$root/sync/out\"\n"
-	if _, err := x.remoteScript(ctx, client, r, script, 10*time.Minute); err != nil {
+	// Per-attempt process files are no longer needed once the attempt has ended.
+	script += "rm -f \"$root/attempts/\"" + shQuote(attempt) + ".*\n"
+	if _, err := m.exec(ctx, r, script, 10*time.Minute); err != nil {
 		return fmt.Errorf("collect sandbox workspace: %w", err)
 	}
-	data, err := client.download(ctx, r.Sandbox.ID, l.root+"/sync/out.tar", 4<<30)
+	data, err := m.download(ctx, r, l.root+"/sync/out.tar", 4<<30)
 	if err != nil {
 		return fmt.Errorf("download from sandbox: %w", err)
 	}
@@ -557,44 +526,12 @@ func (j remoteRunner) payload(l remoteLayout) map[string][]byte {
 	return files
 }
 
-// startRemote launches the attempt's wrapper detached and follows its output.
-// Cancellation terminates the remote process group through the API.
-func startRemote(ctx context.Context, client *boatClient, sandbox string, l remoteLayout, attempt string, stdout, stderr func([]byte) error) (wait func() (int, error), kill func(), err error) {
-	pid, err := client.start(ctx, sandbox, "sh "+shQuote(l.root+"/attempts/"+attempt+".sh"))
-	if err != nil {
-		return nil, nil, fmt.Errorf("start remote process: %w", err)
-	}
-	terminate := func() {
-		killCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		defer cancel()
-		if err := client.kill(killCtx, sandbox, pid); err != nil {
-			slog.Warn("remote process termination failed", "sandbox", sandbox, "pid", pid, "error", err)
-		}
-	}
-	type outcome struct {
-		code int
-		err  error
-	}
-	done := make(chan outcome, 1)
-	go func() {
-		code, err := client.attach(ctx, sandbox, pid, stdout, stderr)
-		if ctx.Err() != nil {
-			terminate()
-			if err == nil {
-				err = ctx.Err()
-			}
-		}
-		done <- outcome{code, err}
-	}()
-	return func() (int, error) { o := <-done; return o.code, o.err }, terminate, nil
-}
-
 func (x *Executor) remoteCommand(ctx context.Context, r Run, n Node) Result {
-	client, provider, err := x.boat(r)
+	m, provider, err := x.machine(r)
 	if err != nil {
 		return failed(err)
 	}
-	if err := x.ensureRunning(ctx, client, provider, r); err != nil {
+	if err := m.ready(ctx, r, provider.idle()); err != nil {
 		return failed(err)
 	}
 	l := layoutFor(r)
@@ -619,12 +556,12 @@ func (x *Executor) remoteCommand(ctx context.Context, r Run, n Node) Result {
 	if err != nil {
 		return failed(err)
 	}
-	if err := x.pushWorkspace(ctx, client, r, l, dir, candidate, job.payload(l), artifacts); err != nil {
+	if err := x.pushWorkspace(ctx, m, r, l, dir, candidate, job.payload(l), artifacts); err != nil {
 		return failed(err)
 	}
 	var b cappedBuffer
 	write := func(p []byte) error { _, err := b.Write(p); return err }
-	wait, _, err := startRemote(ctx, client, r.Sandbox.ID, l, attempt, write, write)
+	wait, _, err := m.launch(ctx, r, l, attempt, write, write)
 	if err != nil {
 		return failed(err)
 	}
@@ -641,7 +578,7 @@ func (x *Executor) remoteCommand(ctx context.Context, r Run, n Node) Result {
 		result.Outcome, result.Error, result.ExitCode = "failure", fmt.Sprintf("exit status %d", code), code
 	}
 	// Collection runs for failed attempts too: checkpoints record failures.
-	if err := x.collect(ctx, client, r, l, dir, candidate); err != nil && ctx.Err() == nil {
+	if err := x.collect(ctx, m, r, l, dir, candidate, attempt); err != nil && ctx.Err() == nil {
 		return failed(fmt.Errorf("remote attempt finished (%s) but its results could not be collected: %w", result.Outcome, err))
 	}
 	return result
@@ -649,10 +586,10 @@ func (x *Executor) remoteCommand(ctx context.Context, r Run, n Node) Result {
 
 // collect pulls the remote working tree after an attempt, with its own bound
 // so a canceled or timed-out node still gets its evidence back.
-func (x *Executor) collect(ctx context.Context, client *boatClient, r Run, l remoteLayout, dir string, candidate bool) error {
+func (x *Executor) collect(ctx context.Context, m machine, r Run, l remoteLayout, dir string, candidate bool, attempt string) error {
 	pullCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Minute)
 	defer cancel()
-	return x.pullWorkspace(pullCtx, client, r, l, dir, candidate)
+	return x.pullWorkspace(pullCtx, m, r, l, dir, candidate, attempt)
 }
 
 func (x *Executor) remoteEnv(n Node, r Run, l remoteLayout, dir, attempt string) (map[string]string, error) {
@@ -681,11 +618,11 @@ func (x *Executor) remoteAgent(ctx context.Context, r Run, n Node) Result {
 	if err := os.MkdirAll(hostDir, 0700); err != nil {
 		return failed(err)
 	}
-	client, provider, err := x.boat(r)
+	m, provider, err := x.machine(r)
 	if err != nil {
 		return failed(err)
 	}
-	if err := x.ensureRunning(ctx, client, provider, r); err != nil {
+	if err := m.ready(ctx, r, provider.idle()); err != nil {
 		return failed(err)
 	}
 	l := layoutFor(r)
@@ -722,20 +659,18 @@ func (x *Executor) remoteAgent(ctx context.Context, r Run, n Node) Result {
 	if err != nil {
 		return failed(err)
 	}
-	if err := x.pushWorkspace(ctx, client, r, l, dir, candidate, job.payload(l), artifacts); err != nil {
+	if err := x.pushWorkspace(ctx, m, r, l, dir, candidate, job.payload(l), artifacts); err != nil {
 		return failed(err)
 	}
 	if len(n.MCP) > 0 {
-		ready, err := x.remoteScript(ctx, client, r, "set -a\n. "+shQuote(l.root+"/attempts/"+attempt.ID+".env")+"\nset +a\ncd "+shQuote(dir)+"\npi mcp list --json\n", 2*time.Minute)
-		if err != nil {
+		if _, err := m.exec(ctx, r, "set -a\n. "+shQuote(l.root+"/attempts/"+attempt.ID+".env")+"\nset +a\ncd "+shQuote(dir)+"\npi mcp list --json\n", 2*time.Minute); err != nil {
 			return failed(fmt.Errorf("required MCP server unavailable: %w", err))
 		}
-		_ = ready
 	}
 	result := collectAgent(ctx, hostDir, n, func(ctx context.Context) (agentProcess, error) {
 		reader, writer := io.Pipe()
 		stderr := &cappedBuffer{}
-		wait, kill, err := startRemote(ctx, client, r.Sandbox.ID, l, attempt.ID, func(p []byte) error { _, err := writer.Write(p); return err }, func(p []byte) error { _, err := stderr.Write(p); return err })
+		wait, kill, err := m.launch(ctx, r, l, attempt.ID, func(p []byte) error { _, err := writer.Write(p); return err }, func(p []byte) error { _, err := stderr.Write(p); return err })
 		if err != nil {
 			return agentProcess{}, err
 		}
@@ -754,35 +689,28 @@ func (x *Executor) remoteAgent(ctx context.Context, r Run, n Node) Result {
 		return agentProcess{stdout: reader, stderr: stderr, wait: func() error { return <-waited }, kill: kill}, nil
 	})
 	result.Sandbox = r.Sandbox.ID
-	if err := x.collect(ctx, client, r, l, dir, candidate); err != nil && ctx.Err() == nil {
+	if err := x.collect(ctx, m, r, l, dir, candidate, attempt.ID); err != nil && ctx.Err() == nil {
 		return failed(fmt.Errorf("remote attempt finished (%s) but its results could not be collected: %w", result.Outcome, err))
 	}
 	return result
 }
 
-// StopSandbox archives the run's machine: billing stops and the disk snapshot
+// StopSandbox halts the run's machine: billing for compute stops and its disk
 // remains for resume. Called when a run reaches a terminal state.
 func (x *Executor) StopSandbox(ctx context.Context, r Run) error {
-	client, _, err := x.boat(r)
+	m, _, err := x.machine(r)
 	if err != nil {
 		return err
 	}
-	s, err := client.get(ctx, r.Sandbox.ID)
-	if err != nil {
-		return err
-	}
-	if s.State == "archived" || s.State == "archiving" || s.State == "cancelled" {
-		return nil
-	}
-	return client.stop(ctx, r.Sandbox.ID)
+	return m.stop(ctx, r)
 }
 
-// DeleteSandbox erases the machine and its snapshots. Called by workspace
-// cleanup, which the operator requests explicitly.
+// DeleteSandbox erases the machine and its data. Called by workspace cleanup,
+// which the operator requests explicitly.
 func (x *Executor) DeleteSandbox(ctx context.Context, r Run) error {
-	client, _, err := x.boat(r)
+	m, _, err := x.machine(r)
 	if err != nil {
 		return err
 	}
-	return client.delete(ctx, r.Sandbox.ID)
+	return m.remove(ctx, r)
 }

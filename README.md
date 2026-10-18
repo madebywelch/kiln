@@ -35,7 +35,7 @@ For disposable loopback-only development, `kiln serve -insecure-local` explicitl
 | Question | A persisted human gate with a unique ID and explicit choices |
 | Event | A durable state transition, replayable over REST or SSE |
 | Automation | A pinned workflow plus a cron schedule or exact event name |
-| Sandbox | One boat.dev virtual machine per run that executes its commands, agents, and candidate checks |
+| Sandbox | One remote machine per run (boat.dev or agent37) that executes its commands, agents, and candidate checks |
 
 ```yaml
 version: 1
@@ -110,7 +110,7 @@ sandbox:
   snapshot: kiln-toolchain
 ```
 
-With a `sandbox` block, every `command`, `agent`, and `changeset` validation of a run executes on one dedicated [boat.dev](https://boat.dev) machine; the daemon host keeps Git history, checkpoints, approvals, and publication. KILN creates the machine without the boat account's secrets, ships the checkout as Git bundles, records each remote attempt's machine ID, stops the machine when the run ends, and deletes it on workspace cleanup. Configure `sandboxes.boat` in the server YAML with `BOAT_API_KEY`; see [workflows](docs/WORKFLOWS.md#sandbox) and [deployment](docs/DEPLOYMENT.md#remote-machines). `examples/sandbox.yaml` is a complete repair-and-publish graph.
+With a `sandbox` block, every `command`, `agent`, and `changeset` validation of a run executes on one dedicated machine from [boat.dev](https://boat.dev) (`provider: boat`) or [agent37](https://www.agent37.com) (`provider: agent37`); the daemon host keeps Git history, checkpoints, approvals, and publication. KILN creates the machine without using the account's own secrets, ships the checkout as Git bundles, records each remote attempt's machine ID, stops the machine when the run ends, and deletes it on workspace cleanup. Configure `sandboxes.boat` or `sandboxes.agent37` in the server YAML with `BOAT_API_KEY` or `AGENT37_API_KEY`; see [workflows](docs/WORKFLOWS.md#sandbox) and [deployment](docs/DEPLOYMENT.md#remote-machines). `examples/sandbox.yaml` and `examples/sandbox-agent37.yaml` are complete repair-and-publish graphs.
 
 ## Automations
 
@@ -139,13 +139,13 @@ make release        # static Linux amd64/arm64 and macOS arm64 binaries
 make schema         # refresh the committed API contract
 ```
 
-A fake boat.dev server in the deterministic suite exercises the remote execution path offline; `scripts/sandbox_acceptance.py` runs it against real machines and is billable. The opt-in live acceptance test publishes a draft PR to a disposable private repository. It verifies one Conventional Commit, the configured Git identity, exact selected files, no checkpoint ancestry, and concise PR text. It also exercises real inference, failing builds, repair, independent review, restart at a human gate, cron, signed webhooks, deduplication, and rejection. A separate local acceptance exercises a named skill and MCP tool with real inference. See [testing](docs/TESTING.md) for prerequisites and commands.
+Fake boat.dev and agent37 servers in the deterministic suite exercise the remote execution path offline; `scripts/sandbox_acceptance.py` runs it against real machines of either provider and is billable. The opt-in live acceptance test publishes a draft PR to a disposable private repository. It verifies one Conventional Commit, the configured Git identity, exact selected files, no checkpoint ancestry, and concise PR text. It also exercises real inference, failing builds, repair, independent review, restart at a human gate, cron, signed webhooks, deduplication, and rejection. A separate local acceptance exercises a named skill and MCP tool with real inference. See [testing](docs/TESTING.md) for prerequisites and commands.
 
 ## Scope and trust
 
 This is a single-host, single-operator engine. Graph execution is sequential within a run; independent runs execute concurrently. A run may execute on one remote machine, but there is one control plane. Parallel fan-out/join, distributed workers, multi-tenant authorization, and per-node containers are not implemented.
 
-**A worktree is not a security sandbox.** Workflow authors and API token holders can execute arbitrary code as the service account. Run on a dedicated machine or container with narrowly scoped credentials. Commands have a minimal environment, but they can still read files available to that account. A `sandbox` block moves a run's commands and agents onto a dedicated boat.dev machine, which isolates the daemon host from them; it does not isolate the run from the credentials its own nodes receive there.
+**A worktree is not a security sandbox.** Workflow authors and API token holders can execute arbitrary code as the service account. Run on a dedicated machine or container with narrowly scoped credentials. Commands have a minimal environment, but they can still read files available to that account. A `sandbox` block moves a run's commands and agents onto a dedicated remote machine, which isolates the daemon host from them; it does not isolate the run from the credentials its own nodes receive there.
 
 Database schema version 3 is checked at startup. Earlier pre-release databases are intentionally not migrated; preserve them separately and register workflows in fresh `.kiln` state.
 

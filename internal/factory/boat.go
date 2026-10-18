@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -446,4 +447,153 @@ func (c *boatClient) download(ctx context.Context, id, path string, limit int64)
 		return nil
 	})
 	return data, err
+}
+
+const boatDefaultURL = "https://boat.dev/api/v1"
+const boatDefaultKeyEnv = "BOAT_API_KEY"
+
+// boatMachine implements machine on boat.dev: one no-env sandbox per run with
+// command history disabled, a detached wrapper followed over the attach
+// stream, signed URLs for files, and the provider's auto-stop kept past every
+// node.
+type boatMachine struct {
+	client *boatClient
+}
+
+func (b *boatMachine) create(ctx context.Context, r Run, idle time.Duration) (*SandboxState, error) {
+	spec := r.Workflow.Sandbox
+	s, err := b.client.create(ctx, boatCreateRequest{Type: spec.Type, From: spec.Snapshot, TTLSeconds: int(idle / time.Second), NoEnv: true, Monitoring: false, Env: map[string]string{"KILN_RUN_ID": r.ID}}, "kiln-run-"+r.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &SandboxState{Provider: spec.Provider, ID: s.ID, Type: s.Type}, nil
+}
+
+// ready brings the machine to a command-accepting state and moves its
+// auto-stop deadline past the current operation. Error states are reported,
+// not papered over: the operator decides whether to recover or start over.
+func (b *boatMachine) ready(ctx context.Context, r Run, idle time.Duration) error {
+	id := r.Sandbox.ID
+	ttl := idle
+	if deadline, ok := ctx.Deadline(); ok {
+		ttl += time.Until(deadline) + 10*time.Minute
+	}
+	if ttl > sandboxMaxTTL {
+		ttl = sandboxMaxTTL
+	}
+	seconds := int(ttl / time.Second)
+	resumed := false
+	for {
+		s, err := b.client.get(ctx, id)
+		if err != nil {
+			return fmt.Errorf("inspect sandbox %s: %w", id, err)
+		}
+		switch s.State {
+		case "ready", "idle", "running":
+			if err := b.client.extend(ctx, id, seconds); err != nil {
+				return fmt.Errorf("extend sandbox %s auto-stop: %w", id, err)
+			}
+			if resumed {
+				slog.Info("sandbox resumed", "run_id", r.ID, "sandbox", id)
+			}
+			return nil
+		case "archived":
+			if resumed {
+				return fmt.Errorf("sandbox %s did not start after resume", id)
+			}
+			if err := b.client.resume(ctx, id, seconds); err != nil {
+				return fmt.Errorf("resume sandbox %s: %w", id, err)
+			}
+			resumed = true
+		case "init", "provisioning", "provisioned", "cloning", "archiving":
+		case "error":
+			reason := ""
+			if s.Error != nil {
+				reason = *s.Error
+			}
+			return fmt.Errorf("sandbox %s is in error state (%s); recover or resume it with the boat CLI, then retry", id, reason)
+		case "cancelled":
+			return fmt.Errorf("sandbox %s was cancelled by the provider before it got a machine", id)
+		default:
+			return fmt.Errorf("sandbox %s reports unknown state %q", id, s.State)
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("waiting for sandbox %s (%s): %w", id, s.State, ctx.Err())
+		case <-time.After(sandboxPoll):
+		}
+	}
+}
+
+// exec runs a short administrative script synchronously and returns its
+// stdout. Node processes never go through here.
+func (b *boatMachine) exec(ctx context.Context, r Run, script string, timeout time.Duration) (string, error) {
+	out, err := b.client.run(ctx, r.Sandbox.ID, "sh -c "+shQuote(script), timeout)
+	if err != nil {
+		return "", err
+	}
+	if out.TimedOut {
+		return "", errors.New("sandbox maintenance command timed out")
+	}
+	if out.ExitCode == nil || *out.ExitCode != 0 {
+		code := -1
+		if out.ExitCode != nil {
+			code = *out.ExitCode
+		}
+		return "", fmt.Errorf("sandbox maintenance command failed (exit %d): %s", code, strings.TrimSpace(out.Stderr+"\n"+out.Stdout))
+	}
+	return out.Stdout, nil
+}
+
+// launch starts the attempt's wrapper detached and follows its output.
+// Cancellation terminates the remote process group through the API.
+func (b *boatMachine) launch(ctx context.Context, r Run, l remoteLayout, attempt string, stdout, stderr func([]byte) error) (func() (int, error), func(), error) {
+	sandbox := r.Sandbox.ID
+	pid, err := b.client.start(ctx, sandbox, "sh "+shQuote(l.root+"/attempts/"+attempt+".sh"))
+	if err != nil {
+		return nil, nil, fmt.Errorf("start remote process: %w", err)
+	}
+	terminate := func() {
+		killCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		if err := b.client.kill(killCtx, sandbox, pid); err != nil {
+			slog.Warn("remote process termination failed", "sandbox", sandbox, "pid", pid, "error", err)
+		}
+	}
+	type outcome struct {
+		code int
+		err  error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		code, err := b.client.attach(ctx, sandbox, pid, stdout, stderr)
+		if ctx.Err() != nil {
+			terminate()
+			if err == nil {
+				err = ctx.Err()
+			}
+		}
+		done <- outcome{code, err}
+	}()
+	return func() (int, error) { o := <-done; return o.code, o.err }, terminate, nil
+}
+
+func (b *boatMachine) upload(ctx context.Context, r Run, path string, data []byte) error {
+	return b.client.upload(ctx, r.Sandbox.ID, path, data)
+}
+func (b *boatMachine) download(ctx context.Context, r Run, path string, limit int64) ([]byte, error) {
+	return b.client.download(ctx, r.Sandbox.ID, path, limit)
+}
+func (b *boatMachine) stop(ctx context.Context, r Run) error {
+	s, err := b.client.get(ctx, r.Sandbox.ID)
+	if err != nil {
+		return err
+	}
+	if s.State == "archived" || s.State == "archiving" || s.State == "cancelled" {
+		return nil
+	}
+	return b.client.stop(ctx, r.Sandbox.ID)
+}
+func (b *boatMachine) remove(ctx context.Context, r Run) error {
+	return b.client.delete(ctx, r.Sandbox.ID)
 }

@@ -18,6 +18,7 @@ check:
 	./bin/kiln validate examples/multi-provider.yaml
 	./bin/kiln validate examples/scoped-agent.yaml
 	./bin/kiln validate examples/sandbox.yaml
+	./bin/kiln validate examples/sandbox-agent37.yaml
 
 fmt:
 	gofmt -w cmd internal

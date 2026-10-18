@@ -19,7 +19,7 @@ providers:
   openrouter:
     url: https://openrouter.ai/api/v1
     key_env: OPENROUTER_API_KEY
-# Remote machines for workflows that declare `sandbox: {provider: boat}`.
+# Remote machines for workflows that declare `sandbox: {provider: boat}` or `{provider: agent37}`.
 # The key is read from the environment; idle_timeout is the provider's
 # auto-stop between nodes (default 1h). KILN extends it to cover each node.
 # sandboxes:
@@ -27,6 +27,11 @@ providers:
 #     url: https://boat.dev/api/v1
 #     key_env: BOAT_API_KEY
 #     idle_timeout: 1h
+#   agent37:
+#     url: https://api.agent37.com/v1
+#     exec_url: https://sandbox.agent37.app
+#     key_env: AGENT37_API_KEY
+#     idle_timeout: 15m
   # A second OpenAI-compatible provider can be configured independently.
   # local:
   #   url: http://127.0.0.1:1234/v1

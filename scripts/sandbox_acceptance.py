@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Billable boat.dev acceptance: one remote machine per run, synced checkpoints, stop and delete.
+"""Billable sandbox acceptance: one remote machine per run, synced checkpoints, stop and delete.
 
-Requires BOAT_API_KEY for an account that can create sandboxes and Git identity.
-With OPENROUTER_API_KEY the repair step runs Pi inside the machine; without it,
-pass --no-agent to repair with a deterministic command. No remote Git writes.
-Usage: python3 scripts/sandbox_acceptance.py --artifacts .kiln/sandbox-UNIQUE
+Requires BOAT_API_KEY (--provider boat) or AGENT37_API_KEY (--provider agent37)
+for an account that can create machines, and Git identity. With
+OPENROUTER_API_KEY the repair step runs Pi inside the machine; without it, pass
+--no-agent to repair with a deterministic command. No remote Git writes.
+Usage: python3 scripts/sandbox_acceptance.py --artifacts .kiln/sandbox-UNIQUE [--provider agent37]
 """
 import argparse
 import json
@@ -19,11 +20,17 @@ import time
 import urllib.error
 import urllib.request
 
-BOAT = "https://boat.dev/api/v1"
+PROVIDERS = {
+    "boat": {"api": "https://boat.dev/api/v1", "key": "BOAT_API_KEY", "machine": "/sandboxes/{id}", "state": lambda d: d["sandbox"]["state"],
+             "running": {"ready", "idle", "running"}, "stopped": {"archiving", "archived"}},
+    "agent37": {"api": "https://api.agent37.com/v1", "key": "AGENT37_API_KEY", "machine": "/instances/{id}", "state": lambda d: d["status"],
+                "running": {"running"}, "stopped": {"stopping", "stopped"}},
+}
 
 
-def boat(path, method="GET"):
-    req = urllib.request.Request(BOAT + path, method=method, headers={"Authorization": "Bearer " + os.environ["BOAT_API_KEY"]})
+def provider_call(provider, path, method="GET"):
+    spec = PROVIDERS[provider]
+    req = urllib.request.Request(spec["api"] + path, method=method, headers={"Authorization": "Bearer " + os.environ[spec["key"]]})
     try:
         with urllib.request.urlopen(req, timeout=60) as response:
             return response.status, json.loads(response.read())
@@ -34,13 +41,16 @@ def boat(path, method="GET"):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifacts", default=".kiln/sandbox-acceptance")
-    parser.add_argument("--type", default="small", choices=["small", "default", "large", "xlarge"])
-    parser.add_argument("--snapshot", default="")
+    parser.add_argument("--provider", default="boat", choices=sorted(PROVIDERS))
+    parser.add_argument("--type", default="", help="boat size or agent37 instance type; provider default when omitted")
+    parser.add_argument("--snapshot", default="", help="boat named snapshot")
+    parser.add_argument("--template", default="", help="agent37 template, for example agent37-pi@<tag>")
     parser.add_argument("--model", default="deepseek/deepseek-v3.2")
     parser.add_argument("--no-agent", action="store_true", help="repair with a command instead of Pi")
     args = parser.parse_args()
-    if not os.environ.get("BOAT_API_KEY"):
-        parser.error("BOAT_API_KEY is required")
+    spec = PROVIDERS[args.provider]
+    if not os.environ.get(spec["key"]):
+        parser.error(spec["key"] + " is required")
     if not args.no_agent and not os.environ.get("OPENROUTER_API_KEY"):
         parser.error("OPENROUTER_API_KEY is required unless --no-agent is given")
     root = Path(args.artifacts).resolve()
@@ -58,7 +68,7 @@ def main():
     token = secrets.token_hex(32)
     config = {"listen": f"127.0.0.1:{port}", "data_dir": str(root / "state"), "allow_local_repositories": True,
               "providers": {"openrouter": {"url": "https://openrouter.ai/api/v1", "key_env": "OPENROUTER_API_KEY"}},
-              "sandboxes": {"boat": {"key_env": "BOAT_API_KEY", "idle_timeout": "20m"}}}
+              "sandboxes": {args.provider: {"key_env": spec["key"], "idle_timeout": "20m"}}}
     (root / "server.yaml").write_text(json.dumps(config))
     repair = {"type": "agent", "provider": "openrouter", "model": args.model, "timeout": "10m", "max_visits": 2,
               "prompt": "Read intervals.py and test_intervals.py, then repair merge_intervals in place so the tests pass. Only modify intervals.py. Run python3 -m unittest -v to verify. Merge touching endpoints; handle empty, unsorted, negative, nested, duplicate and point intervals; do not mutate inputs. Last test output: {{ .outputs.test.output }}",
@@ -72,7 +82,8 @@ def main():
             "        else:\n            merged.append([start, end])\n    return merged\n'''\nopen(p,'w').write(s)\nPY")}
     workflow = {"version": 1, "name": "sandbox-acceptance", "entry": "start", "exit": "end", "max_steps": 15,
                 "repository": {"local": str(source), "base": "main"},
-                "sandbox": {"provider": "boat", "type": args.type, **({"snapshot": args.snapshot} if args.snapshot else {})},
+                "sandbox": {"provider": args.provider, **({"type": args.type} if args.type else {}),
+                            **({"snapshot": args.snapshot} if args.snapshot else {}), **({"template": args.template} if args.template else {})},
                 "nodes": {
                     "start": {"type": "start", "next": {"success": "probe"}},
                     "probe": {"type": "command", "timeout": "5m",
@@ -99,7 +110,7 @@ def main():
         with urllib.request.urlopen(req, timeout=60) as response:
             return json.loads(response.read())
 
-    report = {"checks": []}
+    report = {"provider": args.provider, "checks": []}
     with (root / "daemon.log").open("w") as log:
         daemon = subprocess.Popen([str(Path("bin/kiln").resolve()), "serve", "-config", str(root / "server.yaml")],
                                   env={**os.environ, "KILN_TOKEN": token}, stdout=log, stderr=log)
@@ -124,8 +135,8 @@ def main():
                     last = state
                 if run["status"] == "waiting":
                     sandbox = run["sandbox"]["id"]
-                    status, info = boat(f"/sandboxes/{sandbox}")
-                    assert status == 200 and info["sandbox"]["state"] in {"ready", "idle", "running"}, info
+                    status, info = provider_call(args.provider, spec["machine"].format(id=sandbox))
+                    assert status == 200 and spec["state"](info) in spec["running"], info
                     report["checks"].append("machine stays running while the run waits for a human")
                     request("POST", f"/v1/runs/{run['id']}/decisions", {"question_id": run["question"]["id"], "candidate_id": run["candidate"]["id"], "choice": "yes"})
                     approved = True
@@ -151,15 +162,30 @@ def main():
             assert probe == b"probe"
             report["checks"].append("remote artifact and candidate diff available through the API")
             for _ in range(60):
-                status, info = boat(f"/sandboxes/{sandbox}")
-                if status == 200 and info["sandbox"]["state"] in {"archiving", "archived"}:
+                status, info = provider_call(args.provider, spec["machine"].format(id=sandbox))
+                if status == 200 and spec["state"](info) in spec["stopped"]:
                     break
                 time.sleep(2)
-            assert info["sandbox"]["state"] in {"archiving", "archived"}, info
+            assert spec["state"](info) in spec["stopped"], info
             report["checks"].append("machine stopped when the run finished")
-            request("DELETE", f"/v1/runs/{run['id']}/workspace")
+            # The daemon journals the stop after the terminal transition; cleanup is refused
+            # with 409 until that goroutine has finished, so wait for its event first.
+            for _ in range(120):
+                events = request("GET", f"/v1/runs/{run['id']}/events?limit=1000")
+                if any(e["type"] == "sandbox.stopped" for e in events):
+                    break
+                time.sleep(1)
+            assert any(e["type"] == "sandbox.stopped" for e in events), [e["type"] for e in events]
+            for attempt in range(30):
+                try:
+                    request("DELETE", f"/v1/runs/{run['id']}/workspace")
+                    break
+                except urllib.error.HTTPError as error:
+                    if error.code != 409 or attempt == 29:
+                        raise
+                    time.sleep(1)
             for _ in range(30):
-                status, info = boat(f"/sandboxes/{sandbox}")
+                status, info = provider_call(args.provider, spec["machine"].format(id=sandbox))
                 if status == 404:
                     break
                 time.sleep(2)

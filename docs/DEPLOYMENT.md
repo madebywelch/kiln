@@ -15,7 +15,7 @@ Linux builds are statically linked with CGO disabled, including the SQLite imple
 The example `deploy/kiln.service` runs as a dedicated `kiln` Unix account. Create that account with `/var/lib/kiln` as its home, install the unit, and provide:
 
 - `/etc/kiln/server.yaml`: start from `examples/server.yaml`, with `data_dir: /var/lib/kiln/state`.
-- `/etc/kiln/credentials.env`: mode 0600, owned by root; inject `KILN_TOKEN`, provider credentials, `BOAT_API_KEY` for sandbox workflows, and the optional webhook secret from your secret manager.
+- `/etc/kiln/credentials.env`: mode 0600, owned by root; inject `KILN_TOKEN`, provider credentials, `BOAT_API_KEY` or `AGENT37_API_KEY` for sandbox workflows, and the optional webhook secret from your secret manager.
 - Service-account Git identity and GitHub authentication. `GH_TOKEN` can be injected, or authenticate `gh` under that account. Never copy your entire personal home directory to the server.
 - Node 22.19+ and pinned agent runtimes: `npm ci --prefix harness`; add its `node_modules/.bin` directory to the service `PATH`. Codex subscription nodes also need `codex login` under the service account. Authentication stays with the CLI; no subscription-to-API token exchange.
 
@@ -35,7 +35,7 @@ Publication uses standard Git `user.name`/`user.email` or explicit `GIT_AUTHOR_*
 
 ```sh
 export KILN_TOKEN="$(openssl rand -hex 32)"
-# Optionally inject OPENROUTER_API_KEY, BOAT_API_KEY, GH_TOKEN, and Git identity.
+# Optionally inject OPENROUTER_API_KEY, BOAT_API_KEY, AGENT37_API_KEY, GH_TOKEN, and Git identity.
 export GIT_AUTHOR_NAME='Your name'
 export GIT_AUTHOR_EMAIL='you@example.com'
 # Optional distinct committer; otherwise Compose uses the author.
@@ -74,21 +74,26 @@ Workflows and captured outputs can contain private source code. Tokens are not a
 
 ## Remote machines
 
-Workflows with a `sandbox` block need a provider entry:
+Workflows with a `sandbox` block need a provider entry for the provider they name:
 
 ```yaml
 sandboxes:
   boat:
-    url: https://boat.dev/api/v1   # default
-    key_env: BOAT_API_KEY           # default
-    idle_timeout: 1h                # provider auto-stop between nodes; 1m-720h
+    url: https://boat.dev/api/v1       # default
+    key_env: BOAT_API_KEY               # default
+    idle_timeout: 1h                    # provider auto-stop between nodes; 1m-720h
+  agent37:
+    url: https://api.agent37.com/v1    # default
+    exec_url: https://sandbox.agent37.app  # default; the exec plane
+    key_env: AGENT37_API_KEY            # default
+    idle_timeout: 15m                   # auto-sleep threshold; clamped to 5m-24h
 ```
 
-Create the key with boat's `ci` preset (create, use, stop, resume, and delete the machines this key created) and inject it like other credentials. The daemon creates machines without the boat account's secrets and with command history disabled; the only credentials a machine receives are the node's `pass_env` values, the OpenRouter key for Pi agents, and selected MCP credentials. Use dedicated, spend-limited keys for those.
+Inject the keys like other credentials. For boat, create the key with the `ci` preset (create, use, stop, resume, and delete the machines this key created). For agent37, a workspace key is the only kind; it reaches every instance in the workspace, so give KILN its own workspace. Both providers' machines are created without the account's own secrets being used by KILN; the only credentials a machine receives are the node's `pass_env` values, the OpenRouter key for Pi agents, and selected MCP credentials. Use dedicated, spend-limited keys for those. agent37 injects its managed-service credentials into every instance's container environment; KILN's processes do not see them, and the instance budget defaults to zero, so leave it there.
 
-Cost follows the run: the machine is billed from creation until the run reaches a terminal state, plus idle periods at human gates and after interruptions until `idle_timeout` archives it. Stopped machines are not billed; their disks are kept 14 days by the provider. `DELETE /v1/runs/{id}/workspace` deletes the machine. Trial accounts cap auto-stop at two hours: `idle_timeout` plus the node timeout plus a ten-minute margin must stay below that, or the node fails before it starts with the provider's `trial_auto_stop_required` error. Accounts without an active plan fail preparation with `billing_required`.
+Cost follows the run: the machine is billed from creation until the run reaches a terminal state, plus idle periods at human gates and after interruptions until `idle_timeout` archives it (boat) or puts it to sleep (agent37, disk-only billing). `DELETE /v1/runs/{id}/workspace` deletes the machine. On boat, trial accounts cap auto-stop at two hours: `idle_timeout` plus the node timeout plus a ten-minute margin must stay below that, or the node fails before it starts with the provider's `trial_auto_stop_required` error, and accounts without an active plan fail preparation with `billing_required`. On agent37, creation requires one day of the instance's rate in the wallet (`insufficient_balance` otherwise), free workspaces hold one instance on the smallest shape, and VM or performance instances need a funded workspace.
 
-The provider's base image carries its own toolchains and the latest Pi release. Save a named snapshot with your pinned versions and reference it as `sandbox.snapshot`; tools installed outside the default `PATH` need a `PATH` entry in the node's `env`.
+Base images carry their own toolchains and their own Pi release. Pin versions with a boat named snapshot (`sandbox.snapshot`) or an agent37 template version or custom image (`sandbox.template`); tools installed outside the default `PATH` need a `PATH` entry in the node's `env`.
 
 ## Shutdown and recovery
 

@@ -19,6 +19,7 @@ var namePattern = regexp.MustCompile("^[a-zA-Z][a-zA-Z0-9_-]{0,63}$")
 var envPattern = regexp.MustCompile("^[A-Za-z_][A-Za-z0-9_]*$")
 var repoPattern = regexp.MustCompile("^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$")
 var snapshotPattern = regexp.MustCompile("^([a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,127})?$")
+var templatePattern = regexp.MustCompile("^([a-z0-9][a-z0-9._-]{0,63}(@[A-Za-z0-9._-]{1,64})?)?$")
 
 type Workflow struct {
 	Version     int               `json:"version" yaml:"version"`
@@ -43,9 +44,19 @@ type Repository struct {
 // agent, and changeset validation of that run executes there instead of on the
 // daemon host. Git history, checkpoints, candidates, and publication stay local.
 type Sandbox struct {
-	Provider string `json:"provider" yaml:"provider"`
-	Type     string `json:"type,omitempty" yaml:"type,omitempty"`
-	Snapshot string `json:"snapshot,omitempty" yaml:"snapshot,omitempty"`
+	Provider  string            `json:"provider" yaml:"provider"`
+	Type      string            `json:"type,omitempty" yaml:"type,omitempty"`
+	Snapshot  string            `json:"snapshot,omitempty" yaml:"snapshot,omitempty"`
+	Template  string            `json:"template,omitempty" yaml:"template,omitempty"`
+	Resources *SandboxResources `json:"resources,omitempty" yaml:"resources,omitempty"`
+	Region    string            `json:"region,omitempty" yaml:"region,omitempty"`
+}
+
+// SandboxResources is an agent37 instance shape: vCPUs, memory and disk in GB.
+type SandboxResources struct {
+	CPU    int `json:"cpu,omitempty" yaml:"cpu,omitempty"`
+	Memory int `json:"memory,omitempty" yaml:"memory,omitempty"`
+	Disk   int `json:"disk,omitempty" yaml:"disk,omitempty"`
 }
 
 type Node struct {
@@ -117,14 +128,35 @@ func (w Workflow) Validate() error {
 		}
 	}
 	if s := w.Sandbox; s != nil {
-		if s.Provider != "boat" {
-			return errors.New("sandbox.provider must be boat")
-		}
-		if !slices.Contains([]string{"", "small", "default", "large", "xlarge"}, s.Type) {
-			return errors.New("sandbox.type must be small, default, large, or xlarge")
-		}
-		if !snapshotPattern.MatchString(s.Snapshot) {
-			return errors.New("sandbox.snapshot must be a named snapshot identifier of at most 128 characters")
+		switch s.Provider {
+		case "boat":
+			if !slices.Contains([]string{"", "small", "default", "large", "xlarge"}, s.Type) {
+				return errors.New("sandbox.type must be small, default, large, or xlarge for boat")
+			}
+			if !snapshotPattern.MatchString(s.Snapshot) {
+				return errors.New("sandbox.snapshot must be a named snapshot identifier of at most 128 characters")
+			}
+			if s.Template != "" || s.Resources != nil || s.Region != "" {
+				return errors.New("sandbox.template, resources and region apply to agent37 only")
+			}
+		case "agent37":
+			if !slices.Contains([]string{"", "default", "vm", "performance"}, s.Type) {
+				return errors.New("sandbox.type must be default, vm, or performance for agent37")
+			}
+			if !templatePattern.MatchString(s.Template) {
+				return errors.New("sandbox.template must be a template name with an optional @version")
+			}
+			if !slices.Contains([]string{"", "us", "eu", "ap-south"}, s.Region) {
+				return errors.New("sandbox.region must be us, eu, or ap-south")
+			}
+			if r := s.Resources; r != nil && (r.CPU < 0 || r.CPU > 64 || r.Memory < 0 || r.Memory > 1024 || r.Disk < 0 || r.Disk > 1024) {
+				return errors.New("sandbox.resources must be non-negative vCPU, memory GB, and disk GB values")
+			}
+			if s.Snapshot != "" {
+				return errors.New("sandbox.snapshot applies to boat only; agent37 uses template")
+			}
+		default:
+			return errors.New("sandbox.provider must be boat or agent37")
 		}
 	}
 	changesets, publishers := 0, 0

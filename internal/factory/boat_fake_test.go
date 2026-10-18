@@ -117,6 +117,13 @@ func (f *fakeBoat) only() *fakeSandbox {
 	return nil
 }
 
+func (f *fakeBoat) state() string {
+	s := f.only()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return s.state
+}
+
 // archive simulates the provider's idle auto-stop.
 func (f *fakeBoat) archive(id string) {
 	f.mu.Lock()

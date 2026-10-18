@@ -71,6 +71,7 @@ type SandboxState struct {
 	ID       string `json:"id"`
 	Type     string `json:"type"`
 	Home     string `json:"home,omitempty"`
+	URL      string `json:"url,omitempty"`
 }
 type Run struct {
 	Candidate    *Candidate        `json:"candidate,omitempty"`

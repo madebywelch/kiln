@@ -12,7 +12,7 @@ The parser rejects unknown YAML fields, duplicate keys, extra YAML documents, ma
 | `repository.github` | Optional `owner/repo`; GitHub HTTPS transport authenticated through `gh` |
 | `repository.local` | Optional absolute local repository path; requires server permission |
 | `repository.base` | Branch or commit to fetch; defaults to remote `HEAD`. Use a branch for PR workflows |
-| `sandbox` | Optional remote machine for the whole run: `provider: boat`, `type`, `snapshot`. See [sandbox](#sandbox) |
+| `sandbox` | Optional remote machine for the whole run: `provider` (`boat` or `agent37`) plus provider fields. See [sandbox](#sandbox) |
 | `entry`, `exit` | IDs of the unique `start` and `end` nodes |
 | `max_steps` | Default 100; maximum 1,000 node visits, including start/end and human gates |
 | `inputs` | String-to-string defaults, overridden by run inputs |
@@ -172,22 +172,35 @@ Only one changeset node and one PR node are allowed per workflow; a bounded loop
 
 ```yaml
 sandbox:
-  provider: boat
-  type: default            # small | default | large | xlarge
-  snapshot: kiln-toolchain # optional named snapshot
+  provider: boat           # boat | agent37
+  type: default
 ```
 
-A workflow with a `sandbox` block runs every `command`, `agent`, and `changeset` validation command of a run on one dedicated [boat.dev](https://boat.dev) virtual machine. `llm`, `human`, and `pull_request` nodes, Git checkpoints, candidate construction, approvals, and publication stay on the daemon host. The server must configure the provider under `sandboxes` ([deployment](DEPLOYMENT.md#remote-machines)); registration rejects workflows for an unconfigured provider.
+A workflow with a `sandbox` block runs every `command`, `agent`, and `changeset` validation command of a run on one dedicated remote machine. `llm`, `human`, and `pull_request` nodes, Git checkpoints, candidate construction, approvals, and publication stay on the daemon host. The server must configure the provider under `sandboxes` ([deployment](DEPLOYMENT.md#remote-machines)); registration rejects workflows for an unconfigured provider.
 
-The machine is created during workspace preparation with none of the boat account's secrets (`noEnv`), no provider-side command history (`monitoring: false`), an idempotency key derived from the run ID, and the `KILN_RUN_ID` tag. `type` defaults to the provider default size. `snapshot` names a saved machine image; use one to pin toolchains and the Pi version instead of relying on the provider's base image, which updates its agents to their latest release. The run records the machine as `run.sandbox` (`provider`, `id`, `type`, `home`); every remote attempt result carries `sandbox: <id>`.
+Two providers are supported. Their lifecycles differ; everything a workflow sees is the same.
 
-Before a node, KILN brings the machine to a running state (resuming a stopped one), extends its auto-stop past the node timeout, and makes the remote checkout equal to the host checkout's HEAD by shipping a Git bundle of the missing objects. Files matching `.gitignore` stay on the machine between nodes, so build caches persist for the run. After the node, the remote working tree returns as a tree bundle and becomes the ordinary attempt checkpoint; `KILN_ARTIFACT_DIR` is mirrored in both directions (deletions are not propagated). Collection also runs for failed and timed-out attempts. Synchronization time counts against the node timeout.
+| Field | boat | agent37 |
+|---|---|---|
+| `type` | Machine size: `small`, `default`, `large`, `xlarge` | Instance type: `default`, `vm`, `performance` |
+| `snapshot` | Named snapshot the machine starts from | Not accepted |
+| `template` | Not accepted | Template name, optionally pinned: `agent37-pi@<tag>`, `my-image@2`. Defaults to `agent37-pi` |
+| `resources` | Not accepted | `{cpu, memory, disk}` shape in vCPUs and GB |
+| `region` | Not accepted | `us`, `eu`, or `ap-south` |
 
-The process runs as the sandbox user in the run's checkout with a minimal environment: the machine's `PATH`, `HOME`, `LANG`, and `LC_ALL`, the node's `env` and `pass_env`, and the `KILN_*` variables with machine-side paths. The provider's own variables are not forwarded. Set `PATH` through `env` if a snapshot installs tools outside the default path. `inherit_env` and `cache_dirs` are daemon-host settings and do not apply.
+**boat** ([boat.dev](https://boat.dev)) machines are created during workspace preparation with none of the boat account's secrets (`noEnv`), no provider-side command history (`monitoring: false`), an idempotency key derived from the run ID, and the `KILN_RUN_ID` tag. Before each node KILN resumes an archived machine and extends its auto-stop past the node timeout; the node process runs detached and its output follows the provider's attach stream. A stopped machine's disk is kept by the provider for 14 days; a retry after that fails with the provider's `snapshot_data_expired` error.
+
+**agent37** ([agent37.com](https://www.agent37.com)) instances are created with auto-sleep on and the server's `idle_timeout` as the idle threshold (clamped to the provider's five-minute to one-day range), the `KILN_RUN_ID` environment tag, and the template's default shape unless `resources` says otherwise. The provider's exec call is synchronous, so the node process runs detached in its own session with its output in files that KILN polls in bounded chunks; a sleeping instance wakes on the first command and a stopped one is started. The template must serve the instance file endpoints (every agent template and any image built on the provider's base images does; `agent37-ubuntu` does not). The default `agent37-pi` image is Debian with git, Python 3, build tools, and the provider's Pi release (1.1.0 on 2026-10-18, which completed KILN's protocol); pin a template version or build your own image for reproducible toolchains. Creating an instance needs a funded workspace with one day of balance for the instance's rate.
+
+The run records the machine as `run.sandbox` (`provider`, `id`, `type`, `home`, and the instance `url` on agent37); every remote attempt result carries `sandbox: <id>`.
+
+Before a node, KILN makes the remote checkout equal to the host checkout's HEAD by shipping a Git bundle of the missing objects. Files matching `.gitignore` stay on the machine between nodes, so build caches persist for the run. After the node, the remote working tree returns as a tree bundle and becomes the ordinary attempt checkpoint; `KILN_ARTIFACT_DIR` is mirrored in both directions (deletions are not propagated). Collection also runs for failed and timed-out attempts. Synchronization time counts against the node timeout.
+
+The process runs as the machine's user in the run's checkout with a minimal environment: the machine's `PATH`, `HOME`, `LANG`, and `LC_ALL`, the node's `env` and `pass_env`, and the `KILN_*` variables with machine-side paths. The provider's own variables are not forwarded. Set `PATH` through `env` if an image installs tools outside the default path. `inherit_env` and `cache_dirs` are daemon-host settings and do not apply.
 
 Agent nodes run Pi from the machine's `PATH` with the same private configuration as on the host; `provider: codex` is rejected because subscription credentials never leave the daemon. The OpenRouter key and any selected MCP credentials reach the machine in the process environment, exactly as on the host; use dedicated, spend-limited keys for sandbox workflows. MCP servers must be `url` servers; stdio servers are daemon-host executables. Skills come from the repository as usual.
 
-A per-run lease inside the machine refuses a new attempt while a previous one is still running there, mirroring the host lease. Node timeouts and cancellation terminate the remote process group through the provider API. Daemon shutdown leaves the machine running for retry; the provider's idle auto-stop bounds that cost. When the run reaches a terminal state, KILN stops the machine (`sandbox.stopped`); `DELETE /v1/runs/{id}/workspace` deletes it. A stopped machine's disk is kept by the provider for 14 days; a retry after that fails with the provider's `snapshot_data_expired` error.
+A per-run lease inside the machine refuses a new attempt while a previous one is still running there, mirroring the host lease. Node timeouts and cancellation terminate the remote process group through the provider API. Daemon shutdown leaves the machine running for retry; the provider's idle auto-stop or auto-sleep bounds that cost. When the run reaches a terminal state, KILN stops the machine (`sandbox.stopped`); `DELETE /v1/runs/{id}/workspace` deletes it.
 
 ## Templates
 

@@ -32,6 +32,22 @@ func sandboxWorkflow(t *testing.T) Workflow {
 	w.Sandbox = &Sandbox{Provider: "boat", Type: "small", Snapshot: "kiln-base"}
 	return w
 }
+
+// waitEvent waits for a lifecycle event that follows the run's own transition
+// asynchronously, such as the provider stop after a terminal state.
+func waitEvent(t *testing.T, e *Engine, id, kind string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, ev := range sandboxEvents(t, e, id) {
+			if ev == kind {
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("event %s not recorded: %v", kind, sandboxEvents(t, e, id))
+}
 func sandboxEvents(t *testing.T, e *Engine, id string) []string {
 	t.Helper()
 	events, err := e.store.Events(id, 0, 1000)
@@ -139,7 +155,7 @@ func TestSandboxRunExecutesRemotelyAndSyncsCheckpoints(t *testing.T) {
 	// Provider contract: dedicated no-env machine, no monitoring, idempotent create, extended auto-stop.
 	f.mu.Lock()
 	create, headers := f.creates[0], f.createHeaders[0]
-	ttls, stops := append([]int(nil), f.ttls...), f.stops
+	ttls := append([]int(nil), f.ttls...)
 	f.mu.Unlock()
 	if create["noEnv"] != true || create["monitoring"] != false || create["type"] != "small" || create["from"] != "kiln-base" || create["ttlSeconds"] != float64(1800) {
 		t.Fatalf("unexpected create request: %v", create)
@@ -153,12 +169,12 @@ func TestSandboxRunExecutesRemotelyAndSyncsCheckpoints(t *testing.T) {
 	if len(ttls) == 0 || ttls[0] <= 1800 {
 		t.Fatalf("auto-stop not extended past the node: %v", ttls)
 	}
-	if stops != 1 || f.only().state != "archived" {
-		t.Fatalf("terminal run did not stop its sandbox: stops=%d state=%s", stops, f.only().state)
-	}
-	events := sandboxEvents(t, e, r.ID)
-	if !strings.Contains(strings.Join(events, ","), "sandbox.stopped") {
-		t.Fatalf("missing sandbox event: %v", events)
+	waitEvent(t, e, r.ID, "sandbox.stopped")
+	f.mu.Lock()
+	stops := f.stops
+	f.mu.Unlock()
+	if stops != 1 || f.state() != "archived" {
+		t.Fatalf("terminal run did not stop its sandbox: stops=%d state=%s", stops, f.state())
 	}
 	// Secrets and prompts leave no file behind on the remote disk.
 	attempts, _ := os.ReadDir(filepath.Join(f.home, "kiln", r.ID, "attempts"))
@@ -183,7 +199,10 @@ func TestSandboxRunExecutesRemotelyAndSyncsCheckpoints(t *testing.T) {
 	f.mu.Lock()
 	deletes := f.deletes
 	f.mu.Unlock()
-	if len(deletes) != 1 || deletes[0].Get("X-Ascii-Confirm-Delete") != r.Sandbox.ID || !f.only().deleted {
+	f.mu.Lock()
+	deletedFlag := f.sandboxes[r.Sandbox.ID].deleted
+	f.mu.Unlock()
+	if len(deletes) != 1 || deletes[0].Get("X-Ascii-Confirm-Delete") != r.Sandbox.ID || !deletedFlag {
 		t.Fatalf("cleanup did not delete the sandbox: %v", deletes)
 	}
 	// A second cleanup is idempotent after the provider forgot the sandbox.
@@ -191,7 +210,7 @@ func TestSandboxRunExecutesRemotelyAndSyncsCheckpoints(t *testing.T) {
 	if !r.Cleaned {
 		t.Fatal("run not marked clean")
 	}
-	events = sandboxEvents(t, e, r.ID)
+	events := sandboxEvents(t, e, r.ID)
 	if !strings.Contains(strings.Join(events, ","), "workspace.cleaned") {
 		t.Fatalf("%v", events)
 	}
@@ -304,7 +323,7 @@ func TestSandboxTimeoutAndShutdownTerminateRemoteProcess(t *testing.T) {
 	if err != nil || got.Status != "interrupted" {
 		t.Fatalf("%+v %v", got.Status, err)
 	}
-	if f2.only().state != "ready" {
+	if f2.state() != "ready" {
 		t.Fatal("interrupted runs keep their sandbox for retry")
 	}
 	s.Close()
@@ -322,7 +341,7 @@ func TestSandboxResumesArchivedMachineAndRefusesStaleProcess(t *testing.T) {
 	if r.Status != "waiting" {
 		t.Fatalf("%+v", r)
 	}
-	if f.only().state != "ready" {
+	if f.state() != "ready" {
 		t.Fatal("waiting runs rely on the provider's idle auto-stop, not an explicit stop")
 	}
 	// A surviving process from a crashed daemon blocks the next attempt.
@@ -346,8 +365,9 @@ func TestSandboxResumesArchivedMachineAndRefusesStaleProcess(t *testing.T) {
 	if r.Status != "failed" || !strings.Contains(r.Outputs["verify"].Error, "still running") || r.Outputs["verify"].ExitCode != remoteLeaseExit {
 		t.Fatalf("%+v", r.Outputs["verify"])
 	}
-	// The failed run stopped its machine; the provider later expires the idle disk snapshot's machine too.
-	if f.only().state != "archived" {
+	// The failed run stopped its machine.
+	waitEvent(t, e, r.ID, "sandbox.stopped")
+	if f.state() != "archived" {
 		t.Fatal("failed run did not stop its sandbox")
 	}
 	_ = syscall.Kill(-stale.Process.Pid, syscall.SIGKILL)

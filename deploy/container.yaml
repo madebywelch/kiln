@@ -26,3 +26,5 @@ providers:
 sandboxes:
   boat:
     key_env: BOAT_API_KEY
+  agent37:
+    key_env: AGENT37_API_KEY

@@ -15,11 +15,12 @@ import (
 
 func TestMain(m *testing.M) {
 	// Git tests must not depend on the developer's identity, hooks or signing setup.
-	for k, v := range map[string]string{"GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "test@example.invalid", "GIT_COMMITTER_NAME": "Test", "GIT_COMMITTER_EMAIL": "test@example.invalid", "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1", "KILN_TEST_BOAT_KEY": fakeBoatKey} {
+	for k, v := range map[string]string{"GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "test@example.invalid", "GIT_COMMITTER_NAME": "Test", "GIT_COMMITTER_EMAIL": "test@example.invalid", "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1", "KILN_TEST_BOAT_KEY": fakeBoatKey, "KILN_TEST_AGENT37_KEY": fakeAgent37Key} {
 		_ = os.Setenv(k, v)
 	}
 	// The fake provider answers immediately; real polling pacing only adds time.
 	sandboxPoll = 10 * time.Millisecond
+	agent37Poll = 20 * time.Millisecond
 	os.Exit(m.Run())
 }
 

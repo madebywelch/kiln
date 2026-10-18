@@ -166,7 +166,7 @@ Use `Last-Event-ID: 123` or `?after=123` to reconnect. The header takes preceden
 
 Important types: `run.created`, `run.running`, `workspace.prepared`, `node.started`, `node.executed`, `node.finished`, `checkpoint.failed`, `run.recovered`, `human.question`, `human.answered`, `run.failed`, `run.canceled`, `run.interrupted`, `run.retried`, `sandbox.stopped`, `sandbox.stop_failed`, `workspace.cleaned`.
 
-Sandbox runs record their machine in `run.sandbox` (`provider`, `id`, `type`, `home`) and in `workspace.prepared`; each remote attempt result carries `sandbox`. `sandbox.stopped` follows the terminal transition, and `workspace.cleaned` includes the deleted machine ID.
+Sandbox runs record their machine in `run.sandbox` (`provider`, `id`, `type`, `home`, and `url` for agent37 instances) and in `workspace.prepared`; each remote attempt result carries `sandbox`. `sandbox.stopped` follows the terminal transition, and `workspace.cleaned` includes the deleted machine ID.
 
 Terminal state may be carried by `node.finished` rather than a separate terminal event. Fetch the run when rendering authoritative state. Captured process output is delivered after the attempt completes, not as live token/log chunks.
 

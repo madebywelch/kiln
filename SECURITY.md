@@ -26,12 +26,12 @@ token holders can execute arbitrary code as the service account. That is the
 intended model, not a vulnerability.
 
 A workflow with a `sandbox` block executes its commands, agents, and candidate
-checks on one boat.dev virtual machine dedicated to the run. The machine is
-trusted with the run's source code, the node's declared variables, and the
-inference key its agents use; it is not trusted by the host. Everything it
-returns (archives, Git bundles, command output) is untrusted input to the
-daemon. The daemon's own credentials, the boat API key, Codex credentials, and
-the boat account's secrets must never reach a machine.
+checks on one remote machine (boat.dev or agent37) dedicated to the run. The
+machine is trusted with the run's source code, the node's declared variables,
+and the inference key its agents use; it is not trusted by the host.
+Everything it returns (archives, Git bundles, command output) is untrusted
+input to the daemon. The daemon's own credentials, the provider API key, Codex
+credentials, and the provider account's secrets must never reach a machine.
 
 In scope:
 
@@ -44,11 +44,11 @@ In scope:
 - State corruption or privilege escalation caused by malformed workflow YAML,
   API input, or webhook payloads.
 - Leakage of bearer tokens, provider keys, Git credentials, Codex
-  credentials, or the boat API key through logs, artifacts, URLs, error
-  responses, or into a remote machine.
-- A remote machine created with the boat account's secrets, command history
-  enabled, or without the run's idempotency key, or a run executing on,
-  reading from, or deleting another run's machine.
+  credentials, or a sandbox provider's API key through logs, artifacts, URLs,
+  error responses, or into a remote machine.
+- A boat machine created with the account's secrets, command history enabled,
+  or without the run's idempotency key; or a run executing on, reading from,
+  or deleting another run's machine on either provider.
 - Archives, Git bundles, or command output returned by a remote machine
   writing outside the run's checkout and artifact directory, escaping path
   confinement, or altering checkpoint ancestry.
@@ -64,7 +64,7 @@ Out of scope:
   process environment inside a remote machine (`pass_env` values, the
   OpenRouter key, selected MCP credentials). The machine is one trust domain.
 - Availability, isolation, data retention, or billing behavior of the boat.dev
-  service. Report those to the provider.
+  or agent37 services. Report those to the provider.
 - Misconfiguration that exposes the API without TLS, reuses the bearer token as
   a webhook secret, or grants broad cloud credentials to the service account.
 - Vulnerabilities in upstream agent runtimes, model providers, Git, GitHub, or
@@ -79,10 +79,12 @@ Out of scope:
 - Keep the data directory private; it contains source code and captured output.
 - Treat `/v1/status`, transcripts, artifacts, and SSE streams as private.
 - Give the daemon a boat API key made with the `ci` preset and nothing
-  broader; it can only manage machines it created. Use dedicated,
-  spend-limited inference and MCP credentials for sandbox workflows, since
-  they are present inside the machine.
+  broader; it can only manage machines it created. An agent37 key reaches
+  every instance in its workspace, so give KILN a workspace of its own. Use
+  dedicated, spend-limited inference and MCP credentials for sandbox
+  workflows, since they are present inside the machine.
 - Treat a run's machine as holding private source code. Clean up workspaces
-  to delete machines promptly; the provider keeps a stopped machine's disk
-  for 14 days otherwise. Pin toolchains and agent versions with a named
-  snapshot rather than the provider's moving base image.
+  to delete machines promptly; boat keeps a stopped machine's disk for 14
+  days and agent37 keeps a deleted instance's backup for seven. Pin
+  toolchains and agent versions with a named snapshot or template version
+  rather than the provider's moving base image.
