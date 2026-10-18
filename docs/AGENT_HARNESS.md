@@ -6,7 +6,7 @@ Pi Durable is not used: it is experimental, and conversation durability would no
 
 ## Opinionated defaults
 
-- `provider: openrouter` → Pi 1.2.0; `provider: codex` → Codex 0.162.1.
+- `provider: openrouter` → Pi 1.3.0; `provider: codex` → Codex 0.162.1.
 - Provider/model are required. No runtime selector, arbitrary agent arguments, fallback matrix or history toggle.
 - Pi tools: `read`, `bash`, `edit`, `write`, plus explicitly selected MCP tools.
 - Pi gets repository-root `AGENTS.md`; nested instructions remain discoverable through its file tools.

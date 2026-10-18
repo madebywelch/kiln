@@ -44,7 +44,7 @@ export GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
 docker compose up --build -d
 ```
 
-The container runs as UID 10001, listens inside the container on port 8741, and publishes only on host loopback. State lives in a named volume. The image includes Git, `gh`, Python 3, C/C++ build tools, `pkg-config`, Linux/Tauri development libraries, CA certificates, the pinned Pi 1.2.0 and Codex 0.162.1 runtimes on their own Node, and the daemon. Agent dependencies are locked in `harness/package-lock.json`.
+The container runs as UID 10001, listens inside the container on port 8741, and publishes only on host loopback. State lives in a named volume. The image includes Git, `gh`, Python 3, C/C++ build tools, `pkg-config`, Linux/Tauri development libraries, CA certificates, the pinned Pi 1.3.0 and Codex 0.162.1 runtimes on their own Node, and the daemon. Agent dependencies are locked in `harness/package-lock.json`.
 
 Project toolchains are managed by [mise](https://mise.jdx.dev) from `/etc/mise/config.toml`. The image pre-installs Node 24.21.0, pnpm 10.33.0, Go 1.27.2, and Rust 1.99.0 (Cargo, rustfmt, Clippy) as image-owned, read-only system installs. A repository that pins a different version through its own files (`.node-version`, `.nvmrc`, `package.json` `packageManager`, `go.mod` `toolchain`, `rust-toolchain.toml`, `.python-version`, `.tool-versions`, `mise.toml`) gets that version installed on first use into the shared cache volume; no image rebuild or per-workflow bootstrap script is needed. Go's own `GOTOOLCHAIN=auto` also honors newer `go.mod` requirements. Tool versions therefore follow the repository, not the host. Operating system libraries still come from the image; add them in a derived image.
 

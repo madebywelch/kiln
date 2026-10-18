@@ -47,7 +47,7 @@ try:
     subprocess.run(["docker", "exec", container, "python3", "/data/smoke.py"], check=True)
     uid = subprocess.check_output(["docker", "exec", container, "id", "-u"], text=True).strip()
     assert uid == "10001", f"unexpected runtime UID: {uid}"
-    for command, expected in [("pi", "1.2.0"), ("codex", "codex-cli 0.162.1")]:
+    for command, expected in [("pi", "1.3.0"), ("codex", "codex-cli 0.162.1")]:
         version = subprocess.check_output(["docker", "exec", container, command, "--version"], text=True).strip()
         assert version == expected, f"{command}: {version}"
     print("Pinned Pi and Codex runtimes verified as non-root.")

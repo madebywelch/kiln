@@ -60,7 +60,7 @@ Prerequisites:
 - `OPENROUTER_API_KEY` is present in the environment.
 - `gh auth status` and `codex login status` succeed under the same account that launches the daemon.
 - A private, disposable GitHub repository has the contents of `testdata/intervals/` on `main`.
-- The machine has Python 3, Git identity, `gh`, Pi 1.2.0 (Node 22.19+), and Codex 0.162.1.
+- The machine has Python 3, Git identity, `gh`, Pi 1.3.0 (Node 22.19+), and Codex 0.162.1.
 
 Example fixture setup, if you need a fresh repository:
 
@@ -113,7 +113,7 @@ python3 scripts/sandbox_acceptance.py --artifacts .kiln/sandbox-UNIQUE --no-agen
 
 It runs a failing build, a repair, a passing build, and candidate validation on one machine, checks the machine stays running at the human gate, verifies remote attempt results name the machine and every attempt has a checkpoint, downloads a remote artifact and the candidate diff, confirms the machine is archived once the run succeeds, and confirms workspace cleanup deletes it.
 
-The acceptance passed on 2026-10-18 against a `small` trial machine: the base image's Pi 1.3.0 completed the pinned 1.2.0 JSON protocol with DeepSeek over OpenRouter (12 turns, 11 tool calls), the whole graph including the human gate took under three minutes, and the account listed no sandboxes afterwards. A separate live check stopped the machine at a human gate through the provider API and confirmed the daemon resumed it for the next node with the ignored build cache intact.
+The acceptance passed on 2026-10-18 against a `small` trial machine: the base image's Pi 1.3.0 (the pinned version) completed the JSON protocol with DeepSeek over OpenRouter (12 turns, 11 tool calls), the whole graph including the human gate took under three minutes, and the account listed no sandboxes afterwards. A separate live check stopped the machine at a human gate through the provider API and confirmed the daemon resumed it for the next node with the ignored build cache intact.
 
 ### Scoped agent acceptance
 

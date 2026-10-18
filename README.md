@@ -11,7 +11,7 @@ KILN is pre-1.0. The workflow schema and HTTP API may change between minor relea
 
 ## Start locally
 
-Requires Go 1.26+ to build. Git is required for repository workflows. `gh` is required for GitHub authentication and PRs. Pi 1.2.0 (Node 22.19+) and Codex 0.162.1 are the opinionated agent backends; native installations need their own project toolchains. The Docker image includes both agents, C/C++ build tools, Linux/Tauri development libraries, and mise-managed Node, pnpm, Go, and Rust defaults; a repository's own version pins are installed on first use. For a native installation, run `npm ci --prefix harness` and add `harness/node_modules/.bin` to the daemon's `PATH`.
+Requires Go 1.26+ to build. Git is required for repository workflows. `gh` is required for GitHub authentication and PRs. Pi 1.3.0 (Node 22.19+) and Codex 0.162.1 are the opinionated agent backends; native installations need their own project toolchains. The Docker image includes both agents, C/C++ build tools, Linux/Tauri development libraries, and mise-managed Node, pnpm, Go, and Rust defaults; a repository's own version pins are installed on first use. For a native installation, run `npm ci --prefix harness` and add `harness/node_modules/.bin` to the daemon's `PATH`.
 
 ```sh
 make check

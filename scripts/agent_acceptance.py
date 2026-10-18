@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Billable local Pi/DeepSeek acceptance: selected skill + MCP + tests + gate + audit.
 
-Requires pi 1.2.0, OPENROUTER_API_KEY and Git identity. No remote writes.
+Requires pi 1.3.0, OPENROUTER_API_KEY and Git identity. No remote writes.
 Usage: python3 scripts/agent_acceptance.py --artifacts .kiln/scoped-agent
 """
 import argparse
