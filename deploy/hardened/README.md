@@ -33,7 +33,8 @@ The design assumes a single operator and a single host. See
 This is a pilot topology. It has no automatic retention policy or off-host
 backup. Rust/Tauri builds can consume several GiB per worktree; keep headroom
 for Cargo output and image upgrades, and clean completed workspaces through the
-API.
+API. Sandbox workflows move that build load onto per-run boat.dev machines and
+leave only Git objects and artifacts on the guest.
 
 ## Access and authentication
 
@@ -56,6 +57,7 @@ login. Required values:
 - `OPENROUTER_API_KEY` (if using OpenRouter-backed nodes)
 - `GH_TOKEN` (if using repository workflows)
 - `CODEX_AUTH_JSON` (if using Codex-backed nodes)
+- `BOAT_API_KEY` (if using sandbox workflows; a boat.dev `ci` preset key)
 
 ```sh
 export KILN_URL=https://<tailnet-host>.<tailnet>.ts.net

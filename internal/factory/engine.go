@@ -129,6 +129,7 @@ func (e *Engine) tick() {
 			defer e.wg.Done()
 			defer func() { cancel(); e.mu.Lock(); delete(e.active, r.ID); e.mu.Unlock() }()
 			e.step(ctx, r)
+			e.settleSandbox(r.ID)
 		}(r)
 	}
 }
@@ -164,7 +165,7 @@ func (e *Engine) step(ctx context.Context, r Run) {
 			return
 		}
 		// Retain preparation metadata even if cancellation won the race.
-		current.Workspace, current.Branch, current.BaseSHA, current.Artifacts = prepared.Workspace, prepared.Branch, prepared.BaseSHA, prepared.Artifacts
+		current.Workspace, current.Branch, current.BaseSHA, current.Artifacts, current.Sandbox = prepared.Workspace, prepared.Branch, prepared.BaseSHA, prepared.Artifacts, prepared.Sandbox
 		current.Prepared = err == nil
 		if current.Status == "canceled" {
 			if err := e.saveRun(current, "workspace.prepared", map[string]any{"prepared": current.Prepared}); err != nil {
@@ -179,7 +180,11 @@ func (e *Engine) step(ctx context.Context, r Run) {
 		} else {
 			current.Status = "queued"
 		}
-		if err := e.saveRun(current, "workspace.prepared", map[string]any{"prepared": current.Prepared, "error": current.Error}); err != nil {
+		data := map[string]any{"prepared": current.Prepared, "error": current.Error}
+		if current.Sandbox != nil {
+			data["sandbox"] = current.Sandbox
+		}
+		if err := e.saveRun(current, "workspace.prepared", data); err != nil {
 			e.storageFailure(err)
 		}
 		return
@@ -306,10 +311,21 @@ func (e *Engine) Register(yaml, expectedRevision string) (WorkflowRecord, error)
 	if w.Repository != nil && w.Repository.Local != "" && !e.exec.AllowLocal {
 		return WorkflowRecord{}, invalid("local repositories are disabled by server policy")
 	}
+	if w.Sandbox != nil {
+		if _, ok := e.exec.Sandboxes[w.Sandbox.Provider]; !ok {
+			return WorkflowRecord{}, invalid("sandbox provider %q is not configured", w.Sandbox.Provider)
+		}
+	}
 	for id, n := range w.Nodes {
 		for _, name := range n.MCP {
-			if _, ok := e.exec.MCP[name]; !ok {
+			server, ok := e.exec.MCP[name]
+			if !ok {
 				return WorkflowRecord{}, invalid("%s: MCP server %q is not configured", id, name)
+			}
+			// A stdio server is a daemon-host executable; a remote agent can only
+			// reach services over HTTP.
+			if w.Sandbox != nil && server.Command != "" {
+				return WorkflowRecord{}, invalid("%s: MCP server %q uses a daemon-host command; sandbox workflows require url servers", id, name)
 			}
 		}
 		if n.Type == "llm" || (n.Type == "agent" && n.Provider == "openrouter") {
@@ -421,10 +437,15 @@ func (e *Engine) Cancel(id string) (Run, error) {
 		e.mu.Unlock()
 		return r, err
 	}
+	active := e.active[id] != nil
 	if cancel := e.active[id]; cancel != nil {
 		cancel()
 	}
 	e.mu.Unlock()
+	if !active {
+		// The owning goroutine settles active runs when it returns.
+		defer e.settleSandbox(id)
+	}
 	if finalize {
 		lease, err := acquireLease(e.exec.Root, r.ID)
 		if err != nil {
@@ -438,6 +459,35 @@ func (e *Engine) Cancel(id string) (Run, error) {
 		return e.GetRun(id)
 	}
 	return r, nil
+}
+
+// settleSandbox stops a terminal run's machine so billing ends with the run.
+// Waiting and interrupted runs keep theirs; the provider's idle auto-stop
+// bounds that cost and the next node resumes it. Stop is an external call and
+// runs outside the engine mutex; its outcome is journaled as an event.
+func (e *Engine) settleSandbox(id string) {
+	r, err := e.GetRun(id)
+	if err != nil || r.Sandbox == nil || !r.Terminal() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	err = e.exec.StopSandbox(ctx, r)
+	event, data := "sandbox.stopped", map[string]string{"sandbox": r.Sandbox.ID}
+	if err != nil {
+		event, data["error"] = "sandbox.stop_failed", err.Error()
+		slog.Warn("sandbox stop failed; its idle auto-stop still applies", "run_id", id, "sandbox", r.Sandbox.ID, "error", err)
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	current, loadErr := get[Run](e.store, "run", id)
+	if loadErr != nil {
+		e.storageFailure(loadErr)
+		return
+	}
+	if err := e.saveRun(current, event, data); err != nil {
+		e.storageFailure(err)
+	}
 }
 func (e *Engine) Retry(id string) (Run, error) {
 	e.mu.Lock()
@@ -493,9 +543,16 @@ func (e *Engine) Cleanup(ctx context.Context, id string) (Run, error) {
 			return r, err
 		}
 	}
+	data := map[string]string{"workspace": r.Workspace}
+	if r.Sandbox != nil {
+		if err := e.exec.DeleteSandbox(ctx, r); err != nil {
+			return r, fmt.Errorf("delete sandbox %s: %w", r.Sandbox.ID, err)
+		}
+		data["sandbox"] = r.Sandbox.ID
+	}
 	if err := e.exec.Cleanup(ctx, r); err != nil {
 		return r, err
 	}
 	r.Cleaned = true
-	return r, e.saveRun(r, "workspace.cleaned", map[string]string{"workspace": r.Workspace})
+	return r, e.saveRun(r, "workspace.cleaned", data)
 }

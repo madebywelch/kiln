@@ -1,0 +1,63 @@
+version: 1
+name: sandbox-repair
+description: Run build, agent repair, and candidate validation on one boat.dev machine per run.
+repository:
+  github: OWNER/REPO
+  base: main
+# Every command, agent, and changeset validation of a run executes in this
+# machine. Git history, checkpoints, approvals, and publication stay on the
+# daemon host. Requires a `sandboxes.boat` entry in the server configuration.
+sandbox:
+  provider: boat
+  type: default            # small | default | large | xlarge
+  snapshot: kiln-toolchain # optional named snapshot with your pinned toolchain
+entry: start
+exit: end
+max_steps: 20
+inputs:
+  goal: Repair the failing tests without changing them.
+nodes:
+  start:
+    type: start
+    next: {success: build}
+  build:
+    type: command
+    command: python3 -m unittest -v
+    timeout: 10m
+    max_visits: 3
+    next: {success: candidate, failure: repair}
+  repair:
+    type: agent
+    provider: openrouter
+    model: deepseek/deepseek-v3.2
+    timeout: 15m
+    max_visits: 2
+    prompt: |
+      {{ .inputs.goal }}
+      Last test output: {{ .outputs.build.output }}
+    next: {success: build}
+  candidate:
+    type: changeset
+    files: [intervals.py]
+    command: python3 -m unittest -v
+    title: 'fix(intervals): merge without mutating inputs'
+    body: |
+      Repair merge_intervals.
+
+      Validation: unit tests pass in a clean candidate checkout inside the run's sandbox.
+    next: {success: approval, failure: repair}
+  approval:
+    type: human
+    prompt: 'Candidate {{ .run.candidate.commit_sha }} passed. Publish?'
+    choices: [approve, reject]
+    next: {approve: publish, reject: rejected}
+  publish:
+    type: pull_request
+    draft: true
+    next: {success: end}
+  rejected:
+    type: command
+    command: exit 1
+    next: {success: end}
+  end:
+    type: end

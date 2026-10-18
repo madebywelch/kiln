@@ -15,7 +15,7 @@ Linux builds are statically linked with CGO disabled, including the SQLite imple
 The example `deploy/kiln.service` runs as a dedicated `kiln` Unix account. Create that account with `/var/lib/kiln` as its home, install the unit, and provide:
 
 - `/etc/kiln/server.yaml`: start from `examples/server.yaml`, with `data_dir: /var/lib/kiln/state`.
-- `/etc/kiln/credentials.env`: mode 0600, owned by root; inject `KILN_TOKEN`, provider credentials, and the optional webhook secret from your secret manager.
+- `/etc/kiln/credentials.env`: mode 0600, owned by root; inject `KILN_TOKEN`, provider credentials, `BOAT_API_KEY` for sandbox workflows, and the optional webhook secret from your secret manager.
 - Service-account Git identity and GitHub authentication. `GH_TOKEN` can be injected, or authenticate `gh` under that account. Never copy your entire personal home directory to the server.
 - Node 22.19+ and pinned agent runtimes: `npm ci --prefix harness`; add its `node_modules/.bin` directory to the service `PATH`. Codex subscription nodes also need `codex login` under the service account. Authentication stays with the CLI; no subscription-to-API token exchange.
 
@@ -35,7 +35,7 @@ Publication uses standard Git `user.name`/`user.email` or explicit `GIT_AUTHOR_*
 
 ```sh
 export KILN_TOKEN="$(openssl rand -hex 32)"
-# Optionally inject OPENROUTER_API_KEY, GH_TOKEN, and Git identity.
+# Optionally inject OPENROUTER_API_KEY, BOAT_API_KEY, GH_TOKEN, and Git identity.
 export GIT_AUTHOR_NAME='Your name'
 export GIT_AUTHOR_EMAIL='you@example.com'
 # Optional distinct committer; otherwise Compose uses the author.
@@ -72,6 +72,24 @@ The optional [hardened reference deployment](../deploy/hardened/README.md) shows
 
 Workflows and captured outputs can contain private source code. Tokens are not automatically redacted from process output. Commands get a minimal environment, but trusted code can still read files and credentials available to the service account. Use narrowly scoped GitHub/provider credentials and a dedicated host or container. Do not give untrusted users this API.
 
+## Remote machines
+
+Workflows with a `sandbox` block need a provider entry:
+
+```yaml
+sandboxes:
+  boat:
+    url: https://boat.dev/api/v1   # default
+    key_env: BOAT_API_KEY           # default
+    idle_timeout: 1h                # provider auto-stop between nodes; 1m-720h
+```
+
+Create the key with boat's `ci` preset (create, use, stop, resume, and delete the machines this key created) and inject it like other credentials. The daemon creates machines without the boat account's secrets and with command history disabled; the only credentials a machine receives are the node's `pass_env` values, the OpenRouter key for Pi agents, and selected MCP credentials. Use dedicated, spend-limited keys for those.
+
+Cost follows the run: the machine is billed from creation until the run reaches a terminal state, plus idle periods at human gates and after interruptions until `idle_timeout` archives it. Stopped machines are not billed; their disks are kept 14 days by the provider. `DELETE /v1/runs/{id}/workspace` deletes the machine. Trial accounts cap auto-stop at two hours: `idle_timeout` plus the node timeout plus a ten-minute margin must stay below that, or the node fails before it starts with the provider's `trial_auto_stop_required` error. Accounts without an active plan fail preparation with `billing_required`.
+
+The provider's base image carries its own toolchains and the latest Pi release. Save a named snapshot with your pinned versions and reference it as `sandbox.snapshot`; tools installed outside the default `PATH` need a `PATH` entry in the node's `env`.
+
 ## Shutdown and recovery
 
 SIGTERM/SIGINT stops HTTP acceptance and execution. Active process groups are killed, active operations become `interrupted`, queued runs remain queued, and waiting questions remain waiting. Startup never automatically replays an ambiguous external operation.
@@ -92,7 +110,7 @@ A canceled run cannot be resumed. Submit a new run if cancellation was a mistake
 
 ## Storage and retention
 
-The data directory contains private per-run artifacts, candidate validation worktrees (removed after validation; retained after a crash until cleanup), SQLite state/WAL files, the daemon lock, per-run execution leases, bare repository caches, worktrees, per-attempt agent directories (JSONL, session data, bounded stderr, isolated configuration), and transient command context files. It must be on a local filesystem, writable only by the service account. The daemon's umask is 0077.
+The data directory contains private per-run artifacts, candidate validation worktrees (removed after validation; retained after a crash until cleanup), SQLite state/WAL files, the daemon lock, per-run execution leases, bare repository caches, worktrees, per-attempt agent directories (JSONL, session data, bounded stderr, isolated configuration), and transient command context files and Git bundles exchanged with remote machines. It must be on a local filesystem, writable only by the service account. The daemon's umask is 0077.
 
 For a consistent full backup:
 
@@ -102,7 +120,7 @@ For a consistent full backup:
 
 An online SQLite backup alone protects run metadata but does not synchronize worktree files. Copying a live database file without its WAL is not a valid backup procedure. Restore into the same absolute data path because persisted runs and Git worktree metadata contain absolute paths. A different-path migration requires repairing those paths before resuming work.
 
-There is no automatic state/event/dedup retention policy yet. Monitor disk usage. Delete terminal workspaces through the API when no longer needed; history and remote branches remain. Repository caches and local branch/base references also remain for recovery/audit. Remove remote test branches or close PRs only as a separate, explicit operation.
+There is no automatic state/event/dedup retention policy yet. Monitor disk usage. Delete terminal workspaces through the API when no longer needed; history and remote branches remain, and a run's remote machine is deleted. Repository caches and local branch/base references also remain for recovery/audit. Remove remote test branches or close PRs only as a separate, explicit operation.
 
 Database schema version 3 is checked at startup. Earlier pre-release state is intentionally not migrated; preserve it separately and register workflows in fresh `.kiln` state. Unknown versions refuse to start. Take a backup before upgrading; restore the matching data and binary together for rollback.
 

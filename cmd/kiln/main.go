@@ -24,16 +24,17 @@ import (
 var version = "dev"
 
 type config struct {
-	MCP              map[string]factory.MCPServer `yaml:"mcp_servers"`
-	Listen           string                       `yaml:"listen"`
-	DataDir          string                       `yaml:"data_dir"`
-	Workers          int                          `yaml:"workers"`
-	TokenEnv         string                       `yaml:"token_env"`
-	WebhookSecretEnv string                       `yaml:"webhook_secret_env"`
-	AllowLocal       bool                         `yaml:"allow_local_repositories"`
-	InheritEnv       []string                     `yaml:"inherit_env"`
-	CacheDirs        []string                     `yaml:"cache_dirs"`
-	Providers        map[string]factory.Provider  `yaml:"providers"`
+	MCP              map[string]factory.MCPServer       `yaml:"mcp_servers"`
+	Listen           string                             `yaml:"listen"`
+	DataDir          string                             `yaml:"data_dir"`
+	Workers          int                                `yaml:"workers"`
+	TokenEnv         string                             `yaml:"token_env"`
+	WebhookSecretEnv string                             `yaml:"webhook_secret_env"`
+	AllowLocal       bool                               `yaml:"allow_local_repositories"`
+	InheritEnv       []string                           `yaml:"inherit_env"`
+	CacheDirs        []string                           `yaml:"cache_dirs"`
+	Providers        map[string]factory.Provider        `yaml:"providers"`
+	Sandboxes        map[string]factory.SandboxProvider `yaml:"sandboxes"`
 }
 
 func main() {
@@ -129,6 +130,9 @@ func serve(args []string) error {
 	if err := factory.ValidateEnvironment(cfg.InheritEnv, cfg.CacheDirs); err != nil {
 		return err
 	}
+	if err := factory.ValidateSandboxes(cfg.Sandboxes); err != nil {
+		return err
+	}
 	token := os.Getenv(cfg.TokenEnv)
 	if *insecure {
 		host, _, err := net.SplitHostPort(cfg.Listen)
@@ -161,7 +165,7 @@ func serve(args []string) error {
 		return err
 	}
 	defer store.Close()
-	engine, err := factory.NewEngine(store, &factory.Executor{Root: dir, Providers: cfg.Providers, MCP: cfg.MCP, AllowLocal: cfg.AllowLocal, InheritEnv: cfg.InheritEnv, CacheDirs: cfg.CacheDirs}, cfg.Workers)
+	engine, err := factory.NewEngine(store, &factory.Executor{Root: dir, Providers: cfg.Providers, Sandboxes: cfg.Sandboxes, MCP: cfg.MCP, AllowLocal: cfg.AllowLocal, InheritEnv: cfg.InheritEnv, CacheDirs: cfg.CacheDirs}, cfg.Workers)
 	if err != nil {
 		return err
 	}

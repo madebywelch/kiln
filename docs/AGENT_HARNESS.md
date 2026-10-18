@@ -15,6 +15,7 @@ Pi Durable is not used: it is experimental, and conversation durability would no
 - Pi uses a conservative 32K context window, 8K maximum output per model response, thinking off, and no automatic transport retries. KILN bounds its observed assistant messages to 100 and raw transcript to 32 MiB. Node timeouts bound both backends.
 - Plans, scratch files, logs and temporary reports belong in `KILN_ARTIFACT_DIR`, not the repository. Agent instructions request this; changeset classification and separate publication ancestry enforce the publication boundary even if an agent leaves residue.
 - Git checkpoints are private and always enabled for repository runs. Agents are instructed not to commit or publish; the graph owns those operations.
+- In a [sandbox](WORKFLOWS.md#sandbox) workflow, Pi runs inside the run's boat.dev machine from that machine's `PATH`, with the same private per-attempt configuration written there. Codex nodes stay on the daemon host and are rejected in such workflows.
 
 ## Select resources per node
 
@@ -64,7 +65,7 @@ mcp_servers:
 
 A workflow references only names. Unknown names are rejected when registering the workflow. Only selected entries and their referenced environment variables reach the attempt; resolved secrets are not written into generated configuration. Ordinary Pi shell commands unset transport credential variables to reduce accidental `env`/debug logging. This is not a credential sandbox: the account can still read its own process/filesystem state, and tools may return secrets. Transcripts remain private.
 
-Supported transports are stdio and streamable HTTP. `command` is an executable, not shell source. Credential interpolation uses `${ENV_NAME}` in `env` and `headers`; command interpolation and interactive OAuth are intentionally unsupported. Servers are checked before inference, and their tools are exposed directly. Remote services must authorize operations themselves; use narrowly scoped tokens.
+Supported transports are stdio and streamable HTTP; sandbox workflows accept HTTP servers only, because a stdio server is a daemon-host executable. `command` is an executable, not shell source. Credential interpolation uses `${ENV_NAME}` in `env` and `headers`; command interpolation and interactive OAuth are intentionally unsupported. Servers are checked before inference, and their tools are exposed directly. Remote services must authorize operations themselves; use narrowly scoped tokens.
 
 Changing the registry requires restarting the daemon. Pinned workflows retain resource names, not a snapshot of external server implementations or credentials.
 
@@ -84,4 +85,4 @@ A completed answer is not proof of correctness: follow agents with deterministic
 
 On Linux, Codex's direct restricted-network filter can deny Unix-socket shutdown used by Node's piped subprocesses ([upstream issue](https://github.com/openai/codex/issues/41175)). KILN instead selects managed-proxy mode with an empty domain allowlist and approvals disabled. The proxy network namespace still blocks direct egress, and workspace-write filesystem restrictions remain in place. This permits local Node/Git IPC without granting Internet access. The sandbox may write to the worktree, `TMPDIR`, the run's private `HOME`, `KILN_ARTIFACT_DIR`, and the server's configured `cache_dirs` (shared toolchain caches); the rest of the daemon state stays read-only.
 
-**Resource selection is context hygiene, not isolation.** Pi's `bash` can run commands with the service account's permissions. Codex uses its workspace-write sandbox, but reviewer prompts do not enforce read-only access. A trusted agent can read other accessible files or contact services through shell commands. Use a dedicated host/container; this is not a multi-tenant or hostile-code sandbox.
+**Resource selection is context hygiene, not isolation.** Pi's `bash` can run commands with the service account's permissions. Codex uses its workspace-write sandbox, but reviewer prompts do not enforce read-only access. A trusted agent can read other accessible files or contact services through shell commands. Use a dedicated host/container, or a sandbox workflow that gives each run its own machine; neither makes KILN a multi-tenant or hostile-code platform, since the run still holds its own credentials.

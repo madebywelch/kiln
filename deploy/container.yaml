@@ -23,3 +23,6 @@ providers:
   openrouter:
     url: https://openrouter.ai/api/v1
     key_env: OPENROUTER_API_KEY
+sandboxes:
+  boat:
+    key_env: BOAT_API_KEY

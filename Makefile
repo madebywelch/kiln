@@ -17,6 +17,7 @@ check:
 	./bin/kiln validate examples/retry.yaml
 	./bin/kiln validate examples/multi-provider.yaml
 	./bin/kiln validate examples/scoped-agent.yaml
+	./bin/kiln validate examples/sandbox.yaml
 
 fmt:
 	gofmt -w cmd internal

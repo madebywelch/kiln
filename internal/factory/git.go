@@ -48,7 +48,18 @@ func (x *Executor) repoDir(repo Repository) string {
 	}
 	return filepath.Join(x.Root, "repos", digest([]byte(key))[:24]+".git")
 }
+
+// Prepare creates the run's private artifact directory and checkout, then its
+// remote machine when the workflow declares one. The Git phase is serialized;
+// sandbox provisioning waits on a network service and runs unlocked.
 func (x *Executor) Prepare(ctx context.Context, r Run) (Run, error) {
+	r, err := x.prepareRepository(ctx, r)
+	if err != nil || r.Workflow.Sandbox == nil {
+		return r, err
+	}
+	return x.prepareSandbox(ctx, r)
+}
+func (x *Executor) prepareRepository(ctx context.Context, r Run) (Run, error) {
 	x.gitMu.Lock()
 	defer x.gitMu.Unlock()
 	r.Artifacts = filepath.Join(x.Root, "artifacts", r.ID)

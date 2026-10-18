@@ -18,12 +18,14 @@ import (
 var namePattern = regexp.MustCompile("^[a-zA-Z][a-zA-Z0-9_-]{0,63}$")
 var envPattern = regexp.MustCompile("^[A-Za-z_][A-Za-z0-9_]*$")
 var repoPattern = regexp.MustCompile("^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$")
+var snapshotPattern = regexp.MustCompile("^([a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,127})?$")
 
 type Workflow struct {
 	Version     int               `json:"version" yaml:"version"`
 	Name        string            `json:"name" yaml:"name"`
 	Description string            `json:"description,omitempty" yaml:"description,omitempty"`
 	Repository  *Repository       `json:"repository,omitempty" yaml:"repository,omitempty"`
+	Sandbox     *Sandbox          `json:"sandbox,omitempty" yaml:"sandbox,omitempty"`
 	Entry       string            `json:"entry" yaml:"entry"`
 	Exit        string            `json:"exit" yaml:"exit"`
 	MaxSteps    int               `json:"max_steps" yaml:"max_steps"`
@@ -35,6 +37,15 @@ type Repository struct {
 	GitHub string `json:"github,omitempty" yaml:"github,omitempty"`
 	Local  string `json:"local,omitempty" yaml:"local,omitempty"`
 	Base   string `json:"base,omitempty" yaml:"base,omitempty"`
+}
+
+// A sandbox is one remote virtual machine dedicated to a run. Every command,
+// agent, and changeset validation of that run executes there instead of on the
+// daemon host. Git history, checkpoints, candidates, and publication stay local.
+type Sandbox struct {
+	Provider string `json:"provider" yaml:"provider"`
+	Type     string `json:"type,omitempty" yaml:"type,omitempty"`
+	Snapshot string `json:"snapshot,omitempty" yaml:"snapshot,omitempty"`
 }
 
 type Node struct {
@@ -105,6 +116,17 @@ func (w Workflow) Validate() error {
 			return errors.New("invalid repository.base")
 		}
 	}
+	if s := w.Sandbox; s != nil {
+		if s.Provider != "boat" {
+			return errors.New("sandbox.provider must be boat")
+		}
+		if !slices.Contains([]string{"", "small", "default", "large", "xlarge"}, s.Type) {
+			return errors.New("sandbox.type must be small, default, large, or xlarge")
+		}
+		if !snapshotPattern.MatchString(s.Snapshot) {
+			return errors.New("sandbox.snapshot must be a named snapshot identifier of at most 128 characters")
+		}
+	}
 	changesets, publishers := 0, 0
 	for id, n := range w.Nodes {
 		if !namePattern.MatchString(id) {
@@ -147,6 +169,11 @@ func (w Workflow) Validate() error {
 			}
 			if strings.HasPrefix(n.Model, "-") || strings.ContainsAny(n.Model, "\r\n\x00") {
 				return fmt.Errorf("%s: invalid model", id)
+			}
+			// Subscription credentials never leave the daemon host; a remote
+			// machine receives only the inference key the workflow already uses.
+			if w.Sandbox != nil && n.Provider == "codex" {
+				return fmt.Errorf("%s: codex agents run on the daemon host only; sandbox workflows support provider openrouter", id)
 			}
 		case "llm":
 			if n.Prompt == "" || n.Model == "" || n.Provider == "" {

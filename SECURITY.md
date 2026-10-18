@@ -25,6 +25,14 @@ KILN is a single-host, single-operator control plane. Workflow authors and API
 token holders can execute arbitrary code as the service account. That is the
 intended model, not a vulnerability.
 
+A workflow with a `sandbox` block executes its commands, agents, and candidate
+checks on one boat.dev virtual machine dedicated to the run. The machine is
+trusted with the run's source code, the node's declared variables, and the
+inference key its agents use; it is not trusted by the host. Everything it
+returns (archives, Git bundles, command output) is untrusted input to the
+daemon. The daemon's own credentials, the boat API key, Codex credentials, and
+the boat account's secrets must never reach a machine.
+
 In scope:
 
 - Authentication or signature bypass on the HTTP API, SSE stream, artifact
@@ -35,15 +43,28 @@ In scope:
   explicitly selected changeset.
 - State corruption or privilege escalation caused by malformed workflow YAML,
   API input, or webhook payloads.
-- Leakage of bearer tokens, provider keys, Git credentials, or Codex
-  credentials through logs, artifacts, URLs, or error responses.
+- Leakage of bearer tokens, provider keys, Git credentials, Codex
+  credentials, or the boat API key through logs, artifacts, URLs, error
+  responses, or into a remote machine.
+- A remote machine created with the boat account's secrets, command history
+  enabled, or without the run's idempotency key, or a run executing on,
+  reading from, or deleting another run's machine.
+- Archives, Git bundles, or command output returned by a remote machine
+  writing outside the run's checkout and artifact directory, escaping path
+  confinement, or altering checkpoint ancestry.
 
 Out of scope:
 
 - Code execution, prompt injection, or data exfiltration by an authorized
   workflow author or token holder.
 - A malicious command escaping its process group, closing an inherited lease
-  descriptor, or otherwise defeating cooperative cleanup.
+  descriptor, or otherwise defeating cooperative cleanup, on the host or
+  inside a remote machine.
+- A run's own commands or agents reading the credentials present in their
+  process environment inside a remote machine (`pass_env` values, the
+  OpenRouter key, selected MCP credentials). The machine is one trust domain.
+- Availability, isolation, data retention, or billing behavior of the boat.dev
+  service. Report those to the provider.
 - Misconfiguration that exposes the API without TLS, reuses the bearer token as
   a webhook secret, or grants broad cloud credentials to the service account.
 - Vulnerabilities in upstream agent runtimes, model providers, Git, GitHub, or
@@ -57,3 +78,11 @@ Out of scope:
   secret.
 - Keep the data directory private; it contains source code and captured output.
 - Treat `/v1/status`, transcripts, artifacts, and SSE streams as private.
+- Give the daemon a boat API key made with the `ci` preset and nothing
+  broader; it can only manage machines it created. Use dedicated,
+  spend-limited inference and MCP credentials for sandbox workflows, since
+  they are present inside the machine.
+- Treat a run's machine as holding private source code. Clean up workspaces
+  to delete machines promptly; the provider keeps a stopped machine's disk
+  for 14 days otherwise. Pin toolchains and agent versions with a named
+  snapshot rather than the provider's moving base image.

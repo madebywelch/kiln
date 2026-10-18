@@ -55,9 +55,10 @@ func (x *Executor) agent(ctx context.Context, r Run, n Node) Result {
 			return failed(fmt.Errorf("required MCP server unavailable: %s: %s", ready.Error, ready.Output))
 		}
 	}
-	prompt = "Work only on the assigned task. Follow repository AGENTS.md instructions and the explicitly available skills. Do not publish, push, create commits, sign your work, or add attribution. KILN owns Git checkpoints and publication. Keep plans, scratch files, logs, and temporary reports outside the repository in KILN_ARTIFACT_DIR. Only intentional product changes belong in the worktree.\n\n" + prompt
-	return runAgent(ctx, r.Workspace, dir, env, prompt, n, args)
+	return runAgent(ctx, r.Workspace, dir, env, agentPreamble+prompt, n, args)
 }
+
+const agentPreamble = "Work only on the assigned task. Follow repository AGENTS.md instructions and the explicitly available skills. Do not publish, push, create commits, sign your work, or add attribution. KILN owns Git checkpoints and publication. Keep plans, scratch files, logs, and temporary reports outside the repository in KILN_ARTIFACT_DIR. Only intentional product changes belong in the worktree.\n\n"
 
 func (x *Executor) agentCommand(r Run, n Node, dir string, env []string) ([]string, []string, error) {
 	home, _, err := x.scratch(r)
@@ -133,32 +134,76 @@ func (x *Executor) agentCommand(r Run, n Node, dir string, env []string) ([]stri
 		}
 		return append(args, "-"), env, nil
 	}
-	p, ok := x.Providers["openrouter"]
-	if !ok {
-		return nil, nil, errors.New("openrouter provider is not configured")
-	}
-	if p.KeyEnv == "" || os.Getenv(p.KeyEnv) == "" {
-		return nil, nil, errors.New("OpenRouter credential environment variable is not set")
-	}
-	piDir := filepath.Join(dir, "pi")
-	if err := os.MkdirAll(piDir, 0700); err != nil {
+	layout := agentLayout{Workspace: r.Workspace, Dir: dir, Home: home}
+	config, err := x.piConfiguration(n, layout, r.Workspace)
+	if err != nil {
 		return nil, nil, err
 	}
-	env = setEnv(env, "PI_CODING_AGENT_DIR", piDir)
-	env = setEnv(env, "PI_OFFLINE", "1")
-	env = setEnv(env, "PI_TELEMETRY", "0")
-	env = setEnv(env, "KILN_INFERENCE_KEY", os.Getenv(p.KeyEnv))
+	for path, data := range config.Files {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, path)), 0700); err != nil {
+			return nil, nil, err
+		}
+		if err := os.WriteFile(filepath.Join(dir, path), data, 0600); err != nil {
+			return nil, nil, err
+		}
+	}
+	for _, k := range config.envKeys() {
+		env = setEnv(env, k, config.Env[k])
+	}
+	return config.Args, env, nil
+}
+
+// agentLayout names the directories as the executing machine sees them: the
+// daemon host for local attempts, the remote sandbox for sandbox runs.
+type agentLayout struct {
+	Workspace string
+	Dir       string
+	Home      string
+}
+type piConfig struct {
+	Args  []string
+	Env   map[string]string
+	Files map[string][]byte // relative to the attempt directory
+}
+
+func (c piConfig) envKeys() []string {
+	keys := make([]string, 0, len(c.Env))
+	for k := range c.Env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// piConfiguration builds Pi's private per-attempt configuration. Repository
+// instructions and skills are read from the host checkout, which mirrors the
+// executing workspace at attempt start; paths in the arguments use the layout.
+func (x *Executor) piConfiguration(n Node, layout agentLayout, hostWorkspace string) (piConfig, error) {
+	p, ok := x.Providers["openrouter"]
+	if !ok {
+		return piConfig{}, errors.New("openrouter provider is not configured")
+	}
+	if p.KeyEnv == "" || os.Getenv(p.KeyEnv) == "" {
+		return piConfig{}, errors.New("OpenRouter credential environment variable is not set")
+	}
+	config := piConfig{Env: map[string]string{}, Files: map[string][]byte{}}
+	piDir := layout.Dir + "/pi"
+	config.Env["PI_CODING_AGENT_DIR"] = piDir
+	config.Env["PI_OFFLINE"] = "1"
+	config.Env["PI_TELEMETRY"] = "0"
+	config.Env["KILN_INFERENCE_KEY"] = os.Getenv(p.KeyEnv)
 	// Store a reference, never the resolved credential. Only this model is added.
 	models := map[string]any{"providers": map[string]any{"openrouter": map[string]any{
 		"baseUrl": p.URL, "api": "openai-completions", "apiKey": "${KILN_INFERENCE_KEY}",
 		"models": []any{map[string]any{"id": n.Model, "name": n.Model, "reasoning": false, "input": []string{"text"}, "contextWindow": 32768, "maxTokens": 8192}},
 	}}}
-	if err := writePrivateJSON(filepath.Join(piDir, "models.json"), models); err != nil {
-		return nil, nil, err
+	var err error
+	if config.Files["pi/models.json"], err = json.Marshal(models); err != nil {
+		return piConfig{}, err
 	}
 	mcp, extra, err := x.selectedMCP(n.MCP)
 	if err != nil {
-		return nil, nil, err
+		return piConfig{}, err
 	}
 	keys := []string{"KILN_INFERENCE_KEY"}
 	for key := range extra {
@@ -168,45 +213,41 @@ func (x *Executor) agentCommand(r Run, n Node, dir string, env []string) ([]stri
 	// Prevent accidental credential capture by ordinary env/debug commands.
 	// This is hygiene, not isolation from a process with the same Unix identity.
 	settings := map[string]any{"shellCommandPrefix": "unset " + strings.Join(keys, " "), "defaultProjectTrust": "never", "retry": map[string]any{"enabled": false}, "cacheWarming": "off", "enableInstallTelemetry": false}
-	if err := writePrivateJSON(filepath.Join(piDir, "settings.json"), settings); err != nil {
-		return nil, nil, err
+	if config.Files["pi/settings.json"], err = json.Marshal(settings); err != nil {
+		return piConfig{}, err
 	}
 	toolSet := "read,bash,edit,write"
 	for _, name := range n.MCP {
 		toolSet += ",mcp__" + strings.ReplaceAll(name, "-", "_") + "__*"
 	}
-	args := []string{"pi", "--mode", "json", "--offline", "--no-approve", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files", "--tools", toolSet, "--provider", "openrouter", "--model", n.Model, "--thinking", "off", "--session", filepath.Join(dir, "session.jsonl")}
-	instructions, err := repositoryInstructions(r.Workspace)
+	config.Args = []string{"pi", "--mode", "json", "--offline", "--no-approve", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files", "--tools", toolSet, "--provider", "openrouter", "--model", n.Model, "--thinking", "off", "--session", layout.Dir + "/session.jsonl"}
+	instructions, err := repositoryInstructions(hostWorkspace)
 	if err != nil {
-		return nil, nil, err
+		return piConfig{}, err
 	}
 	if instructions != "" {
-		path := filepath.Join(dir, "instructions.md")
-		if err := os.WriteFile(path, []byte(instructions), 0600); err != nil {
-			return nil, nil, err
-		}
-		args = append(args, "--append-system-prompt", path)
+		config.Files["instructions.md"] = []byte(instructions)
+		config.Args = append(config.Args, "--append-system-prompt", layout.Dir+"/instructions.md")
 	}
 	for _, name := range n.Skills {
-		path, err := skillPath(r.Workspace, name)
-		if err != nil {
-			return nil, nil, err
+		if _, err := skillPath(hostWorkspace, name); err != nil {
+			return piConfig{}, err
 		}
-		args = append(args, "--skill", path)
+		config.Args = append(config.Args, "--skill", layout.Workspace+"/"+filepath.ToSlash(filepath.Join(".agents", "skills", name, "SKILL.md")))
 	}
 	for k, v := range extra {
-		env = setEnv(env, k, v)
+		config.Env[k] = v
 	}
 	if len(n.MCP) == 0 {
-		args = append(args, "--no-mcp")
+		config.Args = append(config.Args, "--no-mcp")
 	} else {
-		if err := writePrivateJSON(filepath.Join(piDir, "mcp.json"), map[string]any{"mcpServers": mcp, "autoEnableCodemode": false}); err != nil {
-			return nil, nil, err
+		if config.Files["pi/mcp.json"], err = json.Marshal(map[string]any{"mcpServers": mcp, "autoEnableCodemode": false}); err != nil {
+			return piConfig{}, err
 		}
 		// The only extension enabled is Pi's built-in MCP client. Tools are direct.
-		args = append(args, "--extension", "builtin:mcp")
+		config.Args = append(config.Args, "--extension", "builtin:mcp")
 	}
-	return args, env, nil
+	return config, nil
 }
 
 func setEnv(env []string, key, value string) []string {
@@ -227,7 +268,59 @@ func writePrivateJSON(path string, value any) error {
 	return os.WriteFile(path, b, 0600)
 }
 
+// agentProcess is a started harness whose JSONL stdout is consumed by
+// collectAgent. kill escalates on budget violations; wait returns the exit
+// status after stdout has closed.
+type agentProcess struct {
+	stdout io.Reader
+	wait   func() error
+	stderr *cappedBuffer
+	kill   func()
+}
+
 func runAgent(ctx context.Context, workspace, dir string, env []string, prompt string, n Node, args []string) Result {
+	return collectAgent(ctx, dir, n, func(ctx context.Context) (agentProcess, error) {
+		cmd := makeCommand(ctx, workspace, env, prompt, args...)
+		// Pi's bash/MCP children have their own groups. Give its SIGTERM handler time
+		// to clean them up before falling back to killing the harness process group.
+		var timerMu sync.Mutex
+		var killTimer *time.Timer
+		cmd.Cancel = func() error {
+			err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+			timerMu.Lock()
+			killTimer = time.AfterFunc(2*time.Second, func() { _ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) })
+			timerMu.Unlock()
+			if errors.Is(err, syscall.ESRCH) {
+				return os.ErrProcessDone
+			}
+			return err
+		}
+		cmd.WaitDelay = 3 * time.Second
+		reader, writer := io.Pipe()
+		var stderr cappedBuffer
+		cmd.Stdout, cmd.Stderr = writer, &stderr
+		if err := cmd.Start(); err != nil {
+			writer.Close()
+			return agentProcess{}, err
+		}
+		waited := make(chan error, 1)
+		go func() { err := cmd.Wait(); writer.Close(); waited <- err }()
+		return agentProcess{stdout: reader, stderr: &stderr, wait: func() error {
+			err := <-waited
+			timerMu.Lock()
+			if killTimer != nil {
+				killTimer.Stop()
+			}
+			timerMu.Unlock()
+			return err
+		}}, nil
+	})
+}
+
+// collectAgent owns the transcript, budgets, and semantic completion check for
+// a harness process wherever it runs. The start function receives a context
+// whose cancellation must terminate the process.
+func collectAgent(ctx context.Context, dir string, n Node, start func(context.Context) (agentProcess, error)) Result {
 	f, err := os.OpenFile(filepath.Join(dir, "events.jsonl"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
 		return failed(err)
@@ -235,37 +328,21 @@ func runAgent(ctx context.Context, workspace, dir string, env []string, prompt s
 	defer f.Close()
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	cmd := makeCommand(childCtx, workspace, env, prompt, args...)
-	// Pi's bash/MCP children have their own groups. Give its SIGTERM handler time
-	// to clean them up before falling back to killing the harness process group.
-	var timerMu sync.Mutex
-	var killTimer *time.Timer
-	cmd.Cancel = func() error {
-		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
-		timerMu.Lock()
-		killTimer = time.AfterFunc(2*time.Second, func() { _ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) })
-		timerMu.Unlock()
-		if errors.Is(err, syscall.ESRCH) {
-			return os.ErrProcessDone
-		}
-		return err
-	}
-	cmd.WaitDelay = 3 * time.Second
-	reader, writer := io.Pipe()
-	defer reader.Close()
-	var stderr cappedBuffer
-	cmd.Stdout, cmd.Stderr = writer, &stderr
-	if err := cmd.Start(); err != nil {
-		writer.Close()
+	proc, err := start(childCtx)
+	if err != nil {
 		return failed(err)
 	}
-	waited := make(chan error, 1)
-	go func() { err := cmd.Wait(); writer.Close(); waited <- err }()
+	stop := func() {
+		cancel()
+		if proc.kill != nil {
+			proc.kill()
+		}
+	}
 	parser := agentParser{provider: n.Provider, result: Result{Outcome: "success", Provider: n.Provider, Model: n.Model, Harness: "pi"}}
 	if n.Provider == "codex" {
 		parser.result.Harness = "codex"
 	}
-	scan := bufio.NewScanner(reader)
+	scan := bufio.NewScanner(proc.stdout)
 	scan.Buffer(make([]byte, 64<<10), 2<<20)
 	total := 0
 	var streamErr error
@@ -274,43 +351,38 @@ func runAgent(ctx context.Context, workspace, dir string, env []string, prompt s
 		total += len(line) + 1
 		if total > agentTranscriptLimit {
 			streamErr = errors.New("agent transcript exceeded 32 MiB")
-			cancel()
+			stop()
 			break
 		}
 		if _, err := f.Write(append(append([]byte(nil), line...), '\n')); err != nil {
 			streamErr = err
-			cancel()
+			stop()
 			break
 		}
 		if err := parser.consume(line); err != nil {
 			streamErr = err
-			cancel()
+			stop()
 			break
 		}
 		if parser.result.Turns > agentTurnLimit {
 			streamErr = errors.New("agent exceeded 100 model turns")
-			cancel()
+			stop()
 			break
 		}
 	}
 	if err := scan.Err(); err != nil && streamErr == nil {
 		streamErr = err
-		cancel()
+		stop()
 	}
 	// Drain after a protocol/budget failure so the process cannot block on stdout.
 	if streamErr != nil {
-		_, _ = io.Copy(io.Discard, reader)
+		_, _ = io.Copy(io.Discard, proc.stdout)
 	}
-	waitErr := <-waited
-	timerMu.Lock()
-	if killTimer != nil {
-		killTimer.Stop()
-	}
-	timerMu.Unlock()
+	waitErr := proc.wait()
 	if err := f.Sync(); err != nil && streamErr == nil {
 		streamErr = err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "stderr.log"), stderr.b.Bytes(), 0600); err != nil && streamErr == nil {
+	if err := os.WriteFile(filepath.Join(dir, "stderr.log"), proc.stderr.b.Bytes(), 0600); err != nil && streamErr == nil {
 		streamErr = err
 	}
 	result := parser.finish()
@@ -319,7 +391,7 @@ func runAgent(ctx context.Context, workspace, dir string, env []string, prompt s
 	} else if ctx.Err() != nil {
 		result.Outcome, result.Error = "failure", ctx.Err().Error()
 	} else if waitErr != nil {
-		result.Outcome, result.Error = "failure", waitErr.Error()+": "+strings.TrimSpace(stderr.b.String())
+		result.Outcome, result.Error = "failure", waitErr.Error()+": "+strings.TrimSpace(proc.stderr.b.String())
 	}
 	if result.Outcome == "failure" {
 		result.ExitCode = -1

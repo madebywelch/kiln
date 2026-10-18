@@ -12,6 +12,7 @@ The parser rejects unknown YAML fields, duplicate keys, extra YAML documents, ma
 | `repository.github` | Optional `owner/repo`; GitHub HTTPS transport authenticated through `gh` |
 | `repository.local` | Optional absolute local repository path; requires server permission |
 | `repository.base` | Branch or commit to fetch; defaults to remote `HEAD`. Use a branch for PR workflows |
+| `sandbox` | Optional remote machine for the whole run: `provider: boat`, `type`, `snapshot`. See [sandbox](#sandbox) |
 | `entry`, `exit` | IDs of the unique `start` and `end` nodes |
 | `max_steps` | Default 100; maximum 1,000 node visits, including start/end and human gates |
 | `inputs` | String-to-string defaults, overridden by run inputs |
@@ -96,7 +97,7 @@ implement:
   next: {success: build, failure: escalation}
 ```
 
-Runs Pi for `provider: openrouter`, or the native subscription-authenticated Codex CLI for `provider: codex`. Provider and model are required; there is no runtime selector or argument array. Prompts go through stdin. Pi has fixed `read`, `bash`, `edit`, and `write` tools. Skills/MCP are optional explicit lists on Pi-backed nodes, not global discovery. See [agent resources](AGENT_HARNESS.md).
+Runs Pi for `provider: openrouter`, or the native subscription-authenticated Codex CLI for `provider: codex`. In a [sandbox](#sandbox) workflow, Pi runs inside the run's remote machine and Codex nodes are rejected. Provider and model are required; there is no runtime selector or argument array. Prompts go through stdin. Pi has fixed `read`, `bash`, `edit`, and `write` tools. Skills/MCP are optional explicit lists on Pi-backed nodes, not global discovery. See [agent resources](AGENT_HARNESS.md).
 
 KILN checks semantic completion as well as process exit; provider errors, truncated responses, or an unfinished answer fail the node. Success means the agent completed—not that code is correct. Run tests afterward. For reviews, request JSON and let a command node interpret `.outputs.reviewer.output`.
 
@@ -167,6 +168,27 @@ Branch creation uses an expected-absent Git ref lease, so a racing writer cannot
 
 Only one changeset node and one PR node are allowed per workflow; a bounded loop may revisit them. Human gates are optional, but put one **after changeset validation** when approval is required. Cleanup preserves internal artifacts and private audit/candidate refs. Nothing merges automatically.
 
+## Sandbox
+
+```yaml
+sandbox:
+  provider: boat
+  type: default            # small | default | large | xlarge
+  snapshot: kiln-toolchain # optional named snapshot
+```
+
+A workflow with a `sandbox` block runs every `command`, `agent`, and `changeset` validation command of a run on one dedicated [boat.dev](https://boat.dev) virtual machine. `llm`, `human`, and `pull_request` nodes, Git checkpoints, candidate construction, approvals, and publication stay on the daemon host. The server must configure the provider under `sandboxes` ([deployment](DEPLOYMENT.md#remote-machines)); registration rejects workflows for an unconfigured provider.
+
+The machine is created during workspace preparation with none of the boat account's secrets (`noEnv`), no provider-side command history (`monitoring: false`), an idempotency key derived from the run ID, and the `KILN_RUN_ID` tag. `type` defaults to the provider default size. `snapshot` names a saved machine image; use one to pin toolchains and the Pi version instead of relying on the provider's base image, which updates its agents to their latest release. The run records the machine as `run.sandbox` (`provider`, `id`, `type`, `home`); every remote attempt result carries `sandbox: <id>`.
+
+Before a node, KILN brings the machine to a running state (resuming a stopped one), extends its auto-stop past the node timeout, and makes the remote checkout equal to the host checkout's HEAD by shipping a Git bundle of the missing objects. Files matching `.gitignore` stay on the machine between nodes, so build caches persist for the run. After the node, the remote working tree returns as a tree bundle and becomes the ordinary attempt checkpoint; `KILN_ARTIFACT_DIR` is mirrored in both directions (deletions are not propagated). Collection also runs for failed and timed-out attempts. Synchronization time counts against the node timeout.
+
+The process runs as the sandbox user in the run's checkout with a minimal environment: the machine's `PATH`, `HOME`, `LANG`, and `LC_ALL`, the node's `env` and `pass_env`, and the `KILN_*` variables with machine-side paths. The provider's own variables are not forwarded. Set `PATH` through `env` if a snapshot installs tools outside the default path. `inherit_env` and `cache_dirs` are daemon-host settings and do not apply.
+
+Agent nodes run Pi from the machine's `PATH` with the same private configuration as on the host; `provider: codex` is rejected because subscription credentials never leave the daemon. The OpenRouter key and any selected MCP credentials reach the machine in the process environment, exactly as on the host; use dedicated, spend-limited keys for sandbox workflows. MCP servers must be `url` servers; stdio servers are daemon-host executables. Skills come from the repository as usual.
+
+A per-run lease inside the machine refuses a new attempt while a previous one is still running there, mirroring the host lease. Node timeouts and cancellation terminate the remote process group through the provider API. Daemon shutdown leaves the machine running for retry; the provider's idle auto-stop bounds that cost. When the run reaches a terminal state, KILN stops the machine (`sandbox.stopped`); `DELETE /v1/runs/{id}/workspace` deletes it. A stopped machine's disk is kept by the provider for 14 days; a retry after that fails with the provider's `snapshot_data_expired` error.
+
 ## Templates
 
 Templates use Go `text/template`, with strict missing-key handling and JSON-style lowercase field names:
@@ -185,4 +207,4 @@ Budgets count every visit, including explicit retries. Retrying a failed or inte
 
 Every completed repository-stage attempt creates a Git checkpoint, including failed attempts, answered gates, start/end, and unchanged trees. `checkpoint_sha` links each attempt to its commit. These are private audit snapshots, not certification or publishable history. Checkpoints capture non-ignored workspace changes for recovery, but no checkpoint commit is pushed. Keep scratch output in `KILN_ARTIFACT_DIR`; `.gitignore` is not the publication policy. A checkpoint failure interrupts the run; retry reconciles the checkpoint without repeating the already-recorded operation. Unknown interrupted side effects require explicit retry, then receive a checkpoint before a new attempt.
 
-Workspaces remain after completion for inspection. Delete them explicitly with `DELETE /v1/runs/{id}/workspace`. This preserves run history and remote branches; it disables retry. Local repository caches and branch/base references are retained.
+Workspaces remain after completion for inspection. Delete them explicitly with `DELETE /v1/runs/{id}/workspace`. This preserves run history and remote branches, deletes the run's remote machine if it has one, and disables retry. Local repository caches and branch/base references are retained.

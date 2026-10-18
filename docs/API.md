@@ -95,7 +95,7 @@ Only one active run per automation is allowed. Waiting and interrupted runs coun
 | GET / DELETE | `/workflows/{id}` | Inspect/delete a definition; pinned runs and automations remain |
 | POST | `/runs` | Queue `{workflow_id, inputs?}` |
 | GET | `/runs` | List summaries, optionally filter `status` |
-| GET | `/runs/{id}` | Full pinned definition, inputs, outputs, attempts, cursor, workspace, and question |
+| GET | `/runs/{id}` | Full pinned definition, inputs, outputs, attempts, cursor, workspace, sandbox, and question |
 | POST | `/runs/{id}/cancel` | Persist cancellation, then kill active process group |
 | POST | `/runs/{id}/retry` | Explicit retry with `{acknowledge_side_effects:true}` |
 | POST | `/runs/{id}/decisions` | Answer `{question_id, candidate_id?, choice, comment?}` |
@@ -106,7 +106,7 @@ Only one active run per automation is allowed. Waiting and interrupted runs coun
 | GET | `/runs/{id}/artifacts/{path}` | Download a private run artifact; supports nested paths |
 | GET | `/runs/{id}/candidate/diff` | Selected, validated product diff; includes `truncated` |
 | GET | `/runs/{id}/diff` | Tracked-file diff against pinned base; includes `truncated` |
-| DELETE | `/runs/{id}/workspace` | Remove an inactive terminal run's worktree/directory |
+| DELETE | `/runs/{id}/workspace` | Remove an inactive terminal run's worktree/directory and delete its remote machine |
 | PUT | `/automations/{id}` | Save workflow ID, enabled flag, inputs, and cron or event trigger |
 | GET | `/automations` | List automations and schedule/fire/skip telemetry |
 | GET / DELETE | `/automations/{id}` | Inspect/delete a trigger; existing runs remain |
@@ -164,7 +164,9 @@ data: {"id":123,"run_id":"...","type":"node.finished","time":"...","data":{...}}
 
 Use `Last-Event-ID: 123` or `?after=123` to reconnect. The header takes precedence. The server replays all later events, then tails new records. Heartbeat comments keep idle connections alive. Streams stay open after terminal events until the client disconnects or daemon shuts down. Slow writes have a ten-second deadline.
 
-Important types: `run.created`, `run.running`, `workspace.prepared`, `node.started`, `node.executed`, `node.finished`, `checkpoint.failed`, `run.recovered`, `human.question`, `human.answered`, `run.failed`, `run.canceled`, `run.interrupted`, `run.retried`, `workspace.cleaned`.
+Important types: `run.created`, `run.running`, `workspace.prepared`, `node.started`, `node.executed`, `node.finished`, `checkpoint.failed`, `run.recovered`, `human.question`, `human.answered`, `run.failed`, `run.canceled`, `run.interrupted`, `run.retried`, `sandbox.stopped`, `sandbox.stop_failed`, `workspace.cleaned`.
+
+Sandbox runs record their machine in `run.sandbox` (`provider`, `id`, `type`, `home`) and in `workspace.prepared`; each remote attempt result carries `sandbox`. `sandbox.stopped` follows the terminal transition, and `workspace.cleaned` includes the deleted machine ID.
 
 Terminal state may be carried by `node.finished` rather than a separate terminal event. Fetch the run when rendering authoritative state. Captured process output is delivered after the attempt completes, not as live token/log chunks.
 

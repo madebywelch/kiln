@@ -23,6 +23,7 @@ type Usage struct {
 }
 type Result struct {
 	Candidate *Candidate `json:"candidate,omitempty"`
+	Sandbox   string     `json:"sandbox,omitempty"`
 	Artifact  string     `json:"artifact,omitempty"`
 	Harness   string     `json:"harness,omitempty"`
 	Turns     int        `json:"turns,omitempty"`
@@ -62,8 +63,18 @@ type Decision struct {
 	Choice      string `json:"choice"`
 	Comment     string `json:"comment,omitempty" maxLength:"8192"`
 }
+
+// SandboxState identifies the remote machine a run executes on. Home is the
+// sandbox user's home directory, the root of every path KILN uses there.
+type SandboxState struct {
+	Provider string `json:"provider"`
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Home     string `json:"home,omitempty"`
+}
 type Run struct {
 	Candidate    *Candidate        `json:"candidate,omitempty"`
+	Sandbox      *SandboxState     `json:"sandbox,omitempty"`
 	Artifacts    string            `json:"artifacts,omitempty"`
 	ID           string            `json:"id"`
 	Workflow     Workflow          `json:"workflow"`

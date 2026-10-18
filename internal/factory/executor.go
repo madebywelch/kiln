@@ -28,6 +28,7 @@ type Executor struct {
 	Root       string
 	MCP        map[string]MCPServer
 	Providers  map[string]Provider
+	Sandboxes  map[string]SandboxProvider
 	AllowLocal bool
 	// InheritEnv names daemon variables forwarded to every command and agent in
 	// addition to PATH and LANG: image-provided toolchain and cache locations,
@@ -133,14 +134,40 @@ func (x *Executor) nodeEnv(n Node, r Run, contextFile string) ([]string, error) 
 		return nil, err
 	}
 	env := map[string]string{}
-	for _, k := range append(append([]string{"PATH", "LANG"}, x.InheritEnv...), n.PassEnv...) {
+	for _, k := range append([]string{"PATH", "LANG"}, x.InheritEnv...) {
 		if v, ok := os.LookupEnv(k); ok {
 			env[k] = v
 		}
 	}
+	variables, err := nodeVariables(n, r)
+	if err != nil {
+		return nil, err
+	}
+	for k, v := range variables {
+		env[k] = v
+	}
 	env["HOME"], env["TMPDIR"] = home, tmp
+	for k, v := range kilnVariables(r, contextFile, r.Workspace, r.Artifacts) {
+		env[k] = v
+	}
+	return envList(env)
+}
+
+// nodeVariables are the workflow-declared variables: explicitly forwarded
+// daemon variables and rendered node values. The machine-specific variables
+// (PATH, HOME, KILN_* paths) are added by the executing side.
+func nodeVariables(n Node, r Run) (map[string]string, error) {
+	env := map[string]string{}
+	for _, k := range n.PassEnv {
+		if !envPattern.MatchString(k) {
+			return nil, fmt.Errorf("invalid pass_env name %q", k)
+		}
+		if v, ok := os.LookupEnv(k); ok {
+			env[k] = v
+		}
+	}
 	for k, v := range n.Env {
-		if k == "" || strings.ContainsAny(k, "=\x00") {
+		if !envPattern.MatchString(k) {
 			return nil, fmt.Errorf("invalid environment key %q", k)
 		}
 		value, err := render(v, r)
@@ -149,8 +176,12 @@ func (x *Executor) nodeEnv(n Node, r Run, contextFile string) ([]string, error) 
 		}
 		env[k] = value
 	}
-	env["KILN_CONTEXT_FILE"], env["KILN_RUN_ID"], env["KILN_WORKSPACE"], env["KILN_BASE_SHA"] = contextFile, r.ID, r.Workspace, r.BaseSHA
-	env["KILN_ARTIFACT_DIR"] = r.Artifacts
+	return env, nil
+}
+func kilnVariables(r Run, contextFile, workspace, artifacts string) map[string]string {
+	return map[string]string{"KILN_CONTEXT_FILE": contextFile, "KILN_RUN_ID": r.ID, "KILN_WORKSPACE": workspace, "KILN_BASE_SHA": r.BaseSHA, "KILN_ARTIFACT_DIR": artifacts}
+}
+func envList(env map[string]string) ([]string, error) {
 	result := []string{}
 	size := 0
 	for k, v := range env {
@@ -168,8 +199,14 @@ func (x *Executor) Execute(ctx context.Context, r Run, n Node) Result {
 	case "start", "end":
 		return Result{Outcome: "success"}
 	case "agent":
+		if r.Sandbox != nil {
+			return x.remoteAgent(ctx, r, n)
+		}
 		return x.agent(ctx, r, n)
 	case "command":
+		if r.Sandbox != nil {
+			return x.remoteCommand(ctx, r, n)
+		}
 		contextFile, err := x.writeContext(r)
 		if err != nil {
 			return failed(err)
@@ -191,6 +228,10 @@ func (x *Executor) Execute(ctx context.Context, r Run, n Node) Result {
 	}
 }
 
+func contextDocument(r Run, artifacts string) ([]byte, error) {
+	return json.Marshal(map[string]any{"inputs": r.Inputs, "outputs": r.Outputs, "run_id": r.ID, "decision": r.Decision, "candidate": r.Candidate, "artifacts": artifacts})
+}
+
 // Large outputs belong in a data file, not exec's size-limited environment.
 // Keep inputs out of recovery snapshots and product checkouts.
 func (x *Executor) writeContext(r Run) (string, error) {
@@ -205,7 +246,7 @@ func (x *Executor) writeContext(r Run) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	data, err := json.Marshal(map[string]any{"inputs": r.Inputs, "outputs": r.Outputs, "run_id": r.ID, "decision": r.Decision, "candidate": r.Candidate, "artifacts": r.Artifacts})
+	data, err := contextDocument(r, r.Artifacts)
 	if err == nil {
 		_, err = f.Write(data)
 	}

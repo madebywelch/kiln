@@ -11,6 +11,7 @@ The goal is not another chat loop. It is a small, inspectable control plane that
 - **One cursor per run:** supports branching and cycles with predictable checkpoint boundaries. Concurrent runs are supported; concurrent branches within a run are deliberately not.
 - **Two fixed agent backends:** Pi owns the OpenRouter tool loop and selected skills/MCP; Codex owns subscription inference and its native tools. No plugin/runtime matrix. Single-call model nodes remain a separate HTTP adapter. Pi Durable is experimental and would duplicate the scheduler/recovery boundary, so KILN uses Pi's JSON subprocess protocol.
 - **Immutable run/automation snapshots:** editing a workflow cannot silently alter in-flight work or an unattended schedule.
+- **One remote machine per run, not per node:** a `sandbox` workflow runs its commands, agents, and candidate checks on one boat.dev virtual machine while Git history, checkpoints, approvals, and publication stay on the host. The machine is an execution target, not a second control plane: no scheduler, lease, or database state lives there, and the HTTP API is driven directly rather than through an SDK.
 
 Fabro's explicit graphs, gates, and execution log were useful reference points. kiln is an independent YAML design, not a Fabro graph parser or API-compatible fork. References: [Fabro architecture](https://github.com/fabro-sh/fabro/blob/main/docs/public/reference/architecture.mdx), [graph language](https://github.com/fabro-sh/fabro/blob/main/docs/public/reference/dot-language.mdx).
 
@@ -68,6 +69,14 @@ Plans, transcripts, review notes and command context belong outside worktrees. L
 
 Cleanup is explicit and only permitted after the worker has stopped and the run is terminal. Audit data remains. No automated remote branch deletion or PR merge is performed.
 
+## Remote machines
+
+A run with a `sandbox` block gets one boat.dev machine during workspace preparation, created with an idempotency key derived from the run ID so a lost response never provisions a second billable machine. Preparation journals the machine ID even when it fails, and a retried preparation reuses it. Node execution brings the machine to a running state (resuming an archived one), moves its auto-stop deadline past the node timeout, and synchronizes the checkout through Git: a bundle of the objects the machine lacks goes out with the per-attempt files and artifacts in one tar; after the node, the machine stages its working tree, commits it with the pre-node commit as parent, and returns a bundle of that commit. The host fetches it and resets index and working tree to that tree, so the normal checkpoint records the remote result with the usual parent. Candidate validation adds a detached worktree of the candidate commit on the machine and removes it afterwards.
+
+Every remote process runs through a wrapper script: it refuses to start while a previous attempt's wrapper is alive (a per-run lease inside the machine, exit code 75), sources the attempt environment from a file it removes immediately, and runs the program with `env -i` and only the machine's `PATH`, `HOME`, and locale plus the node's declared variables. The wrapper runs detached; the host follows its output through the provider's attach stream, reconnecting from byte offsets as the protocol requires, and terminates the process group through the API on timeout, cancellation, or daemon shutdown. Output limits, transcript capture, semantic agent completion checks, and checkpoints are the same code as for local attempts.
+
+Terminal runs stop their machine; workspace cleanup deletes it. Waiting and interrupted runs keep it, bounded by the provider's idle auto-stop. The daemon never writes credentials into provider-side state beyond the per-attempt environment file, and it creates machines without the account's own secrets; the inference key a workflow already uses is the only credential a remote agent receives.
+
 ## Automations
 
 A saved automation pins a definition and either a five-field UTC cron expression or an exact event name. Creation of a scheduled run and advancement of its next cursor share one transaction. Missed ticks coalesce; overlapping work is skipped. The definition records the latest fire/run and skipped time.
@@ -77,6 +86,7 @@ Event delivery deduplication and creation of all matching runs share a transacti
 ## Boundaries
 
 - Worktrees isolate changes, not permissions. Commands are trusted code.
+- A remote machine isolates the daemon host from a run's commands, not the run from its own credentials: anything in the process environment is readable there. Codex subscription credentials never leave the host.
 - HTTP bearer authentication is single-operator, not per-resource authorization.
 - Global concurrency and visit/time/token limits bound individual execution, but there is no multi-tenant admission quota, disk quota, or aggregate cost budget.
 - Final output is checkpointed at attempt completion. Raw agent JSONL is captured during execution and downloadable via the authenticated API, including partial records. SSE streams lifecycle events, not individual token deltas.

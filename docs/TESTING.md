@@ -25,6 +25,7 @@ The suite uses temporary directories, disposable local Git repositories, mocked 
 - Minimal subprocess environments, shell-injection-resistant input handling, output limits, and large context files that avoid OS environment limits.
 - Bearer authentication, body limits, API schemas, cursor replay, SSE disconnects, signed GitHub webhooks, repository scoping, and delivery deduplication.
 - Cron cursor advancement, missed-tick coalescing, pinned automation revisions, overlap prevention, and disabled automations.
+- Remote machines against an in-process fake of the boat.dev API that executes commands in a temporary home: idempotent creation with retried transient refusals and a non-retried billing refusal, no-env and monitoring-off requests, auto-stop extension, Git bundle synchronization of modifications, additions, deletions, and ignored files, artifact mirroring in both directions, failed-attempt checkpoints, timeout and daemon-shutdown termination of the remote process group, resume of an archived machine, the in-machine lease refusing a surviving process, Pi configuration and transcript capture with machine-side paths, candidate validation in a remote worktree, stop at terminal state, and deletion on cleanup.
 
 Publication tests prove that unclassified residue blocks preparation; excluded files and prior caches are absent from a fresh validation checkout; binary files, mode changes, symlinks, literal bracket paths, file/directory replacements and deletions are selected correctly; configured identity is honored; missing identity fails; stale decisions/source changes block publication; internal artifact downloads are confined/authenticated; and cleanup retains evidence. A real local Git transport test injects competing branch creation, mirror/tag configuration and retries, then inspects the remote object database to prove private commits/files/tags were not sent.
 
@@ -100,6 +101,19 @@ A successful run should demonstrate:
 - Durable event replay and authenticated transcript/artifact retrieval.
 
 Safety does not depend on agent instructions: any unclassified residue blocks candidate preparation. Publication uses an expected-absent ref lease, so a competing branch creation fails rather than overwriting it. Product commits require an explicitly configured Git identity.
+
+### Sandbox acceptance
+
+The boat.dev acceptance is billable and needs `BOAT_API_KEY` for an account with an active plan (a key without one fails with `billing_required`). It makes no remote Git writes:
+
+```sh
+python3 scripts/sandbox_acceptance.py --artifacts .kiln/sandbox-UNIQUE            # Pi repair via OPENROUTER_API_KEY
+python3 scripts/sandbox_acceptance.py --artifacts .kiln/sandbox-UNIQUE --no-agent # deterministic command repair
+```
+
+It runs a failing build, a repair, a passing build, and candidate validation on one machine, checks the machine stays running at the human gate, verifies remote attempt results name the machine and every attempt has a checkpoint, downloads a remote artifact and the candidate diff, confirms the machine is archived once the run succeeds, and confirms workspace cleanup deletes it.
+
+The acceptance passed on 2026-10-18 against a `small` trial machine: the base image's Pi 1.3.0 completed the pinned 1.2.0 JSON protocol with DeepSeek over OpenRouter (12 turns, 11 tool calls), the whole graph including the human gate took under three minutes, and the account listed no sandboxes afterwards. A separate live check stopped the machine at a human gate through the provider API and confirmed the daemon resumed it for the next node with the ignored build cache intact.
 
 ### Scoped agent acceptance
 
