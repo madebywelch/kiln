@@ -44,7 +44,7 @@ The operator can inspect the last attempt and worktree, then explicitly retry wi
 
 The database has four responsibilities:
 
-- `documents`: workflow definitions, run snapshots, automations. JSON snapshots are bounded by graph/attempt limits and make a pinned definition self-contained.
+- `documents`: workflow definitions, run snapshots, automations. JSON snapshots are bounded by graph/attempt limits and make a pinned definition self-contained. Expression indexes on kind, status and creation time let listings and the automation overlap check read only the documents they return.
 - `events`: append-only transition records indexed by run and cursor.
 - `dedup`: request fingerprints and original result IDs, committed with run creation.
 - `meta`: schema version; an unknown version prevents startup.

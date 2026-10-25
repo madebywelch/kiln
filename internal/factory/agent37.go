@@ -447,9 +447,13 @@ func (a *agent37Machine) launch(ctx context.Context, r Run, l remoteLayout, atte
 		defer cancel()
 		// dash, Debian's /bin/sh, rejects "kill -- -pgid"; perl's kill takes a
 		// negative pid on every platform, and the builtin forms are fallbacks.
+		// KILL follows TERM only if the group is still alive five seconds later;
+		// a group that exits promptly releases the node as soon as it is gone.
 		script := fmt.Sprintf("pgid=%d\n", pid) +
 			"sig() { perl -e 'exit(kill($ARGV[0], -$ARGV[1]) ? 0 : 1)' \"$1\" \"$pgid\" 2>/dev/null || kill \"-$1\" -- \"-$pgid\" 2>/dev/null || kill \"-$1\" \"-$pgid\" 2>/dev/null; }\n" +
-			"sig TERM || exit 0\nsleep 5\nsig KILL || true\n"
+			"sig TERM || exit 0\n" +
+			"i=0; while [ $i -lt 50 ] && sig 0; do sleep 0.1; i=$((i+1)); done\n" +
+			"sig KILL || true\n"
 		if _, err := a.exec(killCtx, r, script, time.Minute); err != nil {
 			slog.Warn("remote process termination failed", "sandbox", r.Sandbox.ID, "pid", pid, "error", err)
 		}

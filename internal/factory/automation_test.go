@@ -121,3 +121,26 @@ func TestInvalidAutomationDefinitions(t *testing.T) {
 		}
 	}
 }
+
+// The busy query enumerates the non-terminal statuses so it can use the status
+// index; this keeps that list equal to the complement of Run.Terminal.
+func TestAutomationBusyMatchesTerminalStatuses(t *testing.T) {
+	t.Parallel()
+	s, err := OpenStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	e := &Engine{store: s}
+	for _, status := range []string{"queued", "running", "waiting", "succeeded", "failed", "canceled", "interrupted"} {
+		r := makeRun(basicWorkflow(), "rev", status, nil)
+		r.Status = status
+		if err := s.commit([]change{{"run", r.ID, r}}, nil, nil); err != nil {
+			t.Fatal(err)
+		}
+		busy, err := e.automationBusy(status)
+		if err != nil || busy == r.Terminal() {
+			t.Fatalf("%s: busy=%v err=%v", status, busy, err)
+		}
+	}
+}

@@ -66,9 +66,13 @@ func (e *Engine) PutAutomation(id string, req AutomationRequest) (Automation, er
 	}
 	return a, e.store.commit([]change{{"automation", id, a}}, nil, nil)
 }
+
+// automationBusy reports whether the automation owns a run that is not
+// terminal. The non-terminal statuses are enumerated so the status index
+// answers with four probes instead of parsing every run document.
 func (e *Engine) automationBusy(id string) (bool, error) {
 	var count int
-	err := e.store.db.QueryRow("SELECT count(*) FROM documents WHERE kind='run' AND json_extract(data,'$.automation_id')=? AND json_extract(data,'$.status') NOT IN ('succeeded','failed','canceled')", id).Scan(&count)
+	err := e.store.db.QueryRow("SELECT count(*) FROM documents WHERE kind='run' AND json_extract(data,'$.status') IN ('queued','running','waiting','interrupted') AND json_extract(data,'$.automation_id')=?", id).Scan(&count)
 	return count > 0, err
 }
 func (e *Engine) schedule(at time.Time) error {

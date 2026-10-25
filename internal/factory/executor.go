@@ -166,11 +166,18 @@ func nodeVariables(n Node, r Run) (map[string]string, error) {
 			env[k] = v
 		}
 	}
+	if len(n.Env) == 0 {
+		return env, nil
+	}
+	data, err := newTemplateData(r)
+	if err != nil {
+		return nil, err
+	}
 	for k, v := range n.Env {
 		if !envPattern.MatchString(k) {
 			return nil, fmt.Errorf("invalid environment key %q", k)
 		}
-		value, err := render(v, r)
+		value, err := data.render(v)
 		if err != nil {
 			return nil, err
 		}

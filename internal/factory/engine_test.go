@@ -2,6 +2,7 @@ package factory
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -335,5 +336,52 @@ func TestCleanupRetainsHistory(t *testing.T) {
 	}
 	if _, err := e.Retry(r.ID); !errors.Is(err, ErrConflict) {
 		t.Fatal("cleaned run retried")
+	}
+}
+
+// A data directory from a release with the status-only index gets the
+// ordering indexes on open, and the superseded index is dropped.
+func TestStoreReplacesLegacyIndex(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`
+CREATE TABLE meta (version INTEGER NOT NULL); INSERT INTO meta VALUES (3);
+CREATE TABLE documents (kind TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL CHECK(json_valid(data)), PRIMARY KEY (kind,id));
+CREATE INDEX runs_status ON documents(kind, json_extract(data,'$.status'));
+INSERT INTO documents VALUES ('run','a','{"status":"queued","created_at":"2026-10-24T00:00:00Z"}');`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err := OpenStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	rows, err := s.db.Query("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='documents' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		names = append(names, name)
+	}
+	if strings.Join(names, ",") != "documents_created,documents_status_created" {
+		t.Fatalf("indexes after open: %v", names)
+	}
+	runs, err := list[Run](s, "run", "queued", 10, 0)
+	if err != nil || len(runs) != 1 || runs[0].Status != "queued" {
+		t.Fatalf("legacy document unreadable: %v %v", runs, err)
 	}
 }

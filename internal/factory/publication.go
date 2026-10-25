@@ -110,11 +110,15 @@ func validatePublicationPath(p string) error {
 	return nil
 }
 func publicationSelection(n Node, r Run) (map[string]bool, error) {
+	data, err := newTemplateData(r)
+	if err != nil {
+		return nil, err
+	}
 	if n.Selection != "" {
 		if len(n.Files) > 0 || len(n.Exclude) > 0 {
 			return nil, errors.New("selection cannot be combined with files/exclude")
 		}
-		value, err := render(n.Selection, r)
+		value, err := data.render(n.Selection)
 		if err != nil {
 			return nil, err
 		}
@@ -139,7 +143,7 @@ func publicationSelection(n Node, r Run) (map[string]bool, error) {
 		for _, p := range paths {
 			if n.Selection == "" {
 				var err error
-				p, err = render(p, r)
+				p, err = data.render(p)
 				if err != nil {
 					return nil, err
 				}

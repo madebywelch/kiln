@@ -8,6 +8,8 @@ make docker-test
 make docker-smoke
 ```
 
+Benchmarks for template rendering and the store's list and overlap queries run with `go test -run '^$' -bench . ./internal/factory`; they are the evidence for changes to those paths.
+
 The suite uses temporary directories, disposable local Git repositories, mocked HTTP inference, and an in-process HTTP server. It never needs provider credentials or remote repository access. Tests cover:
 
 - Invalid/ambiguous YAML, unknown fields, duplicate keys, extra documents, graph reachability, edge targets, outcome names, time/visit limits, and strict templates.

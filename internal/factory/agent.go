@@ -345,6 +345,7 @@ func collectAgent(ctx context.Context, dir string, n Node, start func(context.Co
 	scan := bufio.NewScanner(proc.stdout)
 	scan.Buffer(make([]byte, 64<<10), 2<<20)
 	total := 0
+	var record []byte
 	var streamErr error
 	for scan.Scan() {
 		line := scan.Bytes()
@@ -354,7 +355,8 @@ func collectAgent(ctx context.Context, dir string, n Node, start func(context.Co
 			stop()
 			break
 		}
-		if _, err := f.Write(append(append([]byte(nil), line...), '\n')); err != nil {
+		record = append(append(record[:0], line...), '\n')
+		if _, err := f.Write(record); err != nil {
 			streamErr = err
 			stop()
 			break

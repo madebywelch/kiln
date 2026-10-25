@@ -355,20 +355,36 @@ func (w Workflow) Validate() error {
 	return nil
 }
 
-func render(s string, r Run) (string, error) {
+// templateData is the view node templates see: inputs, outputs, the run and
+// its decision as JSON-shaped values. Building it marshals the whole run,
+// including every attempt's output, so a caller that renders several values
+// builds it once.
+type templateData map[string]any
+
+func newTemplateData(r Run) (templateData, error) {
+	data, err := json.Marshal(r)
+	if err != nil {
+		return nil, err
+	}
+	var normalized map[string]any
+	if err := json.Unmarshal(data, &normalized); err != nil {
+		return nil, err
+	}
+	return templateData{"inputs": r.Inputs, "outputs": normalized["outputs"], "run": normalized, "decision": normalized["decision"]}, nil
+}
+func (d templateData) render(s string) (string, error) {
 	t, err := template.New("node").Option("missingkey=error").Parse(s)
 	if err != nil {
 		return "", err
 	}
 	var b bytes.Buffer
-	data, err := json.Marshal(r)
+	err = t.Execute(&b, map[string]any(d))
+	return b.String(), err
+}
+func render(s string, r Run) (string, error) {
+	d, err := newTemplateData(r)
 	if err != nil {
 		return "", err
 	}
-	var normalized map[string]any
-	if err := json.Unmarshal(data, &normalized); err != nil {
-		return "", err
-	}
-	err = t.Execute(&b, map[string]any{"inputs": r.Inputs, "outputs": normalized["outputs"], "run": normalized, "decision": normalized["decision"]})
-	return b.String(), err
+	return d.render(s)
 }

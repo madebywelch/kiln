@@ -49,7 +49,11 @@ CREATE TABLE IF NOT EXISTS documents (
  kind TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL CHECK(json_valid(data)),
  PRIMARY KEY (kind,id)
 );
-CREATE INDEX IF NOT EXISTS runs_status ON documents(kind, json_extract(data,'$.status'));
+-- Both list orders and the status probes walk an index, so a page or a
+-- count touches only the documents it returns.
+DROP INDEX IF EXISTS runs_status;
+CREATE INDEX IF NOT EXISTS documents_created ON documents(kind, json_extract(data,'$.created_at'), id);
+CREATE INDEX IF NOT EXISTS documents_status_created ON documents(kind, json_extract(data,'$.status'), json_extract(data,'$.created_at'), id);
 CREATE TABLE IF NOT EXISTS events (
  id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, type TEXT NOT NULL,
  time TEXT NOT NULL, data TEXT NOT NULL
