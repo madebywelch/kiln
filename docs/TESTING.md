@@ -17,8 +17,10 @@ The suite uses temporary directories, disposable local Git repositories, mocked 
 - Timeout and process-group cancellation, including a delayed grandchild that must not write after cancellation.
 - Inherited execution leases, orphan retry prevention, and transient fork/exec descriptor inheritance under concurrency.
 - Durable human questions, stale/duplicate decisions, explicit rejection, and restart recovery.
+- Actual SIGKILL of a separate engine process: pending questions survive unchanged, ambiguous commands remain interrupted, and a surviving command's lease blocks retry until the process is stopped and recovery is explicitly requested.
 - Concurrent idempotent run creation and content-pinned definitions.
 - Atomic rollback of state, events, and deduplication records.
+- Rejected startup preserves existing schema, data, and journal mode for incompatible, missing, malformed, empty, or multi-row schema metadata.
 - Injected SQLite write failures that stop dispatch and produce internal errors rather than validation errors.
 - Isolated worktrees, base-relative diffs, preservation of modified worktrees during preparation recovery, and idempotent cleanup after a lost checkpoint.
 - Verification of every origin push URL, including a second unauthorized destination.
@@ -27,6 +29,8 @@ The suite uses temporary directories, disposable local Git repositories, mocked 
 - Minimal subprocess environments, shell-injection-resistant input handling, output limits, and large context files that avoid OS environment limits.
 - Bearer authentication, body limits, API schemas, cursor replay, SSE disconnects, signed GitHub webhooks, repository scoping, and delivery deduplication.
 - Cron cursor advancement, missed-tick coalescing, pinned automation revisions, overlap prevention, and disabled automations.
+- Timezone-prefixed cron input is rejected without reaching the dependency's tab-separated-input panic.
+- Lost remote launch responses and failed workspace collection interrupt execution without automatic graph advancement, preserve attempt evidence, and survive restart. Additional fault injection covers ambiguous mutation responses, safe-refusal retries, output-follow failures, and lease checks before workspace synchronization.
 - Remote machines against in-process fakes of the boat.dev and agent37 APIs that execute commands in a temporary home. Boat: idempotent creation with retried transient refusals and a non-retried billing refusal, no-env and monitoring-off requests, auto-stop extension, Git bundle synchronization of modifications, additions, deletions, and ignored files, artifact mirroring in both directions, failed-attempt checkpoints, timeout and daemon-shutdown termination of the remote process group, resume of an archived machine, the in-machine lease refusing a surviving process, Pi configuration and transcript capture with machine-side paths, candidate validation in a remote worktree, stop at terminal state, and deletion on cleanup. agent37: create request shape with template, type, shape, region, auto-sleep and run tag, output that spans several poll chunks arriving byte-exact in a transcript and bounded in a command result, termination of the detached process group on timeout, transparent wake of a sleeping instance versus an explicit start of a stopped one, template version pins, stop at terminal state, deletion on cleanup, and a non-retried balance refusal.
 
 Publication tests prove that unclassified residue blocks preparation; excluded files and prior caches are absent from a fresh validation checkout; binary files, mode changes, symlinks, literal bracket paths, file/directory replacements and deletions are selected correctly; configured identity is honored; missing identity fails; stale decisions/source changes block publication; internal artifact downloads are confined/authenticated; and cleanup retains evidence. A real local Git transport test injects competing branch creation, mirror/tag configuration and retries, then inspects the remote object database to prove private commits/files/tags were not sent.
@@ -62,7 +66,7 @@ Prerequisites:
 - `OPENROUTER_API_KEY` is present in the environment.
 - `gh auth status` and `codex login status` succeed under the same account that launches the daemon.
 - A private, disposable GitHub repository has the contents of `testdata/intervals/` on `main`.
-- The machine has Python 3, Git identity, `gh`, Pi 1.3.0 (Node 22.19+), and Codex 0.162.1.
+- The machine has Python 3, Git identity, `gh`, Pi 1.5.0 (Node 22.19+), and Codex 0.162.1.
 
 Example fixture setup, if you need a fresh repository:
 
@@ -116,7 +120,7 @@ python3 scripts/sandbox_acceptance.py --artifacts .kiln/sandbox-UNIQUE --no-agen
 
 It runs a failing build, a repair, a passing build, and candidate validation on one machine, checks the machine stays running at the human gate, verifies remote attempt results name the machine and every attempt has a checkpoint, downloads a remote artifact and the candidate diff, confirms the machine is archived once the run succeeds, and confirms workspace cleanup deletes it.
 
-The acceptance passed on 2026-10-18 against a `small` trial machine: the base image's Pi 1.3.0 (the pinned version) completed the JSON protocol with DeepSeek over OpenRouter (12 turns, 11 tool calls), the whole graph including the human gate took under three minutes, and the account listed no sandboxes afterwards. A separate live check stopped the machine at a human gate through the provider API and confirmed the daemon resumed it for the next node with the ignored build cache intact.
+The acceptance passed on 2026-10-18 against a `small` trial machine: the base image's Pi 1.3.0 (the then-pinned version) completed the JSON protocol with DeepSeek over OpenRouter (12 turns, 11 tool calls), the whole graph including the human gate took under three minutes, and the account listed no sandboxes afterwards. A separate live check stopped the machine at a human gate through the provider API and confirmed the daemon resumed it for the next node with the ignored build cache intact.
 
 The agent37 acceptance passed on 2026-10-18 against a `default` 2 vCPU instance of the stock `agent37-pi` template (image tag 2026.10.11a, gVisor kernel): its Pi 1.1.0 accepted the pinned harness's flags and JSON protocol with DeepSeek over OpenRouter (8 turns, 7 tool calls), the detached wrapper and chunked output polling delivered every attempt, the instance was stopped at terminal state and deleted on cleanup, and the workspace's other instances were untouched. A separate live check timed a node out and confirmed, from the next node inside the same instance, that the detached process group was gone; the termination script avoids dash's `kill` builtin, which rejects negative process group ids.
 

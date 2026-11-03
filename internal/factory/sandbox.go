@@ -226,6 +226,9 @@ func (x *Executor) prepareSandbox(ctx context.Context, r Run) (Run, error) {
 // Only objects the sandbox lacks travel, as a Git bundle inside the inbound
 // tar that also carries per-attempt files and artifacts.
 func (x *Executor) pushWorkspace(ctx context.Context, m machine, r Run, l remoteLayout, dir string, candidate bool, files map[string][]byte, artifacts map[string][]byte) error {
+	if err := checkRemoteLease(ctx, m, r, l); err != nil {
+		return err
+	}
 	entries := map[string][]byte{}
 	for k, v := range files {
 		entries[k] = v
@@ -314,6 +317,9 @@ func (x *Executor) bundle(ctx context.Context, workspace, have string) ([]byte, 
 // as staged changes for the ordinary checkpoint, and merges remote artifacts.
 // Candidate worktrees are removed from the sandbox afterwards.
 func (x *Executor) pullWorkspace(ctx context.Context, m machine, r Run, l remoteLayout, dir string, candidate bool, attempt string) error {
+	if err := checkRemoteLease(ctx, m, r, l); err != nil {
+		return err
+	}
 	// COPYFILE_DISABLE keeps bsdtar from adding AppleDouble entries when the
 	// provider is simulated on macOS; GNU tar ignores it.
 	script := "set -eu\nexport COPYFILE_DISABLE=1\nroot=" + shQuote(l.root) + "\nrm -rf \"$root/sync/out\" \"$root/sync/out.tar\"\nmkdir -p \"$root/sync/out\"\n"
@@ -493,6 +499,24 @@ type remoteRunner struct {
 
 const remoteLeaseExit = 75
 
+type remoteLeaseError string
+
+func (e remoteLeaseError) Error() string { return string(e) }
+
+func checkRemoteLease(ctx context.Context, m machine, r Run, l remoteLayout) error {
+	script := "lease=" + shQuote(l.root+"/lease.pid") + "\n" +
+		"if [ -f \"$lease\" ] && kill -0 \"$(cat \"$lease\" 2>/dev/null)\" 2>/dev/null; then\n" +
+		"  printf 'kiln: attempt %s (pid %s) is still running in this sandbox; stop it before retrying\\n' \"$(cat \"$lease.attempt\" 2>/dev/null)\" \"$(cat \"$lease\")\"\nfi\n"
+	out, err := m.exec(ctx, r, script, time.Minute)
+	if err != nil {
+		return fmt.Errorf("check remote execution lease: %w", err)
+	}
+	if strings.TrimSpace(out) != "" {
+		return remoteLeaseError(strings.TrimSpace(out))
+	}
+	return nil
+}
+
 func (j remoteRunner) payload(l remoteLayout) map[string][]byte {
 	keys := make([]string, 0, len(j.env))
 	for k := range j.env {
@@ -563,7 +587,7 @@ func (x *Executor) remoteCommand(ctx context.Context, r Run, n Node) Result {
 	write := func(p []byte) error { _, err := b.Write(p); return err }
 	wait, _, err := m.launch(ctx, r, l, attempt, write, write)
 	if err != nil {
-		return failed(err)
+		return interruptRemote(Result{Sandbox: r.Sandbox.ID, ExitCode: -1}, fmt.Errorf("remote launch was not confirmed: %w", err))
 	}
 	code, waitErr := wait()
 	result := Result{Outcome: "success", Output: strings.ToValidUTF8(b.b.String(), "�"), Truncated: b.truncated, Sandbox: r.Sandbox.ID}
@@ -578,9 +602,18 @@ func (x *Executor) remoteCommand(ctx context.Context, r Run, n Node) Result {
 		result.Outcome, result.Error, result.ExitCode = "failure", fmt.Sprintf("exit status %d", code), code
 	}
 	// Collection runs for failed attempts too: checkpoints record failures.
-	if err := x.collect(ctx, m, r, l, dir, candidate, attempt); err != nil && ctx.Err() == nil {
-		return failed(fmt.Errorf("remote attempt finished (%s) but its results could not be collected: %w", result.Outcome, err))
+	if err := x.collect(ctx, m, r, l, dir, candidate, attempt); err != nil {
+		return interruptRemote(result, fmt.Errorf("remote attempt finished (%s) but its results could not be collected: %w", result.Outcome, err))
 	}
+	return result
+}
+
+func interruptRemote(result Result, err error) Result {
+	result.Outcome = "interrupted"
+	if result.Error != "" {
+		result.Error += "; "
+	}
+	result.Error += err.Error() + "; inspect the remote sandbox and workspace before retrying"
 	return result
 }
 
@@ -667,11 +700,15 @@ func (x *Executor) remoteAgent(ctx context.Context, r Run, n Node) Result {
 			return failed(fmt.Errorf("required MCP server unavailable: %w", err))
 		}
 	}
+	var launchErr error
 	result := collectAgent(ctx, hostDir, n, func(ctx context.Context) (agentProcess, error) {
 		reader, writer := io.Pipe()
 		stderr := &cappedBuffer{}
 		wait, kill, err := m.launch(ctx, r, l, attempt.ID, func(p []byte) error { _, err := writer.Write(p); return err }, func(p []byte) error { _, err := stderr.Write(p); return err })
 		if err != nil {
+			launchErr = err
+			reader.Close()
+			writer.Close()
 			return agentProcess{}, err
 		}
 		waited := make(chan error, 1)
@@ -689,8 +726,11 @@ func (x *Executor) remoteAgent(ctx context.Context, r Run, n Node) Result {
 		return agentProcess{stdout: reader, stderr: stderr, wait: func() error { return <-waited }, kill: kill}, nil
 	})
 	result.Sandbox = r.Sandbox.ID
-	if err := x.collect(ctx, m, r, l, dir, candidate, attempt.ID); err != nil && ctx.Err() == nil {
-		return failed(fmt.Errorf("remote attempt finished (%s) but its results could not be collected: %w", result.Outcome, err))
+	if launchErr != nil {
+		return interruptRemote(result, errors.New("remote launch was not confirmed"))
+	}
+	if err := x.collect(ctx, m, r, l, dir, candidate, attempt.ID); err != nil {
+		return interruptRemote(result, fmt.Errorf("remote attempt finished (%s) but its results could not be collected: %w", result.Outcome, err))
 	}
 	return result
 }

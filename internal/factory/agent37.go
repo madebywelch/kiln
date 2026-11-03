@@ -60,11 +60,15 @@ func (e *agent37Error) Error() string {
 
 // transient reports whether the documented contract says a retry is safe.
 func (e *agent37Error) transient() bool {
+	return e.refused() || (e.Code == "" && (e.Status == 502 || e.Status == 503 || e.Status == 504))
+}
+
+func (e *agent37Error) refused() bool {
 	switch e.Code {
 	case "try_again", "no_capacity", "capacity_unavailable", "rate_limited":
 		return true
 	}
-	return e.Code == "" && (e.Status == 502 || e.Status == 503 || e.Status == 504)
+	return false
 }
 
 type agent37Instance struct {
@@ -171,11 +175,15 @@ func decodeAgent37Error(resp *http.Response, data []byte) error {
 
 // retryAgent37 repeats operations the contract marks safe to repeat.
 func retryAgent37(ctx context.Context, op func() error) error {
+	return retryAgent37If(ctx, op, (*agent37Error).transient)
+}
+
+func retryAgent37If(ctx context.Context, op func() error, retryable func(*agent37Error) bool) error {
 	delay := time.Second
 	for {
 		err := op()
 		var ae *agent37Error
-		if err == nil || !errors.As(err, &ae) || !ae.transient() {
+		if err == nil || !errors.As(err, &ae) || !retryable(ae) {
 			return err
 		}
 		wait := delay
@@ -200,7 +208,7 @@ func (c *agent37Client) api(path string) string { return strings.TrimRight(c.bas
 
 func (c *agent37Client) create(ctx context.Context, body map[string]any) (agent37Instance, error) {
 	var out agent37Instance
-	err := retryAgent37(ctx, func() error { return c.doJSON(ctx, "POST", c.api("/instances"), true, body, &out) })
+	err := retryAgent37If(ctx, func() error { return c.doJSON(ctx, "POST", c.api("/instances"), true, body, &out) }, (*agent37Error).refused)
 	if err == nil && (out.ID == "" || out.URL == "") {
 		err = errors.New("agent37 API returned no instance id or URL")
 	}
@@ -227,9 +235,9 @@ func (c *agent37Client) delete(ctx context.Context, id string) error {
 // not be repeated, so only refusals that provably never started it are retried.
 func (c *agent37Client) run(ctx context.Context, id, command string) (agent37Exec, error) {
 	var out agent37Exec
-	err := retryAgent37(ctx, func() error {
+	err := retryAgent37If(ctx, func() error {
 		return c.doJSON(ctx, "POST", strings.TrimRight(c.exec, "/")+"/v1/instances/"+id+"/exec", false, map[string]any{"command": command}, &out)
-	})
+	}, (*agent37Error).refused)
 	return out, err
 }
 
@@ -465,7 +473,7 @@ func (a *agent37Machine) launch(ctx context.Context, r Run, l remoteLayout, atte
 	done := make(chan outcome, 1)
 	go func() {
 		code, err := a.follow(ctx, r, prefix, stdout, stderr)
-		if ctx.Err() != nil {
+		if err != nil || ctx.Err() != nil {
 			terminate()
 			if err == nil {
 				err = ctx.Err()

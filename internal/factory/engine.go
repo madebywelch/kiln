@@ -38,7 +38,11 @@ func NewEngine(s *Store, x *Executor, workers int) (*Engine, error) {
 		event := "run.interrupted"
 		r.Status, r.Error = "interrupted", "daemon stopped during an external operation; inspect side effects before retrying"
 		if pendingAttempt(r) {
-			r.Status, r.Error, event = "queued", "", "run.recovered"
+			if result := r.Attempts[len(r.Attempts)-1].Result; result.Outcome == "interrupted" {
+				r.Error = result.Error
+			} else {
+				r.Status, r.Error, event = "queued", "", "run.recovered"
+			}
 		} else if len(r.Attempts) > 0 {
 			a := &r.Attempts[len(r.Attempts)-1]
 			if !a.Finalized {
@@ -279,6 +283,8 @@ func (e *Engine) step(ctx context.Context, r Run) {
 	} else if ctx.Err() != nil {
 		current.Status, current.Error = "interrupted", "daemon stopped; inspect the last operation before retrying"
 		result.Outcome = "interrupted"
+	} else if result.Outcome == "interrupted" {
+		current.Status, current.Error = "interrupted", result.Error
 	}
 	if n.Type == "changeset" && result.Outcome == "success" {
 		current.Candidate = result.Candidate

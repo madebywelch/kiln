@@ -62,6 +62,10 @@ func (e *boatError) transient() bool {
 	return false
 }
 
+func (e *boatError) commandRetryable() bool {
+	return e.transient() && ((e.Status != 500 && e.Status != 503) || e.Code == "out_of_capacity")
+}
+
 type boatSandbox struct {
 	ID           string     `json:"id"`
 	State        string     `json:"state"`
@@ -175,11 +179,15 @@ func decodeBoatError(status int, data []byte) error {
 // retry repeats an operation whose repetition the API documents as safe,
 // pacing by the body's retryAfter when present, until the context ends.
 func retry(ctx context.Context, op func() error) error {
+	return retryBoat(ctx, op, (*boatError).transient)
+}
+
+func retryBoat(ctx context.Context, op func() error, retryable func(*boatError) bool) error {
 	delay := time.Second
 	for {
 		err := op()
 		var be *boatError
-		if err == nil || !errors.As(err, &be) || !be.transient() {
+		if err == nil || !errors.As(err, &be) || !retryable(be) {
 			return err
 		}
 		wait := delay
@@ -254,20 +262,20 @@ func (c *boatClient) run(ctx context.Context, id, command string, timeout time.D
 		seconds = 600
 	}
 	var out boatCommandResult
-	err := retry(ctx, func() error {
+	err := retryBoat(ctx, func() error {
 		// A command may already have run when the transport fails without the
 		// documented retryable flag, so only retryable errors repeat it.
 		return c.do(ctx, "POST", "/sandboxes/"+id+"/commands", nil, map[string]any{"command": command, "timeoutSeconds": seconds}, &out)
-	})
+	}, (*boatError).commandRetryable)
 	return out, err
 }
 func (c *boatClient) start(ctx context.Context, id, command string) (int, error) {
 	var out struct {
 		ProcessID int `json:"processId"`
 	}
-	err := retry(ctx, func() error {
+	err := retryBoat(ctx, func() error {
 		return c.do(ctx, "POST", "/sandboxes/"+id+"/commands", nil, map[string]any{"command": command, "detached": true}, &out)
-	})
+	}, (*boatError).commandRetryable)
 	if err == nil && out.ProcessID == 0 {
 		err = errors.New("boat API returned no process id")
 	}
@@ -567,7 +575,7 @@ func (b *boatMachine) launch(ctx context.Context, r Run, l remoteLayout, attempt
 	done := make(chan outcome, 1)
 	go func() {
 		code, err := b.client.attach(ctx, sandbox, pid, stdout, stderr)
-		if ctx.Err() != nil {
+		if err != nil || ctx.Err() != nil {
 			terminate()
 			if err == nil {
 				err = ctx.Err()

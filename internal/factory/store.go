@@ -39,6 +39,22 @@ func OpenStore(dir string) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1)
 	s := &Store{db: db, lock: lock}
+	var objects int
+	if err = db.QueryRow("SELECT count(*) FROM sqlite_schema").Scan(&objects); err != nil {
+		s.Close()
+		return nil, err
+	}
+	if objects > 0 {
+		var count, version int
+		if err = db.QueryRow("SELECT count(*), min(version) FROM meta").Scan(&count, &version); err != nil {
+			s.Close()
+			return nil, fmt.Errorf("invalid database schema metadata: %w", err)
+		}
+		if count != 1 || version != 3 {
+			s.Close()
+			return nil, fmt.Errorf("unsupported database schema metadata: %d rows, version %d", count, version)
+		}
+	}
 	_, err = db.Exec(`
 PRAGMA journal_mode=WAL;
 PRAGMA synchronous=FULL;
@@ -66,11 +82,6 @@ CREATE TABLE IF NOT EXISTS dedup (
 	if err != nil {
 		s.Close()
 		return nil, err
-	}
-	var version int
-	if err = db.QueryRow("SELECT version FROM meta").Scan(&version); err != nil || version != 3 {
-		s.Close()
-		return nil, fmt.Errorf("unsupported database schema version %d", version)
 	}
 	return s, nil
 }

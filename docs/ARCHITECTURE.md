@@ -15,6 +15,8 @@ The goal is not another chat loop. It is a small, inspectable control plane that
 
 Fabro's explicit graphs, gates, and execution log were useful reference points. kiln is an independent YAML design, not a Fabro graph parser or API-compatible fork. References: [Fabro architecture](https://github.com/fabro-sh/fabro/blob/main/docs/public/reference/architecture.mdx), [graph language](https://github.com/fabro-sh/fabro/blob/main/docs/public/reference/dot-language.mdx).
 
+[Gas City](https://github.com/gastownhall/gascity/blob/main/docs/getting-started/how-gas-city-works.md) and [Beads](https://github.com/gastownhall/beads) provide another useful reliability principle: durable work must outlive the session executing it. KILN applies that principle through pinned runs, journaled attempts, persisted human questions, execution leases, and checkpoint reconciliation. Recovery must distinguish a known result from an uncertain external side effect; a generic server error is not proof that a command never ran. This does not require adopting a fleet scheduler or replacing the single-host SQLite store with a distributed work tracker.
+
 ## State machine
 
 ```text
@@ -40,6 +42,8 @@ Subprocesses inherit a per-run file-descriptor lease. If a child survives a hard
 
 The operator can inspect the last attempt and worktree, then explicitly retry with acknowledgement that side effects may repeat. There is no claim of exactly-once command/model/PR execution.
 
+Remote launch responses that cannot confirm execution, and failures to collect the remote workspace, also leave the run `interrupted`. They do not follow a failure edge or automatically replay the node, including after restart. Inspect the sandbox and preserve any uncollected changes before retrying: retry can synchronize the host workspace back to the sandbox. Generic server errors do not trigger automatic command replay; explicit safe refusals still permit transport retries. Output-follow failures attempt to terminate the detached process, and synchronization refuses a live remote execution lease before modifying files. Termination is best-effort when the provider cannot be reached.
+
 ## Persistence and concurrency
 
 The database has four responsibilities:
@@ -50,6 +54,8 @@ The database has four responsibilities:
 - `meta`: schema version; an unknown version prevents startup.
 
 All engine mutations are serialized by one mutex. A filesystem advisory lock rejects a second daemon for the same data directory. SQLite uses one connection. External execution happens outside the engine mutex. Repository preparation and publication use a separate Git mutex; different runs still execute their commands/models concurrently.
+
+Startup validates schema metadata before changing tables, indexes, or journal mode. An existing database must contain exactly one supported version row; missing, malformed, or incompatible metadata is rejected without initializing over it. Only an empty database is initialized as new state.
 
 Cancellation commits state before signaling the process group. A late worker result can add attempt evidence but cannot change a canceled run to success. A persistence failure stops dispatch and cancels active operations; it appears in `/v1/status` and structured logs. Restart and inspect interrupted runs after resolving the storage fault.
 
