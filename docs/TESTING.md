@@ -136,6 +136,27 @@ python3 scripts/agent_acceptance.py --artifacts .kiln/scoped-agent-UNIQUE
 
 It loads a named repository skill, calls a selected MCP tool, reads and edits code, runs the tests, passes a human gate, downloads its transcript through the API, and retains the run's Git checkpoints. An unselected deliberately invalid MCP command must never be loaded. Pi usage is recorded, but its catalog cost is not reported as provider billing.
 
+### Durable work acceptance on Agent37
+
+This opt-in **billable** test uses a disposable local copy of `testdata/intervals`, the current `bin/kiln`, configured Git identity, `AGENT37_API_KEY`, and `OPENROUTER_API_KEY`. No GitHub repository, push, or PR is needed or tested. Build with `make build` first. The driver creates two sequential Agent37 `default` instances (2 CPU, 4 GB RAM, 6 GB disk; five-minute idle timeout), installs Pi 1.5.0 under `/tmp/kiln-acceptance-pi` if needed, and invokes the repair agent **once**, with no repair retries.
+
+```sh
+# No network, daemon, provisioning, or inference: validate the generated workflows.
+python3 scripts/work_acceptance.py --offline-check --artifacts .kiln/work-offline-UNIQUE
+
+# Billable: subtract ALL prior live-run spending from the approved $10 total.
+python3 scripts/work_acceptance.py --artifacts .kiln/work-live-UNIQUE \
+  --budget 10 --max-spend 9.99 --model deepseek/deepseek-v3.2
+```
+
+Use a fresh artifacts directory each time. `--max-spend` is the remaining allowance, not permission for another $10 run; pass the actual remaining amount. Before provisioning, the driver snapshots OpenRouter `/key` usage and checks public `/models` pricing against 102 requests (the 101-turn boundary plus one in flight), each charged for the model's full `context_length` and Pi's fixed 8192 output tokens. It reserves $0.50 for machines, polls key usage, bounds the test to 25 minutes and the workflow step count, and never changes keys, account limits, or top-ups. This conservative admission check may refuse a cheaper actual run. The reserve is not an Agent37 billing cap, `/key` usage can lag or include concurrent account activity, and the reported usage delta excludes machine charges; run serially and reconcile provider billing against the total approval.
+
+The first remote run fails the original unit tests and demonstrably holds a live remote lease. A daemon SIGKILL/restart must interrupt that run without closing its work; replacement is rejected until explicit cancellation and workspace deletion are confirmed. A new workflow on the same work reads a fresh handoff-only continuity token from `KILN_CONTEXT_FILE`, repairs only `intervals.py`, and produces a proof artifact. Original-test SHA256 checks, clean candidate validation, actual commit identity/parentage, transcript tool calls and positive token usage are verified. Another SIGKILL must preserve the candidate and human question unchanged. The driver explicitly simulates **test approval**, not production approval; work completion separately requires verifier evidence for every criterion. Both run histories and completion evidence must survive machine deletion and another restart, and stale original retry must be rejected.
+
+Private artifacts include a redacted `report.json`, daemon log, run snapshots, raw-protocol repair transcript, handoff proof and candidate diff. `finally` stops the daemon, recovers run IDs from its unique durable store, and deletes only instances whose provider `metadata.kiln_run` matches those IDs. Deletion is only reported successful after provider 404; failed discovery/deletion and known instance IDs remain in the report for manual follow-up. HTTP 402/403 is a funding/permission failure, not a reason to retry or top up. Keep artifacts private: they retain provider evidence and model output, with known credential values redacted from exported logs/reports.
+
+Live acceptance passed on 2026-11-03 against the durable-work implementation at `b311466`: 31 assertions passed in about 141 seconds using two sequential Agent37 instances and Pi 1.5.0 with DeepSeek V3.2 through OpenRouter. The replacement made 14 model turns and 17 tool calls, extracted the handoff-only token, repaired the real fixture, and passed unchanged tests and clean candidate validation. Both machines were deleted and the provider listing was empty. The observed OpenRouter key-usage increase was $0.006082584; the Agent37 wallet decreased by $0.000351. These are observed account deltas for that run, not a pricing guarantee. GitHub publication was not exercised.
+
 Acceptance artifacts are local snapshots and are ignored by Git. Schema 3 state can be upgraded transactionally to schema 4 after a full backup; other unsupported versions require fresh state. Do not downgrade a binary against upgraded state.
 
 ## Reproducing targeted failures
