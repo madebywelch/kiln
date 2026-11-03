@@ -74,6 +74,8 @@ type SandboxState struct {
 	URL      string `json:"url,omitempty"`
 }
 type Run struct {
+	WorkID       string            `json:"work_id,omitempty"`
+	Work         *WorkContext      `json:"work,omitempty"`
 	Candidate    *Candidate        `json:"candidate,omitempty"`
 	Sandbox      *SandboxState     `json:"sandbox,omitempty"`
 	Artifacts    string            `json:"artifacts,omitempty"`

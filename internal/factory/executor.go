@@ -243,7 +243,7 @@ func (x *Executor) Execute(ctx context.Context, r Run, n Node) Result {
 }
 
 func contextDocument(r Run, artifacts string) ([]byte, error) {
-	return json.Marshal(map[string]any{"inputs": r.Inputs, "outputs": r.Outputs, "run_id": r.ID, "decision": r.Decision, "candidate": r.Candidate, "artifacts": artifacts})
+	return json.Marshal(map[string]any{"inputs": r.Inputs, "outputs": r.Outputs, "run_id": r.ID, "decision": r.Decision, "candidate": r.Candidate, "artifacts": artifacts, "work": r.Work})
 }
 
 // Large outputs belong in a data file, not exec's size-limited environment.

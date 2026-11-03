@@ -346,8 +346,10 @@ func (e *Engine) Register(yaml, expectedRevision string) (WorkflowRecord, error)
 }
 
 type SubmitRequest struct {
-	WorkflowID string            `json:"workflow_id" minLength:"1"`
-	Inputs     map[string]string `json:"inputs,omitempty"`
+	WorkflowID   string            `json:"workflow_id" minLength:"1"`
+	Inputs       map[string]string `json:"inputs,omitempty"`
+	WorkID       string            `json:"work_id,omitempty"`
+	WorkRevision int               `json:"work_revision,omitempty" minimum:"1"`
 }
 
 func makeRun(w Workflow, revision, automationID string, inputs map[string]string) Run {
@@ -383,7 +385,49 @@ func (e *Engine) Submit(req SubmitRequest, key string) (Run, error) {
 		return Run{}, err
 	}
 	r := makeRun(w.Definition, w.Revision, "", req.Inputs)
-	err = e.store.commit([]change{{"run", r.ID, r}}, []eventWrite{{r.ID, "run.created", map[string]string{"workflow": w.ID, "revision": w.Revision}}}, &dedupWrite{dedupKey, digest(b), r.ID})
+	changes := []change{}
+	events := []eventWrite{{r.ID, "run.created", map[string]string{"workflow": w.ID, "revision": w.Revision}}}
+	if req.WorkID != "" {
+		work, err := e.openWork(req.WorkID, req.WorkRevision)
+		if err != nil {
+			return Run{}, err
+		}
+		if err := e.workReady(work); err != nil {
+			return Run{}, err
+		}
+		previous, err := e.inactiveWorkRun(work)
+		if err != nil {
+			return Run{}, err
+		}
+		work.LatestRunID, work.UpdatedAt = r.ID, now()
+		work.Revision++
+		r.WorkID = work.ID
+		r.Work = &WorkContext{ID: work.ID, Revision: work.Revision, Title: work.Title, Objective: work.Objective, AcceptanceCriteria: work.AcceptanceCriteria, Dependencies: work.Dependencies, Handoff: work.Handoff}
+		if previous != nil {
+			r.Work.PreviousRun = &WorkRunEvidence{ID: previous.ID, Status: previous.Status, Current: previous.Current, Error: previous.Error, Candidate: previous.Candidate}
+			if len(previous.Attempts) > 0 {
+				last := previous.Attempts[len(previous.Attempts)-1]
+				r.Work.PreviousRun.CheckpointSHA = last.CheckpointSHA
+				for i := len(previous.Attempts) - 1; i >= 0; i-- {
+					attempt := previous.Attempts[i]
+					kind := previous.Workflow.Nodes[attempt.Node].Type
+					if kind != "start" && kind != "end" && kind != "human" {
+						last = attempt
+						break
+					}
+				}
+				r.Work.PreviousRun.Result = &last.Result
+				r.Work.PreviousRun.ResultNode = last.Node
+				r.Work.PreviousRun.ResultAttemptID = last.ID
+			}
+		}
+		changes = append(changes, change{"work", work.ID, work})
+		events = append(events, eventWrite{"work:" + work.ID, "work.run_created", map[string]any{"run_id": r.ID, "workflow_id": w.ID, "revision": work.Revision}})
+	} else if req.WorkRevision != 0 {
+		return Run{}, invalid("work_revision requires work_id")
+	}
+	changes = append(changes, change{"run", r.ID, r})
+	err = e.store.commit(changes, events, &dedupWrite{dedupKey, digest(b), r.ID})
 	return r, err
 }
 func (e *Engine) GetRun(id string) (Run, error) {
@@ -504,6 +548,18 @@ func (e *Engine) Retry(id string) (Run, error) {
 	}
 	if _, active := e.active[id]; active || r.Cleaned || (r.Status != "failed" && r.Status != "interrupted") {
 		return r, fmt.Errorf("%w: retry requires an inactive failed or interrupted run with its workspace retained", ErrConflict)
+	}
+	if r.WorkID != "" {
+		work, err := get[WorkItem](e.store, "work", r.WorkID)
+		if err != nil {
+			return r, err
+		}
+		if work.Status != "open" || work.LatestRunID != r.ID {
+			return r, fmt.Errorf("%w: retry requires the current run of open work", ErrConflict)
+		}
+		if err := e.workReady(work); err != nil {
+			return r, err
+		}
 	}
 	lease, err := acquireLease(e.exec.Root, r.ID)
 	if err != nil {

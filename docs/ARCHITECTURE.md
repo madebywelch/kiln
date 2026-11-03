@@ -19,6 +19,14 @@ Fabro's explicit graphs, gates, and execution log were useful reference points. 
 
 ## State machine
 
+Durable work is the obligation; a workflow run is one execution trying to advance it. Work has `open`, `completed`, and `canceled` states independent of run state. Its objective, ordered acceptance criteria, and dependency IDs are immutable. Dependencies must already exist at creation, and cannot later be changed, so the dependency graph cannot acquire cycles. Only completed dependencies release a work item for execution; a successful dependency run is not sufficient.
+
+Work creation, handoff updates, run attachment, completion, and cancellation have durable audit events. Handoff updates and run creation compare the current work revision. Run creation atomically claims the work, pins its context, appends both work/run events, and records idempotency. One latest run owns execution: queued, running, waiting, interrupted, and still-settling runs block a replacement. Retries of superseded runs or closed work are rejected. A failed or canceled run leaves its work open for another explicitly submitted run; there is no autonomous replanner or fleet scheduler.
+
+Each linked run pins the objective, acceptance criteria, operator-written handoff, and the preceding run's status, last result, candidate, and checkpoint reference. The context is available to local and remote workers in `KILN_CONTEXT_FILE`, in `.work` templates, and through a bounded agent-prompt preview. Later handoff edits do not rewrite a running worker's contract. Prior outputs are evidence, not instructions. Full linked-run history remains paginated through the API; snapshots do not recursively embed earlier contexts. Replacement runs get fresh workspaces: retained checkpoints and candidates are evidence, not automatically applied code changes.
+
+Completion is an explicit operator attestation, not an agent tool result or graph outcome. It requires the latest linked run to have succeeded and stopped, explicit approval, a summary, and one reference per criterion to a successful finalized `command` or `changeset` attempt in that run. Changeset evidence must name the current candidate. The server verifies these references and records the checkpoint/candidate identities; the operator judges whether the checks actually establish the requested criteria. Human gates and publication checks inside the workflow remain unchanged. Workspace cleanup does not delete the obligation, run history, or completion record.
+
 ```text
                           human node
 queued → running ─────────────────────→ waiting
@@ -48,14 +56,14 @@ Remote launch responses that cannot confirm execution, and failures to collect t
 
 The database has four responsibilities:
 
-- `documents`: workflow definitions, run snapshots, automations. JSON snapshots are bounded by graph/attempt limits and make a pinned definition self-contained. Expression indexes on kind, status and creation time let listings and the automation overlap check read only the documents they return.
+- `documents`: work contracts, workflow definitions, run snapshots, automations. JSON snapshots are bounded by graph/attempt limits and make a pinned definition self-contained. Expression indexes on kind, status and creation time support listings and overlap checks; a work-ID/creation index supports paginated execution history.
 - `events`: append-only transition records indexed by run and cursor.
 - `dedup`: request fingerprints and original result IDs, committed with run creation.
 - `meta`: schema version; an unknown version prevents startup.
 
 All engine mutations are serialized by one mutex. A filesystem advisory lock rejects a second daemon for the same data directory. SQLite uses one connection. External execution happens outside the engine mutex. Repository preparation and publication use a separate Git mutex; different runs still execute their commands/models concurrently.
 
-Startup validates schema metadata before changing tables, indexes, or journal mode. An existing database must contain exactly one supported version row; missing, malformed, or incompatible metadata is rejected without initializing over it. Only an empty database is initialized as new state.
+Startup validates schema metadata before changing tables, indexes, or journal mode. An existing database must contain exactly one supported version row; missing, malformed, or incompatible metadata is rejected without initializing over it. Only an empty database is initialized as new state. Schema 3 is migrated to schema 4 in a transaction with the work-history index; existing JSON documents, events, and idempotency records are preserved. The version bump prevents older binaries from rewriting linked runs without their work context. Migration failure rolls back DDL and the version marker together.
 
 Cancellation commits state before signaling the process group. A late worker result can add attempt evidence but cannot change a canceled run to success. A persistence failure stops dispatch and cancels active operations; it appears in `/v1/status` and structured logs. Restart and inspect interrupted runs after resolving the storage fault.
 

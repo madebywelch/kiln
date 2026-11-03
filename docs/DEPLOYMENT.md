@@ -113,6 +113,8 @@ Retries preserve budgets and earlier attempts. Unknown interrupted operations ma
 
 A canceled run cannot be resumed. Submit a new run if cancellation was a mistake. An interrupted automation run blocks further firings until it is retried to completion or canceled.
 
+For a run linked to durable work, inspect its work item and handoff as well as its execution evidence. An interrupted or waiting run blocks replacement; resolve it explicitly rather than submitting another worker against the same obligation. Once the old run is terminal and inactive, update the handoff with the current work revision and submit a new run with `work_id` and `work_revision`. The new run receives the contract and previous execution evidence, not a copy of the old worktree. Preserve any needed changes deliberately. Work is completed only through explicit approval of verification evidence, not by retry success.
+
 ## Storage and retention
 
 The data directory contains private per-run artifacts, candidate validation worktrees (removed after validation; retained after a crash until cleanup), SQLite state/WAL files, the daemon lock, per-run execution leases, bare repository caches, worktrees, per-attempt agent directories (JSONL, session data, bounded stderr, isolated configuration), and transient command context files and Git bundles exchanged with remote machines. It must be on a local filesystem, writable only by the service account. The daemon's umask is 0077.
@@ -127,7 +129,7 @@ An online SQLite backup alone protects run metadata but does not synchronize wor
 
 There is no automatic state/event/dedup retention policy yet. Monitor disk usage. Delete terminal workspaces through the API when no longer needed; history and remote branches remain, and a run's remote machine is deleted. Repository caches and local branch/base references also remain for recovery/audit. Remove remote test branches or close PRs only as a separate, explicit operation.
 
-Database schema version 3 is checked at startup. Earlier pre-release state is intentionally not migrated; preserve it separately and register workflows in fresh `.kiln` state. Unknown versions refuse to start. Take a backup before upgrading; restore the matching data and binary together for rollback.
+Database schema version 4 is checked at startup. Schema 3 is migrated transactionally on first startup, preserving existing workflows, runs, automations, events, and idempotency records. The migration adds the work-history index and changes the version marker together; failures roll back both. Earlier pre-release state and unknown versions refuse to start. Stop the service and back up the whole data directory before upgrading. Do not downgrade against migrated storage: restore the matching pre-upgrade data and binary together for rollback.
 
 ## Health and logs
 
