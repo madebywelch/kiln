@@ -41,6 +41,7 @@ type RunSummary struct {
 	Workflow     string    `json:"workflow"`
 	Revision     string    `json:"revision"`
 	AutomationID string    `json:"automation_id,omitempty"`
+	WorkID       string    `json:"work_id,omitempty"`
 	Status       string    `json:"status"`
 	Current      string    `json:"current"`
 	Steps        int       `json:"steps"`
@@ -51,7 +52,7 @@ type RunSummary struct {
 }
 
 func summary(r Run) RunSummary {
-	return RunSummary{r.ID, r.Workflow.Name, r.Revision, r.AutomationID, r.Status, r.Current, r.Steps, r.Error, r.Question, r.CreatedAt, r.UpdatedAt}
+	return RunSummary{r.ID, r.Workflow.Name, r.Revision, r.AutomationID, r.WorkID, r.Status, r.Current, r.Steps, r.Error, r.Question, r.CreatedAt, r.UpdatedAt}
 }
 func reply[T any](v T, err error) (*Response[T], error) {
 	if err != nil {
@@ -87,6 +88,7 @@ func NewAPI(e *Engine, cfg APIConfig) http.Handler {
 	config.Components.SecuritySchemes = map[string]*huma.SecurityScheme{"bearer": {Type: "http", Scheme: "bearer"}}
 	config.Security = []map[string][]string{{"bearer": {}}}
 	api := humago.New(mux, config)
+	registerWorkAPI(api, e)
 
 	register(api, "POST", "/v1/workflows/validate", "validate-workflow", "Validate YAML without saving it", func(ctx context.Context, in *struct {
 		Body struct {

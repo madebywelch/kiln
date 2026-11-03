@@ -370,7 +370,7 @@ func newTemplateData(r Run) (templateData, error) {
 	if err := json.Unmarshal(data, &normalized); err != nil {
 		return nil, err
 	}
-	return templateData{"inputs": r.Inputs, "outputs": normalized["outputs"], "run": normalized, "decision": normalized["decision"]}, nil
+	return templateData{"inputs": r.Inputs, "outputs": normalized["outputs"], "run": normalized, "decision": normalized["decision"], "work": normalized["work"]}, nil
 }
 func (d templateData) render(s string) (string, error) {
 	t, err := template.New("node").Option("missingkey=error").Parse(s)

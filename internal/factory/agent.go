@@ -55,7 +55,7 @@ func (x *Executor) agent(ctx context.Context, r Run, n Node) Result {
 			return failed(fmt.Errorf("required MCP server unavailable: %s: %s", ready.Error, ready.Output))
 		}
 	}
-	return runAgent(ctx, r.Workspace, dir, env, agentPreamble+prompt, n, args)
+	return runAgent(ctx, r.Workspace, dir, env, agentPrompt(r, prompt), n, args)
 }
 
 const agentPreamble = "Work only on the assigned task. Follow repository AGENTS.md instructions and the explicitly available skills. Do not publish, push, create commits, sign your work, or add attribution. KILN owns Git checkpoints and publication. Keep plans, scratch files, logs, and temporary reports outside the repository in KILN_ARTIFACT_DIR. Only intentional product changes belong in the worktree.\n\n"

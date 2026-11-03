@@ -210,9 +210,12 @@ Templates use Go `text/template`, with strict missing-key handling and JSON-styl
 - `{{ .outputs.build.output }}`
 - `{{ .outputs.build.error }}`
 - `{{ .run.id }}`, `{{ .run.branch }}`, `{{ .run.base_sha }}`
+- `{{ with .work }}{{ .objective }}{{ end }}` for an optional durable work contract; linked runs also expose `.work.acceptance_criteria`, `.work.handoff`, `.work.previous_run`, and `.run.work_id`.
 - `{{ with index .outputs "reviewer" }}{{ .output }}{{ end }}` for an optional earlier result.
 
 Templates apply to prompts, node environment values, artifact paths, file selections, commit/PR titles, and PR bodies. They do not apply to shell source, repository configuration, edge targets, or model/provider names. There is no general expression interpreter. Use command success/failure or human choices for branching.
+
+For linked runs, `KILN_CONTEXT_FILE` contains the complete pinned `work` object on both local and remote machines. Its previous-run evidence includes the last executable result with `result_node` and `result_attempt_id`, the prior run's final checkpoint, and its candidate if any. Start/end/human orchestration output is used only when there was no executable attempt. Large evidence belongs in this file, not an environment value. Use `{{ with .work }}` in workflows that also support standalone runs.
 
 ## Execution limits and retry semantics
 

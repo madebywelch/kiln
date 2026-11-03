@@ -686,7 +686,7 @@ func (x *Executor) remoteAgent(ctx context.Context, r Run, n Node) Result {
 	for name, data := range config.Files {
 		files["agents/"+attempt.ID+"/"+name] = data
 	}
-	prompt = agentPreamble + prompt
+	prompt = agentPrompt(r, prompt)
 	job := remoteRunner{attempt: attempt.ID, dir: dir, env: env, stdin: []byte(prompt), argv: config.Args, files: files}
 	artifacts, err := hostArtifacts(r.Artifacts)
 	if err != nil {

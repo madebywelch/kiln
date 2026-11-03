@@ -377,7 +377,7 @@ INSERT INTO documents VALUES ('run','a','{"status":"queued","created_at":"2026-1
 		}
 		names = append(names, name)
 	}
-	if strings.Join(names, ",") != "documents_created,documents_status_created" {
+	if strings.Join(names, ",") != "documents_created,documents_status_created,runs_work_created" {
 		t.Fatalf("indexes after open: %v", names)
 	}
 	runs, err := list[Run](s, "run", "queued", 10, 0)

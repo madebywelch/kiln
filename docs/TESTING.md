@@ -17,6 +17,8 @@ The suite uses temporary directories, disposable local Git repositories, mocked 
 - Timeout and process-group cancellation, including a delayed grandchild that must not write after cancellation.
 - Inherited execution leases, orphan retry prevention, and transient fork/exec descriptor inheritance under concurrency.
 - Durable human questions, stale/duplicate decisions, explicit rejection, and restart recovery.
+- Durable work that remains open across failed runs, pinned replacement-worker context, dependency gating, atomic execution claims, stale-revision rejection, evidence-backed operator completion, and retained history after workspace cleanup.
+- Transactional schema-3-to-4 migration preserving run/event/idempotency data, including rollback of schema and version changes on injected failures.
 - Actual SIGKILL of a separate engine process: pending questions survive unchanged, ambiguous commands remain interrupted, and a surviving command's lease blocks retry until the process is stopped and recovery is explicitly requested.
 - Concurrent idempotent run creation and content-pinned definitions.
 - Atomic rollback of state, events, and deduplication records.
@@ -134,7 +136,7 @@ python3 scripts/agent_acceptance.py --artifacts .kiln/scoped-agent-UNIQUE
 
 It loads a named repository skill, calls a selected MCP tool, reads and edits code, runs the tests, passes a human gate, downloads its transcript through the API, and retains the run's Git checkpoints. An unselected deliberately invalid MCP command must never be loaded. Pi usage is recorded, but its catalog cost is not reported as provider billing.
 
-Acceptance artifacts are local snapshots and are ignored by Git. Schema changes require fresh state for new runs; do not reopen an old database with a newer binary.
+Acceptance artifacts are local snapshots and are ignored by Git. Schema 3 state can be upgraded transactionally to schema 4 after a full backup; other unsupported versions require fresh state. Do not downgrade a binary against upgraded state.
 
 ## Reproducing targeted failures
 

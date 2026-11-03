@@ -14,7 +14,7 @@ func TestStoreRejectsUnrecognizedSchemaWithoutMutation(t *testing.T) {
 		meta string
 	}{
 		{"old", "CREATE TABLE meta(version INTEGER); INSERT INTO meta VALUES(2);"},
-		{"future", "CREATE TABLE meta(version INTEGER); INSERT INTO meta VALUES(4);"},
+		{"future", "CREATE TABLE meta(version INTEGER); INSERT INTO meta VALUES(5);"},
 		{"empty", "CREATE TABLE meta(version INTEGER);"},
 		{"multiple", "CREATE TABLE meta(version INTEGER); INSERT INTO meta VALUES(3),(4);"},
 		{"malformed", "CREATE TABLE meta(other TEXT);"},
@@ -82,7 +82,7 @@ func TestStoreInitializesEmptyDatabaseAndReopens(t *testing.T) {
 			t.Fatal(err)
 		}
 		var version int
-		if err := s.db.QueryRow("SELECT version FROM meta").Scan(&version); err != nil || version != 3 {
+		if err := s.db.QueryRow("SELECT version FROM meta").Scan(&version); err != nil || version != 4 {
 			t.Errorf("schema version=%d, err=%v", version, err)
 		}
 		if err := s.Close(); err != nil {

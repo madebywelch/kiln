@@ -3,11 +3,11 @@
 [![ci](https://github.com/madebywelch/kiln/actions/workflows/ci.yaml/badge.svg)](https://github.com/madebywelch/kiln/actions/workflows/ci.yaml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-An API-first software factory. Define a graph in YAML. Run commands, call models, route failures through repair loops, pause for human decisions, and publish a pull request from an isolated Git worktree.
+An API-first software factory. Give durable work an objective and acceptance criteria, then advance it through YAML workflow runs. Run commands, call models, route failures through repair loops, pause for human decisions, and publish a pull request from an isolated Git worktree. The work survives a failed or replaced worker.
 
 One Go binary. SQLite state. No external queue or database. Linux and macOS.
 
-KILN is pre-1.0. The workflow schema and HTTP API may change between minor releases; pinned runs and database state are versioned and are not migrated across incompatible schemas.
+KILN is pre-1.0. The workflow schema and HTTP API may change between minor releases; pinned runs and database state are versioned. Supported forward migrations preserve existing state; unsupported versions refuse to start.
 
 ## Start locally
 
@@ -27,10 +27,11 @@ For disposable loopback-only development, `kiln serve -insecure-local` explicitl
 
 | Primitive | Meaning |
 |---|---|
+| Work | Durable objective, immutable acceptance criteria/dependencies, versioned handoff, linked runs, and explicit verified completion |
 | Workflow | Versioned YAML graph with exactly one start and end |
 | Node | A command, model call, coding agent, changeset validation, human gate, or PR operation |
 | Edge | A named outcome mapped to the next node |
-| Run | A pinned workflow snapshot, inputs, workspace, cursor, outputs, and attempt history |
+| Run | A pinned workflow snapshot, inputs, workspace, cursor, outputs, and attempt history; optionally one execution advancing durable work |
 | Attempt | One execution of a node; loops create additional attempts |
 | Question | A persisted human gate with a unique ID and explicit choices |
 | Event | A durable state transition, replayable over REST or SSE |
@@ -61,6 +62,8 @@ nodes:
 ```
 
 `failure` without an outgoing edge fails the run. Reaching `end` succeeds it. Every declared node must be reachable from the entry and have a structural path to the exit. Cycles are valid; execution budgets bound them.
+
+For work that must outlive one run, create a work item through `/v1/work`, then submit `/v1/runs` with its `work_id` and current `work_revision`. A replacement run receives the pinned objective, criteria, handoff notes, and prior run evidence through `KILN_CONTEXT_FILE` and `.work` templates. Failed runs leave the work open; even a successful run does not complete it automatically. The operator must approve completion with successful finalized command or changeset evidence for every criterion. Dependencies release only when their work is explicitly completed. See [durable work](docs/API.md#durable-work) for the full lifecycle.
 
 ## Models and GitHub
 
@@ -147,7 +150,7 @@ This is a single-host, single-operator engine. Graph execution is sequential wit
 
 **A worktree is not a security sandbox.** Workflow authors and API token holders can execute arbitrary code as the service account. Run on a dedicated machine or container with narrowly scoped credentials. Commands have a minimal environment, but they can still read files available to that account. A `sandbox` block moves a run's commands and agents onto a dedicated remote machine, which isolates the daemon host from them; it does not isolate the run from the credentials its own nodes receive there.
 
-Database schema version 3 is checked at startup. Earlier pre-release databases are intentionally not migrated; preserve them separately and register workflows in fresh `.kiln` state.
+Database schema version 4 is checked at startup. Schema 3 is upgraded transactionally while preserving existing state; back up the data directory before upgrading. Earlier pre-release and unknown versions are rejected. Rollback requires the matching pre-upgrade data and binary together.
 
 External side effects are not exactly-once. A crash during a command, model request, or GitHub operation leaves an `interrupted` run. Inspect the workspace and last attempt before explicitly retrying. See the deployment guide before exposing the API remotely.
 

@@ -50,7 +50,7 @@ func OpenStore(dir string) (*Store, error) {
 			s.Close()
 			return nil, fmt.Errorf("invalid database schema metadata: %w", err)
 		}
-		if count != 1 || version != 3 {
+		if count != 1 || (version != 3 && version != 4) {
 			s.Close()
 			return nil, fmt.Errorf("unsupported database schema metadata: %d rows, version %d", count, version)
 		}
@@ -59,8 +59,19 @@ func OpenStore(dir string) (*Store, error) {
 PRAGMA journal_mode=WAL;
 PRAGMA synchronous=FULL;
 PRAGMA busy_timeout=5000;
+`)
+	if err != nil {
+		s.Close()
+		return nil, err
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		s.Close()
+		return nil, err
+	}
+	_, err = tx.Exec(`
 CREATE TABLE IF NOT EXISTS meta (version INTEGER NOT NULL);
-INSERT INTO meta SELECT 3 WHERE NOT EXISTS (SELECT 1 FROM meta);
+INSERT INTO meta SELECT 4 WHERE NOT EXISTS (SELECT 1 FROM meta);
 CREATE TABLE IF NOT EXISTS documents (
  kind TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL CHECK(json_valid(data)),
  PRIMARY KEY (kind,id)
@@ -70,6 +81,7 @@ CREATE TABLE IF NOT EXISTS documents (
 DROP INDEX IF EXISTS runs_status;
 CREATE INDEX IF NOT EXISTS documents_created ON documents(kind, json_extract(data,'$.created_at'), id);
 CREATE INDEX IF NOT EXISTS documents_status_created ON documents(kind, json_extract(data,'$.status'), json_extract(data,'$.created_at'), id);
+CREATE INDEX IF NOT EXISTS runs_work_created ON documents(json_extract(data,'$.work_id'), json_extract(data,'$.created_at'), id) WHERE kind='run';
 CREATE TABLE IF NOT EXISTS events (
  id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, type TEXT NOT NULL,
  time TEXT NOT NULL, data TEXT NOT NULL
@@ -78,8 +90,14 @@ CREATE INDEX IF NOT EXISTS events_run ON events(run_id,id);
 CREATE TABLE IF NOT EXISTS dedup (
  key TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, result TEXT NOT NULL
 );
+UPDATE meta SET version=4 WHERE version=3;
 `)
 	if err != nil {
+		tx.Rollback()
+		s.Close()
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
 		s.Close()
 		return nil, err
 	}
