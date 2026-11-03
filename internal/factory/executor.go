@@ -126,7 +126,14 @@ func process(ctx context.Context, dir string, env []string, stdin string, args .
 	}
 	return r
 }
-func failed(err error) Result { return Result{Outcome: "failure", Error: err.Error(), ExitCode: -1} }
+func failed(err error) Result {
+	code := -1
+	var lease remoteLeaseError
+	if errors.As(err, &lease) {
+		code = remoteLeaseExit
+	}
+	return Result{Outcome: "failure", Error: err.Error(), ExitCode: code}
+}
 
 func (x *Executor) nodeEnv(n Node, r Run, contextFile string) ([]string, error) {
 	home, tmp, err := x.scratch(r)

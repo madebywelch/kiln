@@ -27,6 +27,7 @@ jobs:
           cache: npm
           cache-dependency-path: harness/package-lock.json
       - run: npm ci --prefix harness
+      - run: npm audit --prefix harness --omit=dev --audit-level=high
       - run: PATH="$PWD/harness/node_modules/.bin:$PATH" KILN_PI_INTEGRATION=1 make check
       - run: make schema && git diff --exit-code -- docs/openapi.json
       - run: make release VERSION=0.1.0

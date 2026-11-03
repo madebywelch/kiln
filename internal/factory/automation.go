@@ -20,7 +20,7 @@ type AutomationRequest struct {
 }
 
 func parseSchedule(spec string) (cron.Schedule, error) {
-	if len(strings.Fields(spec)) != 5 {
+	if len(strings.Fields(spec)) != 5 || strings.HasPrefix(spec, "TZ=") || strings.HasPrefix(spec, "CRON_TZ=") {
 		return nil, errors.New("schedule must be a five-field UTC cron expression")
 	}
 	return cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow).Parse(spec)
