@@ -1,11 +1,9 @@
 .git
+.github
 .kiln
-.firecrawl
-**/node_modules
+data
 bin
-dist
 coverage.out
-coverage.html
 *.log
 .env
 .env.*
@@ -15,6 +13,3 @@ coverage.html
 .DS_Store
 .idea
 .vscode
-**/__pycache__
-**/*.pyc
-**/.venv
