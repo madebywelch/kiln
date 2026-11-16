@@ -1,19 +1,13 @@
-# KILN runtime state and local evidence
+# Runtime state: the database, memory folders, and credentials
+data/
 .kiln/
-.firecrawl/
-coverage.out
-coverage.html
 *.log
 
 # Build output
 bin/
-dist/
 kiln
 *.test
-
-# Agent runtimes
-harness/node_modules/
-node_modules/
+coverage.out
 
 # Secrets and local environment
 .env
@@ -27,8 +21,3 @@ node_modules/
 .idea/
 .vscode/
 *.swp
-
-# Python
-__pycache__/
-*.pyc
-.venv/

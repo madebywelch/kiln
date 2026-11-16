@@ -1,204 +1,177 @@
+// Command kiln runs the always-on agent: one process, one SQLite file, one
+// folder of memory.
 package main
 
 import (
-	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
-	"io"
+	"io/fs"
 	"log/slog"
-	"net"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
-	"github.com/madebywelch/kiln/internal/factory"
-	"gopkg.in/yaml.v3"
+	"github.com/madebywelch/kiln/internal/agent"
+	"github.com/madebywelch/kiln/internal/slack"
 )
 
-var version = "dev"
-
-type config struct {
-	MCP              map[string]factory.MCPServer       `yaml:"mcp_servers"`
-	Listen           string                             `yaml:"listen"`
-	DataDir          string                             `yaml:"data_dir"`
-	Workers          int                                `yaml:"workers"`
-	TokenEnv         string                             `yaml:"token_env"`
-	WebhookSecretEnv string                             `yaml:"webhook_secret_env"`
-	AllowLocal       bool                               `yaml:"allow_local_repositories"`
-	InheritEnv       []string                           `yaml:"inherit_env"`
-	CacheDirs        []string                           `yaml:"cache_dirs"`
-	Providers        map[string]factory.Provider        `yaml:"providers"`
-	Sandboxes        map[string]factory.SandboxProvider `yaml:"sandboxes"`
-}
-
 func main() {
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
-	if err := run(os.Args[1:]); err != nil {
-		slog.Error("kiln stopped", "error", err)
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	if err := run(log); err != nil {
+		log.Error("kiln stopped", "err", err)
 		os.Exit(1)
 	}
 }
-func run(args []string) error {
-	if len(args) == 0 {
-		return errors.New("usage: kiln serve [-config server.yaml] | validate workflow.yaml | openapi | version")
+
+func env(name, fallback string) string {
+	if v := os.Getenv(name); v != "" {
+		return v
 	}
-	switch args[0] {
-	case "version":
-		fmt.Println(version)
-		return nil
-	case "validate":
-		if len(args) != 2 {
-			return errors.New("usage: kiln validate workflow.yaml")
-		}
-		data, err := os.ReadFile(args[1])
-		if err != nil {
-			return err
-		}
-		w, err := factory.ParseWorkflow(data)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("%s: valid (%d nodes, max %d steps)\n", w.Name, len(w.Nodes), w.MaxSteps)
-		return nil
-	case "openapi":
-		dir, err := os.MkdirTemp("", "kiln-schema-")
-		if err != nil {
-			return err
-		}
-		defer os.RemoveAll(dir)
-		s, err := factory.OpenStore(dir)
-		if err != nil {
-			return err
-		}
-		defer s.Close()
-		e, err := factory.NewEngine(s, &factory.Executor{Root: dir}, 1)
-		if err != nil {
-			return err
-		}
-		handler := factory.NewAPI(e, factory.APIConfig{})
-		recorder := httptest.NewRecorder()
-		handler.ServeHTTP(recorder, httptest.NewRequest("GET", "/openapi.json", nil))
-		if recorder.Code != 200 {
-			return fmt.Errorf("schema generation failed: %d", recorder.Code)
-		}
-		_, err = os.Stdout.Write(recorder.Body.Bytes())
-		return err
-	case "serve":
-		return serve(args[1:])
-	default:
-		return fmt.Errorf("unknown command %q", args[0])
-	}
+	return fallback
 }
-func serve(args []string) error {
-	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
-	path := flags.String("config", "", "server YAML configuration")
-	insecure := flags.Bool("insecure-local", false, "allow unauthenticated loopback development access")
-	if err := flags.Parse(args); err != nil {
+
+func run(log *slog.Logger) error {
+	dataDir := env("KILN_DATA", "data")
+	addr := env("KILN_ADDR", "127.0.0.1:8080")
+	token := os.Getenv("KILN_TOKEN")
+	model := &agent.Model{
+		BaseURL:   env("KILN_MODEL_URL", "https://openrouter.ai/api/v1"),
+		APIKey:    os.Getenv("KILN_MODEL_KEY"),
+		Name:      os.Getenv("KILN_MODEL"),
+		HTTP:      &http.Client{Timeout: 10 * time.Minute},
+		RetryWait: 2 * time.Second,
+	}
+	if len(token) < 32 {
+		return errors.New("KILN_TOKEN must be set to a random string of at least 32 characters")
+	}
+	if raw := os.Getenv("KILN_MODEL_PARAMS"); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &model.Params); err != nil {
+			return fmt.Errorf("KILN_MODEL_PARAMS must be a JSON object: %w", err)
+		}
+		for _, reserved := range []string{"model", "messages", "tools"} {
+			if _, ok := model.Params[reserved]; ok {
+				return fmt.Errorf("KILN_MODEL_PARAMS must not set %q", reserved)
+			}
+		}
+	}
+	if model.Name == "" {
+		return errors.New("KILN_MODEL must name a model served at KILN_MODEL_URL (" + model.BaseURL + ")")
+	}
+
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return err
 	}
-	if flags.NArg() != 0 {
-		return errors.New("unexpected arguments")
-	}
-	cfg := config{Listen: "127.0.0.1:8741", DataDir: ".kiln", Workers: 4, TokenEnv: "KILN_TOKEN", WebhookSecretEnv: "KILN_GITHUB_WEBHOOK_SECRET"}
-	if *path != "" {
-		data, err := os.ReadFile(*path)
-		if err != nil {
-			return err
-		}
-		d := yaml.NewDecoder(bytes.NewReader(data))
-		d.KnownFields(true)
-		if err := d.Decode(&cfg); err != nil {
-			return err
-		}
-		var extra any
-		if err := d.Decode(&extra); err != io.EOF {
-			return errors.New("expected exactly one server YAML document")
-		}
-	}
-	if err := factory.ValidateProviders(cfg.Providers); err != nil {
-		return err
-	}
-	if err := factory.ValidateMCP(cfg.MCP); err != nil {
-		return err
-	}
-	if err := factory.ValidateEnvironment(cfg.InheritEnv, cfg.CacheDirs); err != nil {
-		return err
-	}
-	if err := factory.ValidateSandboxes(cfg.Sandboxes); err != nil {
-		return err
-	}
-	token := os.Getenv(cfg.TokenEnv)
-	if *insecure {
-		host, _, err := net.SplitHostPort(cfg.Listen)
-		if err != nil {
-			return err
-		}
-		ip := net.ParseIP(host)
-		if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
-			return errors.New("-insecure-local requires a loopback listener")
-		}
-		if token == "" {
-			slog.Warn("authentication disabled for local development; do not expose this listener")
-		}
-	} else if len(token) < 32 {
-		return fmt.Errorf("%s must contain a bearer token of at least 32 characters", cfg.TokenEnv)
-	}
-	dir, err := filepath.Abs(cfg.DataDir)
+	unlock, err := lock(filepath.Join(dataDir, "kiln.lock"))
 	if err != nil {
 		return err
 	}
-	// State, captured output, and SQLite sidecar files may contain private code.
-	syscall.Umask(0077)
-	for _, cache := range cfg.CacheDirs {
-		if err := os.MkdirAll(cache, 0700); err != nil {
-			return fmt.Errorf("cache_dirs: %w", err)
-		}
+	defer unlock()
+
+	origins, err := loadOrigins(filepath.Join(dataDir, "origins.json"))
+	if err != nil {
+		return err
 	}
-	store, err := factory.OpenStore(dir)
+	store, err := agent.OpenStore(filepath.Join(dataDir, "kiln.db"))
 	if err != nil {
 		return err
 	}
 	defer store.Close()
-	engine, err := factory.NewEngine(store, &factory.Executor{Root: dir, Providers: cfg.Providers, Sandboxes: cfg.Sandboxes, MCP: cfg.MCP, AllowLocal: cfg.AllowLocal, InheritEnv: cfg.InheritEnv, CacheDirs: cfg.CacheDirs}, cfg.Workers)
+
+	// Adapters in route priority order. To add a channel, append it here. The
+	// last entry reaches any user, so no message is ever without a route.
+	var adapters []agent.Adapter
+	if ad, err := slack.FromEnv(os.Getenv, log); err != nil {
+		return err
+	} else if ad != nil {
+		adapters = append(adapters, ad)
+	}
+	if url := os.Getenv("KILN_OUTBOX_URL"); url != "" {
+		adapters = append(adapters, agent.NewWebhook(url))
+	} else {
+		adapters = append(adapters, agent.NewWriter(os.Stdout))
+	}
+	names := make([]string, len(adapters))
+	for i, ad := range adapters {
+		names[i] = ad.Name()
+	}
+	a, err := agent.New(store, model, dataDir, origins, adapters, log)
 	if err != nil {
 		return err
 	}
-	handler := factory.NewAPI(engine, factory.APIConfig{Token: token, WebhookSecret: os.Getenv(cfg.WebhookSecretEnv)})
-	server := &http.Server{Addr: cfg.Listen, Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
-	listener, err := net.Listen("tcp", cfg.Listen)
-	if err != nil {
-		return err
-	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	engine.Start()
-	errs := make(chan error, 1)
-	go func() { errs <- server.Serve(listener) }()
-	slog.Info("kiln listening", "address", listener.Addr().String(), "data_dir", dir, "workers", cfg.Workers, "version", version)
+
+	server := &http.Server{Addr: addr, Handler: a.Handler(token), ReadHeaderTimeout: 10 * time.Second}
+	serverErr := make(chan error, 1)
+	go func() { serverErr <- server.ListenAndServe() }()
+
+	loopsDone := make(chan struct{})
+	go func() { a.Run(ctx); close(loopsDone) }()
+
+	log.Info("kiln started", "addr", addr, "data", dataDir, "model", model.Name, "model_url", model.BaseURL,
+		"adapters", strings.Join(names, ","), "origins", len(origins))
+
 	select {
+	case err := <-serverErr:
+		stop()
+		<-loopsDone
+		return fmt.Errorf("http server: %w", err)
 	case <-ctx.Done():
-	case err = <-errs:
 	}
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	log.Info("shutting down")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	shutdownDone := make(chan struct{})
-	go func() {
-		defer close(shutdownDone)
-		if shutdownErr := server.Shutdown(shutdownCtx); shutdownErr != nil {
-			_ = server.Close()
-			slog.Warn("HTTP shutdown forced", "error", shutdownErr)
-		}
-	}()
-	engine.Close()
-	<-shutdownDone
-	if err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return err
-	}
+	server.Shutdown(shutdownCtx)
+	<-loopsDone
 	return nil
+}
+
+// lock takes an exclusive advisory lock so that two processes can never work
+// the same inbox. The worker's one-run-per-user guarantee depends on it.
+func lock(path string) (unlock func(), err error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("another kiln is already running on %s", filepath.Dir(path))
+	}
+	return func() { f.Close() }, nil
+}
+
+// loadOrigins reads the http_request allowlist: a JSON object mapping an
+// origin to the headers added to its requests. A missing file means the agent
+// has no HTTP access.
+func loadOrigins(path string) (agent.Origins, error) {
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var file map[string]map[string]string
+	if err := json.Unmarshal(raw, &file); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	origins := agent.Origins{}
+	for origin, headers := range file {
+		normalized, err := agent.NormalizeOrigin(origin)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %q: %w", path, origin, err)
+		}
+		origins[normalized] = headers
+	}
+	if info, err := os.Stat(path); err == nil && info.Mode().Perm()&0o077 != 0 && len(origins) > 0 {
+		return nil, fmt.Errorf("%s holds credentials and must not be readable by group or others (chmod 600)", path)
+	}
+	return origins, nil
 }

@@ -7,45 +7,58 @@ import (
 	"testing"
 )
 
-func TestCLIInvalidArgumentsAndValidation(t *testing.T) {
-	for _, args := range [][]string{nil, {"unknown"}, {"validate"}, {"serve", "unexpected"}, {"serve", "-unknown"}} {
-		if err := run(args); err == nil {
-			t.Fatalf("accepted %v", args)
-		}
-	}
-	path := filepath.Join(t.TempDir(), "workflow.yaml")
-	if err := os.WriteFile(path, []byte("version: 2\nname: broken\n"), 0600); err != nil {
+func TestLockExcludesASecondProcess(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "kiln.lock")
+	unlock, err := lock(path)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := run([]string{"validate", path}); err == nil {
-		t.Fatal("accepted invalid workflow")
+	if _, err := lock(path); err == nil || !strings.Contains(err.Error(), "already running") {
+		t.Fatalf("second lock: %v", err)
 	}
-	if err := run([]string{"validate", "../../examples/retry.yaml"}); err != nil {
-		t.Fatal(err)
+	unlock()
+	again, err := lock(path)
+	if err != nil {
+		t.Fatalf("lock after release: %v", err)
 	}
+	again()
 }
-func TestServerRejectsUnsafeOrMalformedConfiguration(t *testing.T) {
-	t.Setenv("KILN_TOKEN", "")
-	if err := serve(nil); err == nil || !strings.Contains(err.Error(), "32 characters") {
-		t.Fatalf("missing authentication allowed: %v", err)
+
+func TestLoadOrigins(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "origins.json")
+
+	origins, err := loadOrigins(path)
+	if err != nil || origins != nil {
+		t.Fatalf("missing file: %v, %v", origins, err)
 	}
-	for _, tc := range []struct {
-		yaml string
-		args []string
-	}{
-		{"listen: 0.0.0.0:8741\n", []string{"-insecure-local"}},
-		{"unknown: true\n", nil},
-		{"listen: localhost:8741\n---\nlisten: localhost:8742\n", nil},
-		{"providers:\n  bad:\n    url: file:///tmp/socket\n", nil},
-		{"inherit_env: [HOME]\n", nil},
-		{"cache_dirs: [cache]\n", nil},
-	} {
-		path := filepath.Join(t.TempDir(), "server.yaml")
-		if err := os.WriteFile(path, []byte(tc.yaml), 0600); err != nil {
+
+	write := func(content string, mode os.FileMode) {
+		t.Helper()
+		os.Remove(path)
+		if err := os.WriteFile(path, []byte(content), mode); err != nil {
 			t.Fatal(err)
 		}
-		if err := serve(append([]string{"-config", path}, tc.args...)); err == nil {
-			t.Fatalf("accepted %s", tc.yaml)
+	}
+
+	write(`{"HTTPS://API.Example.com/": {"Authorization": "Bearer x"}, "https://status.example.com": {}}`, 0o600)
+	origins, err = loadOrigins(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(origins) != 2 || origins["https://api.example.com"]["Authorization"] != "Bearer x" {
+		t.Fatalf("origins = %v", origins)
+	}
+
+	write(`{"https://api.example.com": {"Authorization": "Bearer x"}}`, 0o644)
+	if _, err := loadOrigins(path); err == nil || !strings.Contains(err.Error(), "chmod 600") {
+		t.Fatalf("world-readable credentials accepted: %v", err)
+	}
+
+	for _, bad := range []string{`{"api.example.com": {}}`, `{"https://api.example.com/v1": {}}`, `not json`} {
+		write(bad, 0o600)
+		if _, err := loadOrigins(path); err == nil {
+			t.Errorf("accepted %s", bad)
 		}
 	}
 }

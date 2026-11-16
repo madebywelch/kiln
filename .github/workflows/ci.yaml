@@ -14,41 +14,22 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v7
         with:
           go-version: '1.27.2'
           cache: true
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '22.19.0'
-          cache: npm
-          cache-dependency-path: harness/package-lock.json
-      - run: npm ci --prefix harness
-      - run: npm audit --prefix harness --omit=dev --audit-level=high
-      - run: PATH="$PWD/harness/node_modules/.bin:$PATH" KILN_PI_INTEGRATION=1 make check
-      - run: make schema && git diff --exit-code -- docs/openapi.json
-      - run: make release VERSION=0.1.0
-      - uses: actions/upload-artifact@v7
-        with:
-          name: binaries
-          path: bin/
+      - run: make check
 
   container:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - run: make docker-test
-      - name: Prepare native Codex sandbox profiles
-        run: |
-          mkdir -p .kiln/sandbox
-          python3 deploy/hardened/prepare-seccomp.py .kiln/sandbox/seccomp.json
-          sudo apparmor_parser -r deploy/hardened/apparmor.profile
-      - run: docker build -t kiln:0.1.0 .
-      - run: python3 scripts/container_smoke.py --sandbox --network --seccomp "$PWD/.kiln/sandbox/seccomp.json"
+      - run: docker build -t kiln .
 
   secrets:
     runs-on: ubuntu-latest

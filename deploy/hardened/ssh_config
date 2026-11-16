@@ -1,7 +1,0 @@
-Host kiln-guest
-    HostName <guest-ip>
-    User <guest-user>
-    ProxyJump <jump-user>@<jump-host>
-    HostKeyAlias kiln-guest
-    IdentitiesOnly yes
-    IdentityFile ~/.ssh/id_ed25519
