@@ -155,7 +155,21 @@ export async function sweepReports(
   for (const { message } of tasks) {
     const id = message.id;
     try {
-      const job = viewJob(message);
+      let job: JobView;
+      try {
+        job = viewJob(message);
+      } catch {
+        // Not a job this agent can read, such as one from before a rename: nothing to report, so drop the label.
+        await team.label(id, { unset: [REPORT_LABEL] });
+        result.skipped.push(id);
+        continue;
+      }
+      if (job.state === "canceled") {
+        // Canceled while the worker was settling it. The agent canceled it, so there is nothing to tell.
+        await team.label(id, { unset: [REPORT_LABEL] });
+        result.skipped.push(id);
+        continue;
+      }
       if (!SETTLED_STATES.has(job.state)) {
         result.skipped.push(id); // re-queued after the label was set; the next settle sets it again
         continue;

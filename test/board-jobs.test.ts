@@ -181,6 +181,27 @@ describe("sweepReports", () => {
     expect(result).toEqual({ delivered: [], skipped: [job.id], failed: [] });
   });
 
+  it("drops the label from a job canceled while its worker settled it, and from tasks it can't read", async () => {
+    const job = await postJob(team, spec);
+    await claimAs(worker);
+    await worker.label(job.id, { set: { [REPORT_LABEL]: REPORT_PENDING } });
+    await team.tasks.cancel(job.id, "not needed");
+    const old = await team.tasks.create(JOBS_CHANNEL, {
+      text: "## Old\n\nfrom before a rename",
+      labels: { robdog: "job", [REPORT_LABEL]: REPORT_PENDING },
+    });
+
+    const result = await sweepReports(team, async () => {
+      throw new Error("must not deliver");
+    });
+    expect(result.skipped.sort()).toEqual([job.id, old.task.id].sort());
+    expect(result.failed).toEqual([]);
+    const again = await sweepReports(team, async () => {
+      throw new Error("must not deliver");
+    });
+    expect(again).toEqual({ delivered: [], skipped: [], failed: [] });
+  });
+
   it("clears a job that has nowhere to report", async () => {
     const job = await postJob(team, { ...spec, origin: undefined });
     const claim = await claimAs(worker);
