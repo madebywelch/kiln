@@ -67,16 +67,25 @@ kiln routes Claude jobs across every subscription it has a token for, and never 
 
 Each repo's secrets live in its own boat environment, `kiln-<repo>`. kiln creates the environment on first use. The environment passes secrets and nothing else: no GitHub login, no boat key, no agent logins. If someone switches one of those on in the dashboard, kiln switches it off again before the next launch.
 
-- **Setting one.** Ask the agent in Slack ("set the Linear key for player games"), or it asks when a job fails for a missing secret. It posts a button, and the button opens a Slack form. The value goes from the form to boat; the agent never sees it. Anyone in the workspace can set them until `KILN_SECRET_ADMINS` lists Slack user IDs; then only those can, and anyone else who clicks is shown their ID to pass on.
+- **Setting one.** Ask the agent in Slack ("set the Linear key for player games"), or it asks when a job is paused for one. It posts a button, and the button opens a Slack form. The value goes from the form to boat; the agent never sees it. Anyone in the workspace can set them until `KILN_SECRET_ADMINS` lists Slack user IDs; then only those can, and anyone else who clicks is shown their ID to pass on.
 - **Using one.** Jobs get the repo's secrets as environment variables, so MCP servers, tests, and dev servers can read them. A new value reaches the next job; a running one keeps what it started with.
 - **Seeing them.** The agent's `list_secrets` shows names only. `boat env info kiln-<repo>` shows everything.
+
+### Paused for secrets
+
+A job pauses, instead of failing, when its repo lacks a secret it needs:
+
+- **Before it runs:** its MCP servers name a secret (`${NAME}`) the repo doesn't have. The worker checks before the CLI starts.
+- **Mid-run:** the CLI ends with `SECRET: NAME, OTHER_NAME: what for`. Every job's prompt tells it to name the variable and never ask for the value. The worker pushes the work so far.
+
+The worker blocks the job with kind `needs_secret` and labels it `needs_secrets=NAME,OTHER_NAME`. The agent posts a "Set NAME" button for each name, tied to the job. Saving the last missing one unblocks the job, and a fresh machine resumes it within a minute, from its pushed branch, with the secret in its environment. Until then the thread says which names are still missing.
 - Names a secret can't take: the worker's own settings (`GH_TOKEN`, `BOARD_TOKEN`, model credentials), anything starting `KILN_` or `GIT_`, `PATH`, `HOME`, `NODE_OPTIONS`, and boat's reserved names.
 
 ## Skills, house rules, and MCP
 
 - **Skills** in `skills/workers/` are copied into `~/.claude/skills` (Claude Code and OpenCode) and `~/.codex/skills` (Codex) when a worker starts. A skill for one repo belongs in that repo's own `.claude/skills/`.
 - **House rules** in `worker/instructions.md` go into every job's prompt.
-- **MCP servers** are defined once in `mcpServers` in `lib/config.ts`. A repo lists the ones its jobs get in its `mcp`. Values may name the repo's secrets as `${NAME}`. A job whose MCP servers need a secret the repo lacks fails and says which.
+- **MCP servers** are defined once in `mcpServers` in `lib/config.ts`. A repo lists the ones its jobs get in its `mcp`. Values may name the repo's secrets as `${NAME}`. A job whose MCP servers need a secret the repo lacks pauses before anything runs; see "Paused for secrets" above.
 
 ## Codex
 

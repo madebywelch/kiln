@@ -9,6 +9,7 @@ import {
   JOBS_CHANNEL,
   JobError,
   type JobSpec,
+  NEEDS_SECRETS_LABEL,
   REPORT_LABEL,
   REPORT_PENDING,
   type SlackOrigin,
@@ -31,6 +32,8 @@ export interface JobView {
   readonly subscription: string | null;
   /** When it starts again, if it is waiting for a subscription's usage to reset. */
   readonly waitingUntil: string | null;
+  /** The repo secrets it is paused for, if it is paused for secrets. */
+  readonly secretsNeeded: readonly string[] | null;
 }
 
 export function viewJob(root: MessageView): JobView {
@@ -51,6 +54,7 @@ export function viewJob(root: MessageView): JobView {
     origin: spec.origin,
     subscription: root.labels.account ?? null,
     waitingUntil: root.labels.waiting ? new Date(Number(root.labels.waiting) * 1000).toISOString() : null,
+    secretsNeeded: root.labels[NEEDS_SECRETS_LABEL]?.split(",").filter(Boolean) ?? null,
   };
 }
 
@@ -217,7 +221,13 @@ export function reportMessage(job: JobView, lastReport: string, files: readonly 
     "[job update from the worker pool, not from a person]",
     `Job #${job.id} "${job.title}" on ${job.repo} (${job.runsOn}, ${job.kind}) is ${job.state}.`,
   ];
-  if (job.state === "blocked") {
+  if (job.state === "blocked" && job.secretsNeeded?.length) {
+    lines.push(`It is paused until ${job.repo} has these secrets: ${job.secretsNeeded.join(", ")}.`);
+    if (job.question) lines.push(`The worker says: ${job.question}`);
+    lines.push(
+      `Call request_secret for each one with job "${job.id}". Saving the last one resumes the job on its own; nobody needs to say retry. Never ask for a value in the thread.`,
+    );
+  } else if (job.state === "blocked") {
     lines.push(`The worker asks: ${job.question ?? "(no question given)"}`);
     lines.push(
       "Relay the question here. When someone answers, pass the answer on with answer_job; the job then resumes.",
@@ -255,4 +265,23 @@ export function waitingMessage(job: JobView, until: number): string {
     `The earliest one resets at ${when}; the job starts again on its own then, on the same model.`,
     "Tell this thread in a sentence, with the reset time in their words. Offer the choice: wait, or cancel it and start it again on a model they name. Never choose another model yourself.",
   ].join("\n");
+}
+
+/**
+ * After someone saves a repo secret for a paused job: resumes the job if the repo now has every secret
+ * it waits for. Returns what to tell the thread, or undefined when the job isn't paused for secrets.
+ */
+export async function resumeAfterSecrets(
+  team: Board,
+  id: string,
+  repoSecrets: readonly string[],
+): Promise<{ readonly resumed: boolean; readonly missing: readonly string[] } | undefined> {
+  const { message } = await team.thread(id, { limit: 1 });
+  const job = viewJob(message);
+  if (job.state !== "blocked" || !job.secretsNeeded?.length) return undefined;
+  const missing = job.secretsNeeded.filter((name) => !repoSecrets.includes(name));
+  if (missing.length > 0) return { resumed: false, missing };
+  await team.label(id, { unset: [NEEDS_SECRETS_LABEL, REPORT_LABEL] });
+  await team.tasks.unblock(id);
+  return { resumed: true, missing: [] };
 }

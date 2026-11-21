@@ -31,6 +31,7 @@ Slack ──> agent (eve on Vercel) ──start_job──> Vercel Board "jobs" <
 - **investigate** jobs report findings and change nothing.
 - **Files** a job's CLI saves in `.kiln/artifacts/`, such as screenshots, are posted into the Slack thread with the report. They are never committed.
 - **Questions:** a CLI that needs a person ends with `QUESTION: ...`. The worker pushes its work and blocks the job; the agent asks in the thread, passes the answer back, and the next run resumes from the branch.
+- **Secrets:** a job whose repo lacks a secret it needs pauses. That includes an MCP server's key, or a credential the CLI asks for by name with `SECRET: NAME`. The agent posts a button for it, and saving the value in the private form resumes the job.
 
 Say the model in Slack, or don't:
 

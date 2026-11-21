@@ -18,6 +18,7 @@ const update = reportMessage(
     origin: undefined,
     subscription: null,
     waitingUntil: null,
+    secretsNeeded: null,
   },
   "**Done.** Draft PR: https://github.com/madebywelch/player.games-app/pull/42\n\nAdded a snowfall layer to the landing page behind a seasonal flag. Lighthouse unchanged.",
 );

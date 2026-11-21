@@ -20,6 +20,8 @@ const MAX_SIGNATURE_AGE_SECONDS = 300;
 export interface SecretRequest {
   readonly repo: string;
   readonly name: string;
+  /** The job paused for this secret, which saving it may resume. */
+  readonly job?: string;
 }
 
 interface ModalContext extends SecretRequest {
@@ -119,6 +121,11 @@ export interface InteractivityDeps {
   readonly openView: (triggerId: string, view: Record<string, unknown>) => Promise<unknown>;
   readonly setSecret: (repo: string, name: string, value: string) => Promise<void>;
   readonly postMessage: (channel: string, thread: string | undefined, text: string) => Promise<unknown>;
+  /**
+   * After a secret is saved for a paused job: resumes the job if nothing else is missing, and says what
+   * happened in a sentence for the thread.
+   */
+  readonly resumeJob: (job: string, repo: string) => Promise<string | undefined>;
   /** Hands a payload that isn't kiln's to eve's Slack route. */
   readonly forward: (body: string, headers: Headers) => Promise<Response>;
   readonly waitUntil: (work: Promise<unknown>) => void;
@@ -147,7 +154,11 @@ function parseRequest(value: unknown): SecretRequest | null {
   try {
     const parsed = JSON.parse(String(value)) as Partial<SecretRequest>;
     if (typeof parsed.repo === "string" && typeof parsed.name === "string" && repos[parsed.repo]) {
-      return { repo: parsed.repo, name: parsed.name };
+      return {
+        repo: parsed.repo,
+        name: parsed.name,
+        ...(typeof parsed.job === "string" && parsed.job ? { job: parsed.job } : {}),
+      };
     }
   } catch {
     // not ours
@@ -244,15 +255,29 @@ export async function handleInteractivity(request: Request, deps: InteractivityD
       });
       return errors(error instanceof Error ? error.message : String(error));
     }
-    deps.log("secrets.set", { repo: context.repo, name: context.name, user: userId });
+    deps.log("secrets.set", {
+      repo: context.repo,
+      name: context.name,
+      user: userId,
+      job: context.job ?? null,
+    });
     deps.waitUntil(
-      deps
-        .postMessage(
+      (async () => {
+        let next = "New jobs on it get the new value.";
+        if (context.job) {
+          try {
+            next = (await deps.resumeJob(context.job, context.repo)) ?? next;
+          } catch (error) {
+            deps.log("secrets.resume_failed", { job: context.job, error: String(error) });
+            next = `Job #${context.job} didn't resume; ask me to check it.`;
+          }
+        }
+        await deps.postMessage(
           context.channel,
           context.thread,
-          `<@${userId}> set \`${context.name}\` for *${context.repo}*. New jobs on it get the new value.`,
-        )
-        .catch((error: unknown) => deps.log("secrets.notice_failed", { error: String(error) })),
+          `<@${userId}> set \`${context.name}\` for *${context.repo}*. ${next}`,
+        );
+      })().catch((error: unknown) => deps.log("secrets.notice_failed", { error: String(error) })),
     );
     return Response.json({ response_action: "clear" });
   }

@@ -23,6 +23,10 @@ export const JOBS_CHANNEL = "jobs";
 /** Set by a worker when it settles a job; cleared by the agent once the result reached Slack. */
 export const REPORT_LABEL = "report";
 export const REPORT_PENDING = "pending";
+/** Label on a job paused until its repo has these secrets: their names, comma-separated. */
+export const NEEDS_SECRETS_LABEL = "needs_secrets";
+/** The block kind of a job paused for secrets; a job paused for an answer is `needs_input`. */
+export const NEEDS_SECRET_KIND = "needs_secret";
 
 export const MAX_BRIEF_CHARS = 9_000;
 export const MAX_TITLE_CHARS = 120;

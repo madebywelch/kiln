@@ -5,7 +5,7 @@ import { stubs } from "../stubs.ts";
 const failed = reportMessage(
   {
     id: "813",
-    state: "failed",
+    state: "blocked",
     title: "Triage the Linear backlog",
     repo: "player.games-app",
     kind: "investigate",
@@ -19,12 +19,13 @@ const failed = reportMessage(
     origin: undefined,
     subscription: null,
     waitingUntil: null,
+    secretsNeeded: ["LINEAR_API_KEY"],
   },
   "",
 );
 
 export default defineEval({
-  description: "A job that failed for a missing secret gets a request_secret button, not a retry.",
+  description: "A job paused for a missing secret gets a request_secret button tied to the job, not a retry.",
   async test(t) {
     const session = await t.session({ stubs });
     const turn = await session.send(failed);
@@ -32,10 +33,11 @@ export default defineEval({
     turn.calledTool("request_secret", {
       count: 1,
       input: (input: unknown) => {
-        const asked = (input ?? {}) as { repo?: string; name?: string };
-        return asked.repo === "player.games-app" && asked.name === "LINEAR_API_KEY";
+        const asked = (input ?? {}) as { repo?: string; name?: string; job?: string };
+        return asked.repo === "player.games-app" && asked.name === "LINEAR_API_KEY" && asked.job === "813";
       },
     });
     turn.notCalledTool("start_job");
+    turn.notCalledTool("answer_job");
   },
 });

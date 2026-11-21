@@ -453,17 +453,42 @@ describe("house rules and MCP servers", () => {
     delete process.env.TEST_LINEAR_KEY;
   });
 
-  it("fails a job whose MCP servers need a secret the worker lacks", async () => {
+  it("pauses a job whose MCP servers need a secret the repo lacks, before running anything", async () => {
     const servers: Record<string, McpServer> = {
       linear: { url: "https://mcp.linear.app/mcp", headers: { Authorization: "Bearer ${TEST_MISSING_KEY}" } },
     };
-    await postJob(team, spec);
-    const { outcome } = await work({
+    const job = await postJob(team, spec);
+    const { outcome, runs } = await work({
       mode: "change",
       registry: { web: { ...registry.web!, mcp: ["linear"] } },
       mcpServers: servers,
     });
-    expect(outcome).toMatchObject({ kind: "failed", reason: expect.stringContaining("TEST_MISSING_KEY") });
+    expect(outcome).toMatchObject({ kind: "blocked", secrets: ["TEST_MISSING_KEY"] });
+    expect(runs).toEqual([]);
+    const root = await rootOf(job.id);
+    expect(root.task?.state).toBe("blocked");
+    expect(root.labels.needs_secrets).toBe("TEST_MISSING_KEY");
+    expect(root.labels[REPORT_LABEL]).toBe("pending");
+    const { log } = await readJob(team, job.id);
+    expect(log.at(-1)?.text).toMatch(/^\*\*Paused for secrets:\*\* Set TEST_MISSING_KEY for web/);
+  });
+
+  it("pauses a job whose CLI ends asking for a secret by name, with its work pushed", async () => {
+    const job = await postJob(team, spec);
+    const { outcome } = await work({ mode: "secret" });
+    expect(outcome).toMatchObject({
+      kind: "blocked",
+      secrets: ["STRIPE_API_KEY", "DATABASE_URL"],
+      question: "Set STRIPE_API_KEY, DATABASE_URL for web: read the customer's payment history",
+    });
+    expect((await rootOf(job.id)).labels.needs_secrets).toBe("STRIPE_API_KEY,DATABASE_URL");
+    expect(remoteFiles(jobBranch(job.id, spec.title))).toContain("draft.css");
+  });
+
+  it("tells the CLI to name a missing credential, never to ask for its value", () => {
+    const prompt = buildPrompt(spec, { id: "1", github: "acme/web", branch: "kiln/1-x", resumed: false }, []);
+    expect(prompt).toContain("`SECRET: `");
+    expect(prompt).toContain("Never ask for a secret's value");
   });
 });
 

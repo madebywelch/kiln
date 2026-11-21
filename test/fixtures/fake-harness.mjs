@@ -102,6 +102,10 @@ switch (mode) {
     writeFileSync(join(cwd, "draft.css"), "/* half done */\n");
     finish("QUESTION: Which colors should the theme use?");
     break;
+  case "secret":
+    writeFileSync(join(cwd, "draft.css"), "/* half done */\n");
+    finish("SECRET: STRIPE_API_KEY, DATABASE_URL: read the customer's payment history");
+    break;
   case "claude-error":
     process.stdout.write(
       `${JSON.stringify({ type: "result", is_error: true, result: "usage limit reached" })}\n`,

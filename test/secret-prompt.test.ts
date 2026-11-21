@@ -32,6 +32,7 @@ function harness(overrides: Partial<InteractivityDeps> = {}) {
     views: [] as Record<string, unknown>[],
     secrets: [] as [string, string, string][],
     posts: [] as string[],
+    resumed: [] as [string, string][],
     forwarded: 0,
     logs: [] as { event: string; fields?: Record<string, unknown> }[],
     pending: [] as Promise<unknown>[],
@@ -47,6 +48,10 @@ function harness(overrides: Partial<InteractivityDeps> = {}) {
     },
     postMessage: async (_channel, _thread, text) => {
       calls.posts.push(text);
+    },
+    resumeJob: async (job, repo) => {
+      calls.resumed.push([job, repo]);
+      return `Job #${job} is resuming.`;
     },
     forward: async () => {
       calls.forwarded++;
@@ -158,6 +163,31 @@ describe("handleInteractivity", () => {
       "<@U_ADMIN> set `LINEAR_API_KEY` for *player.games-app*. New jobs on it get the new value.",
     ]);
     expect(JSON.stringify(calls.logs)).not.toContain("lin_secret");
+  });
+
+  it("resumes the paused job the secret was asked for, and says so", async () => {
+    const { deps, calls } = harness();
+    const payload = submit("U_ADMIN", "lin_secret");
+    payload.view.private_metadata = JSON.stringify({
+      repo: "player.games-app",
+      name: "LINEAR_API_KEY",
+      channel: "C1",
+      thread: "1.0",
+      job: "813",
+    });
+    await handleInteractivity(signed(payload), deps);
+    await Promise.all(calls.pending);
+    expect(calls.resumed).toEqual([["813", "player.games-app"]]);
+    expect(calls.posts).toEqual([
+      "<@U_ADMIN> set `LINEAR_API_KEY` for *player.games-app*. Job #813 is resuming.",
+    ]);
+  });
+
+  it("carries the job from the button into the form", async () => {
+    const { deps, calls } = harness();
+    const value = JSON.stringify({ repo: "player.games-app", name: "LINEAR_API_KEY", job: "813" });
+    await handleInteractivity(signed(click("U_ADMIN", value)), deps);
+    expect(JSON.parse(String(calls.views[0]?.private_metadata)).job).toBe("813");
   });
 
   it("refuses a submission from someone who isn't an operator", async () => {

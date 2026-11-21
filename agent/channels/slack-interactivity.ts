@@ -4,8 +4,10 @@
 // unchanged and still signed, to eve's Slack route.
 
 import { defineChannel, POST } from "eve/channels";
-import { setSecret } from "../../lib/secrets.ts";
-import { boatClient, log } from "../lib/machines.ts";
+import { resumeAfterSecrets } from "../../lib/board-jobs.ts";
+import { secretNames, setSecret } from "../../lib/secrets.ts";
+import { team } from "../lib/board.ts";
+import { boatClient, launchNow, log } from "../lib/machines.ts";
 import { handleInteractivity, secretEditors } from "../lib/secret-prompt.ts";
 import { slackApi } from "../lib/slack.ts";
 
@@ -28,6 +30,15 @@ export default defineChannel({
           const boat = boatClient();
           if (typeof boat === "string") throw new Error(boat);
           await setSecret(boat, repo, name, value);
+        },
+        resumeJob: async (job, repo) => {
+          const boat = boatClient();
+          if (typeof boat === "string") throw new Error(boat);
+          const outcome = await resumeAfterSecrets(team, job, await secretNames(boat, repo));
+          if (!outcome) return undefined;
+          if (!outcome.resumed) return `Job #${job} still needs ${outcome.missing.join(", ")}.`;
+          await launchNow();
+          return `Job #${job} is resuming.`;
         },
         postMessage: (channel, thread, text) =>
           slackApi("chat.postMessage", { channel, text, ...(thread ? { thread_ts: thread } : {}) }),

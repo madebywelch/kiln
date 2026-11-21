@@ -31,7 +31,17 @@ export function topEffort(effort: Effort): string {
 /** An MCP server with its ${VAR} references filled in from the worker's environment. */
 export type ResolvedMcp = McpServer;
 
-/** Fills ${NAME} references from `env`. Throws naming every variable that is missing. */
+/** The repo's secrets a job needs and doesn't have. The job waits for them instead of failing. */
+export class MissingSecrets extends Error {
+  override readonly name = "MissingSecrets";
+  readonly names: readonly string[];
+  constructor(names: readonly string[]) {
+    super(`this repo's secrets don't have ${names.join(", ")}, which its MCP servers need`);
+    this.names = names;
+  }
+}
+
+/** Fills ${NAME} references from `env`. Throws MissingSecrets naming every variable that is missing. */
 export function resolveMcp(
   servers: Readonly<Record<string, McpServer>>,
   names: readonly string[],
@@ -63,11 +73,7 @@ export function resolveMcp(
       };
     }
   }
-  if (missing.size > 0) {
-    throw new Error(
-      `MCP servers need ${[...missing].join(", ")}, which this repo's secrets don't have. Ask in Slack to set them.`,
-    );
-  }
+  if (missing.size > 0) throw new MissingSecrets([...missing].sort());
   return resolved;
 }
 

@@ -11,6 +11,8 @@ import {
   describeSelection,
   type JobSpec,
   jobBranch,
+  NEEDS_SECRET_KIND,
+  NEEDS_SECRETS_LABEL,
   REPORT_LABEL,
   REPORT_PENDING,
 } from "../lib/jobs.ts";
@@ -21,6 +23,7 @@ import {
   type HarnessBins,
   type HarnessInvocation,
   harnessInvocation,
+  MissingSecrets,
   resolveMcp,
 } from "./harness.ts";
 
@@ -96,7 +99,13 @@ export function harnessEnv(env: NodeJS.ProcessEnv, readToken?: string): NodeJS.P
 export type Outcome =
   | { readonly kind: "completed"; readonly result: string; readonly report: string }
   | { readonly kind: "failed"; readonly reason: string; readonly report: string }
-  | { readonly kind: "blocked"; readonly question: string; readonly report: string }
+  | {
+      readonly kind: "blocked";
+      readonly question: string;
+      readonly report: string;
+      /** The repo secrets it waits for, when it is paused for secrets rather than an answer. */
+      readonly secrets?: readonly string[];
+    }
   /** Every subscription that can run the job's model is out of usage until `until` (unix seconds). */
   | { readonly kind: "waiting"; readonly until: number; readonly report: string }
   | { readonly kind: "abandoned"; readonly why: string };
@@ -105,6 +114,8 @@ const MAX_SETTLE_CHARS = 900; // the local board caps results and reasons at 1,0
 const MAX_REPLY_CHARS = 9_500; // a message holds 10,000
 const LOG_TAIL_CHARS = 3_000;
 const QUESTION = /^QUESTION:\s*/i;
+/** A final message naming credentials the CLI needs: `SECRET: NAME, OTHER_NAME: what for`. */
+const SECRET = /^SECRET:\s*([A-Z][A-Z0-9_]*(?:\s*,\s*[A-Z][A-Z0-9_]*)*)\s*(?:[:\u2014-]\s*)?([\s\S]*)$/;
 
 /** Where the CLI puts files to share, relative to the clone. */
 export const ARTIFACTS_DIR = ".kiln/artifacts";
@@ -197,7 +208,19 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string): Promise<
 
   await board.reply(id, `${STARTED}${deps.profile}: ${describeSelection(spec)} on ${repo.github}.`);
 
-  const mcp = resolveMcp(deps.mcpServers ?? mcpServers, repo.mcp ?? [], process.env);
+  let mcp: ReturnType<typeof resolveMcp>;
+  try {
+    mcp = resolveMcp(deps.mcpServers ?? mcpServers, repo.mcp ?? [], process.env);
+  } catch (error) {
+    if (!(error instanceof MissingSecrets)) throw error;
+    // Nothing has run yet: wait for the secrets instead of failing.
+    return {
+      kind: "blocked",
+      question: `Set ${error.names.join(", ")} for ${spec.repo}; its MCP servers need ${error.names.length > 1 ? "them" : "it"}.`,
+      report: "",
+      secrets: error.names,
+    };
+  }
 
   await rm(jobDir, { recursive: true, force: true });
   await mkdir(dirname(jobDir), { recursive: true });
@@ -334,6 +357,19 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string): Promise<
 
   const report = await invocation.readReport(result.stdout);
 
+  const secret = SECRET.exec(report.trim());
+  if (secret?.[1]) {
+    if (spec.kind === "change") await pushWork(git, spec.title, startSha, branch);
+    const names = secret[1].split(",").map((name) => name.trim());
+    const why = secret[2]?.trim();
+    return {
+      kind: "blocked",
+      question: `Set ${names.join(", ")} for ${spec.repo}${why ? `: ${why}` : "."}`,
+      report,
+      secrets: names,
+    };
+  }
+
   if (QUESTION.test(report)) {
     if (spec.kind === "change") await pushWork(git, spec.title, startSha, branch);
     return { kind: "blocked", question: report.replace(QUESTION, "").trim(), report };
@@ -451,6 +487,7 @@ export function buildPrompt(
   lines.push(
     "- Run the checks that cover what you touched, when the repo has them.",
     `- To share files with the people who asked, such as screenshots, logs, or generated reports, save them in \`${ARTIFACTS_DIR}/\` at the repo root. They are attached to your report in Slack and never committed. Up to ${MAX_ARTIFACTS} files, ${MAX_ARTIFACT_MB} MB each.`,
+    "- If you need a credential your environment doesn't have, such as an API key or a database URL, stop and make your final message `SECRET: ` followed by the environment variable names it should have and what for, like `SECRET: STRIPE_API_KEY: read the customer's payment history`. Never ask for a secret's value; people set it privately and the job resumes with it in your environment.",
     "- If you cannot go on without an answer from a person, stop and make your final message `QUESTION: ` followed by the question.",
     "- Otherwise your final message is the report people read in Slack: what you did or found, how you verified it, and what is left open. Under 400 words.",
   );
@@ -508,7 +545,14 @@ async function settle(deps: JobDeps, outcome: Outcome, artifacts: readonly Artif
     await board.label(id, { set: { [REPORT_LABEL]: REPORT_PENDING } });
     if (outcome.kind === "completed") await claim.complete(clip(outcome.result, MAX_SETTLE_CHARS));
     else if (outcome.kind === "failed") await claim.fail(clip(outcome.reason, MAX_SETTLE_CHARS));
-    else await claim.block(clip(outcome.question, MAX_SETTLE_CHARS), { kind: "needs_input" });
+    else {
+      if (outcome.secrets?.length) {
+        await board.label(id, { set: { [NEEDS_SECRETS_LABEL]: outcome.secrets.join(",") } });
+      }
+      await claim.block(clip(outcome.question, MAX_SETTLE_CHARS), {
+        kind: outcome.secrets?.length ? NEEDS_SECRET_KIND : "needs_input",
+      });
+    }
   } catch (error) {
     // Most often claim_lost: the lease ran out or the job was canceled while it ran.
     log("job.settle_failed", { task: id, outcome: outcome.kind, error: String(error) });
@@ -528,6 +572,11 @@ function replyText(outcome: Exclude<Outcome, { kind: "abandoned" | "waiting" }>)
         MAX_REPLY_CHARS,
       );
     case "blocked":
-      return clip(`**Question:** ${outcome.question}`, MAX_REPLY_CHARS);
+      return clip(
+        outcome.secrets?.length
+          ? `**Paused for secrets:** ${outcome.question} The job resumes once they're set.`
+          : `**Question:** ${outcome.question}`,
+        MAX_REPLY_CHARS,
+      );
   }
 }

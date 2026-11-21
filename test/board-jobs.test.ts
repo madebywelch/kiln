@@ -8,6 +8,7 @@ import {
   postJob,
   readJob,
   reportMessage,
+  resumeAfterSecrets,
   sweepReports,
   waitingMessage,
 } from "../lib/board-jobs.ts";
@@ -215,6 +216,44 @@ describe("sweepReports", () => {
   });
 });
 
+describe("resumeAfterSecrets", () => {
+  async function pausedJob() {
+    const job = await postJob(team, spec);
+    const claim = await worker.tasks.claim(job.id, { lease: 60 });
+    await team.label(job.id, {
+      set: { needs_secrets: "LINEAR_API_KEY,DATABASE_URL", [REPORT_LABEL]: REPORT_PENDING },
+    });
+    await claim.block("Set LINEAR_API_KEY, DATABASE_URL", { kind: "needs_secret" });
+    return job;
+  }
+
+  it("keeps the job paused while the repo still lacks one of its secrets", async () => {
+    const job = await pausedJob();
+    expect(await resumeAfterSecrets(team, job.id, ["LINEAR_API_KEY"])).toEqual({
+      resumed: false,
+      missing: ["DATABASE_URL"],
+    });
+    expect((await team.thread(job.id, { limit: 1 })).message.task?.state).toBe("blocked");
+  });
+
+  it("resumes the job once the repo has them all, with nothing left to report", async () => {
+    const job = await pausedJob();
+    expect(await resumeAfterSecrets(team, job.id, ["DATABASE_URL", "LINEAR_API_KEY", "OTHER"])).toEqual({
+      resumed: true,
+      missing: [],
+    });
+    const { message } = await team.thread(job.id, { limit: 1 });
+    expect(message.task?.state).toBe("ready");
+    expect(message.labels.needs_secrets).toBeUndefined();
+    expect(message.labels[REPORT_LABEL]).toBeUndefined();
+  });
+
+  it("leaves a job that isn't paused for secrets alone", async () => {
+    const job = await postJob(team, spec);
+    expect(await resumeAfterSecrets(team, job.id, ["LINEAR_API_KEY"])).toBeUndefined();
+  });
+});
+
 describe("reportMessage", () => {
   const job = {
     id: "7",
@@ -231,6 +270,7 @@ describe("reportMessage", () => {
     origin: undefined,
     subscription: null,
     waitingUntil: null,
+    secretsNeeded: null,
   };
 
   it("tells robdog to relay a question and how to answer it", () => {
@@ -244,6 +284,13 @@ describe("reportMessage", () => {
     expect(message).toContain("2030-03-17T17:46:40.000Z");
     expect(message).toContain("on the same model");
     expect(message).toContain("Never choose another model yourself");
+  });
+
+  it("tells the agent to ask for each missing secret with the job, and that saving resumes it", () => {
+    const message = reportMessage({ ...job, secretsNeeded: ["LINEAR_API_KEY"] }, "");
+    expect(message).toContain("paused until r has these secrets: LINEAR_API_KEY");
+    expect(message).toContain('request_secret for each one with job "7"');
+    expect(message).not.toContain("answer_job");
   });
 
   it("clips a long report", () => {
