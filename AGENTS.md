@@ -26,6 +26,7 @@ kiln runs an AI teammate in Slack (the agent) and the coding workers it hands re
 
 ## Working here
 
+- Keep the docs current in the same change as the code: `README.md`, `docs/`, this file, and the agent's own `agent/skills/kiln/SKILL.md`, which is how the agent explains kiln to people. A change that makes any of them wrong is not done.
 - `pnpm check` must pass: biome, tsc, vitest. Tests need no network or keys; keep it that way.
 - Run `pnpm eval` on at least two vendors after changing the agent's instructions or tool descriptions.
 - The repo is public. Never commit secrets, account IDs, or private repo details; secrets live in `.env` (ignored) and the Vercel project.
