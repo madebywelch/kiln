@@ -4,7 +4,7 @@
 import { appendFile, mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Board, ClaimedTask } from "@vercel/board";
-import { type McpServer, mcpServers, type RepoConfig, repos } from "../lib/config.ts";
+import { agent, type McpServer, mcpServers, type RepoConfig, repos } from "../lib/config.ts";
 import {
   decodeJob,
   describeSelection,
@@ -89,7 +89,7 @@ const LOG_TAIL_CHARS = 3_000;
 const QUESTION = /^QUESTION:\s*/i;
 
 /** Where the CLI puts files to share, relative to the clone. */
-export const ARTIFACTS_DIR = ".robdog/artifacts";
+export const ARTIFACTS_DIR = ".kiln/artifacts";
 const MAX_ARTIFACTS = 10;
 const MAX_ARTIFACT_MB = 20;
 
@@ -190,12 +190,12 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string): Promise<
   // Objects come from the local mirror; only what changed since its fetch crosses the network.
   await run(exec, "git", ["clone", "--quiet", "--reference", mirror, url, jobDir], { signal });
   const identity = deps.gitIdentity ?? {
-    name: `robdog (${deps.profile})`,
-    email: "robdog@users.noreply.github.com",
+    name: `${agent.name} (${deps.profile})`,
+    email: "kiln@users.noreply.github.com",
   };
   await git(["config", "user.name", identity.name]);
   await git(["config", "user.email", identity.email]);
-  // Files the CLI shares go in .robdog/artifacts; they are attached to the report, never committed.
+  // Files the CLI shares go in .kiln/artifacts; they are attached to the report, never committed.
   await appendFile(join(jobDir, ".git", "info", "exclude"), `\n${ARTIFACTS_DIR.split("/")[0]}/\n`);
 
   // A job that blocked for an answer pushed its work; the next run continues from it.
@@ -252,7 +252,7 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string): Promise<
     base,
     head: branch,
     title: spec.title,
-    body: `${report}\n\n---\nJob #${id} by robdog · ${describeSelection(spec)} · ${deps.profile}`,
+    body: `${report}\n\n---\nJob #${id} by ${agent.name} on kiln · ${describeSelection(spec)} · ${deps.profile}`,
   });
   return { kind: "completed", result: `Draft PR: ${prUrl}`, report };
 }
@@ -305,7 +305,7 @@ export function buildPrompt(
   guidance?: string,
 ): string {
   const lines = [
-    `You are working on job #${where.id} from robdog, in a fresh clone of ${where.github}, on branch ${where.branch}.`,
+    `You are working on job #${where.id} from ${agent.name}, in a fresh clone of ${where.github}, on branch ${where.branch}.`,
     where.resumed ? "This branch holds work from an earlier run of this job; continue from it." : "",
     "",
     "# The job",

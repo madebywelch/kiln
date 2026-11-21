@@ -22,7 +22,7 @@ function input(overrides: Partial<RouteInput> = {}): RouteInput & { calls: strin
       calls.push("history");
       return history;
     },
-    clearlyNotForRobdog: async () => {
+    clearlyNotForAgent: async () => {
       calls.push("screen");
       return false;
     },
@@ -37,14 +37,14 @@ describe("route", () => {
     expect(i.calls).toEqual([]);
   });
 
-  it("drops an unmentioned reply in a thread robdog is not part of", async () => {
+  it("drops an unmentioned reply in a thread the agent is not part of", async () => {
     const i = input({ topLevel: false });
     expect(await route(i)).toBeNull();
     expect(i.calls).toEqual(["isSubscribed"]);
   });
 
-  it("drops a top-level message the screen is sure is not for robdog", async () => {
-    const i = input({ clearlyNotForRobdog: async () => true });
+  it("drops a top-level message the screen is sure is not for the agent", async () => {
+    const i = input({ clearlyNotForAgent: async () => true });
     expect(await route(i)).toBeNull();
   });
 
@@ -64,7 +64,7 @@ describe("route", () => {
     expect(i.calls).toEqual([]);
   });
 
-  it("follows a thread robdog is part of, quietly, and lets it choose to stay out", async () => {
+  it("follows a thread the agent is part of, quietly, and lets it choose to stay out", async () => {
     const i = input({ topLevel: false, isSubscribed: async () => true });
     expect(await route(i)).toEqual({ auth, status: "deferred", guidance: THREAD_GUIDANCE });
   });
@@ -75,9 +75,21 @@ describe("route", () => {
     expect(i.calls).toEqual([]);
   });
 
-  it("lets robdog judge an unaddressed channel message, with the conversation, quietly", async () => {
+  it("lets the agent judge an unaddressed channel message, with the conversation, quietly", async () => {
     const i = input();
     expect(await route(i)).toEqual({ auth, status: "deferred", guidance: CHANNEL_GUIDANCE, history });
     expect(i.calls).toEqual(["history", "screen"]);
+  });
+});
+
+describe("nameMatcher", () => {
+  it("finds the agent's name, spaced or not, and nothing else", async () => {
+    const { nameMatcher } = await import("../agent/lib/ambient.ts");
+    const name = nameMatcher("robdog");
+    expect(name.test("hey robdog, thoughts?")).toBe(true);
+    expect(name.test("Rob dog what do you think")).toBe(true);
+    expect(name.test("robdogs are great")).toBe(false);
+    expect(name.test("Robert's dog")).toBe(false);
+    expect(nameMatcher("a.b").test("axb")).toBe(false);
   });
 });

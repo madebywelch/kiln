@@ -1,5 +1,5 @@
 // Every minute, hand each job a worker settled back to the Slack thread that
-// asked for it. robdog then tells the thread in its own words.
+// asked for it. The agent then tells the thread in its own words.
 
 import { defineSchedule } from "eve/schedules";
 import { sweepReports } from "../../lib/board-jobs.ts";

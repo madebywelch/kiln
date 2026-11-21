@@ -1,6 +1,8 @@
 # kiln
 
-robdog: an AI teammate in Slack that thinks through ideas with you and hands work on your repos to a pool of coding agents running on your own subscriptions.
+kiln runs robdog: an AI teammate in Slack that thinks through ideas with you and hands work on your repos to a pool of coding agents running on your own subscriptions.
+
+robdog is the agent; kiln is everything that runs it. To rename the agent, change `agent.name` in [lib/config.ts](lib/config.ts), its persona in [agent/instructions.md](agent/instructions.md), and its Slack app. Renaming starts it on a fresh memory.
 
 ```
 Slack ──> robdog (eve on Vercel) ──start_job──> Vercel Board  "jobs"  <──claim── workers (boat.dev machines)
@@ -73,7 +75,7 @@ Third-party skills are vendored unmodified under their own licenses (MIT or Apac
 
 ## Jobs
 
-- **change** jobs commit to `robdog/<id>-<title>`, push it, and open a draft pull request. Workers never merge.
+- **change** jobs commit to `kiln/<id>-<title>`, push it, and open a draft pull request. Workers never merge.
 - **investigate** jobs report findings and change nothing.
 - A harness that cannot go on without a person ends with `QUESTION: ...`. The worker pushes its work and blocks the task; robdog asks in the thread and passes the answer back with `answer_job`; the next worker resumes from the branch.
 - A worker that stops (an update, a crash, `boat stop`) hands its job back to the queue. A worker that loses its claim (lease expired, job canceled) stops the harness without settling.
@@ -98,8 +100,8 @@ npx vb inspect                    # the board's UI, served from your machine
 | Agent setting | Default | |
 |---|---|---|
 | `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET` | required | The Slack app's credentials. Or `SLACK_CONNECTOR`, a Vercel Connect connector UID, instead of both. |
-| `ROBDOG_MODEL` | `anthropic/claude-opus-5.5` | robdog's own model: an AI Gateway model ID, which needs no key on Vercel. |
-| `ROBDOG_MODEL_URL`, `ROBDOG_MODEL_KEY` | unset | Use any OpenAI-compatible endpoint instead of AI Gateway, such as OpenRouter. `ROBDOG_MODEL` is then that endpoint's model name. |
+| `KILN_MODEL` | `anthropic/claude-opus-5.5` | robdog's own model: an AI Gateway model ID, which needs no key on Vercel. |
+| `KILN_MODEL_URL`, `KILN_MODEL_KEY` | unset | Use any OpenAI-compatible endpoint instead of AI Gateway, such as OpenRouter. `KILN_MODEL` is then that endpoint's model name. |
 
 ## MCP servers, APIs, and GitHub
 
@@ -110,8 +112,8 @@ npx vb inspect                    # the board's UI, served from your machine
 
 - Anyone in the Slack workspace can talk to robdog and start jobs. robdog has one memory for everyone. Restrict it in `agent/channels/slack.ts` (an allowlist in `onMessage`) and scope `agent/memory.ts` if the workspace stops being private.
 - What other people say reaches the model as conversation, and the instructions tell it so. That is a soft boundary.
-- Workers run their CLIs with permission prompts off, each alone on its own boat machine. The worker holds a GitHub token that can push to the listed repos; the CLI does not get it. Protect each repo's default branch: workers push only `robdog/*` branches, and nothing stops a harness from trying otherwise except that token's reach and branch protection.
-- Board text is instructions to whoever claims it. Workers take jobs only from robdog's actor (`ROBDOG_BOARD_FROM`).
+- Workers run their CLIs with permission prompts off, each alone on its own boat machine. The worker holds a GitHub token that can push to the listed repos; the CLI does not get it. Protect each repo's default branch: workers push only `kiln/*` branches, and nothing stops a harness from trying otherwise except that token's reach and branch protection.
+- Board text is instructions to whoever claims it. Workers take jobs only from robdog's actor (`KILN_BOARD_FROM`).
 
 ## Development
 
@@ -126,8 +128,8 @@ Tests run without network or keys. Worker tests drive real git and a real Board 
 Evals drive robdog's real model and spend tokens. Run them after changing instructions or tool descriptions, on more than one vendor:
 
 ```sh
-ROBDOG_MODEL_URL=https://openrouter.ai/api/v1 ROBDOG_MODEL_KEY=$OPENROUTER_API_KEY \
-  ROBDOG_MODEL=anthropic/claude-sonnet-5.5 pnpm eval
+KILN_MODEL_URL=https://openrouter.ai/api/v1 KILN_MODEL_KEY=$OPENROUTER_API_KEY \
+  KILN_MODEL=anthropic/claude-sonnet-5.5 pnpm eval
 ```
 
 ## Limits

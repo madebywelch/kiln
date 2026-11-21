@@ -1,4 +1,4 @@
-// The job contract between robdog (who posts jobs) and workers (who claim
+// The job contract between the agent (who posts jobs) and workers (who claim
 // them). A job is a Vercel Board task in JOBS_CHANNEL: its root text is the
 // brief, and its labels carry everything a worker routes and runs on.
 
@@ -20,7 +20,7 @@ export { type JobKind, KINDS };
 
 export const JOBS_CHANNEL = "jobs";
 
-/** Set by a worker when it settles a job; cleared by robdog once the result reached Slack. */
+/** Set by a worker when it settles a job; cleared by the agent once the result reached Slack. */
 export const REPORT_LABEL = "report";
 export const REPORT_PENDING = "pending";
 
@@ -143,7 +143,7 @@ export function encodeJob(spec: JobSpec): EncodedJob {
   if (brief.length > MAX_BRIEF_CHARS) throw new JobError(`brief is over ${MAX_BRIEF_CHARS} characters`);
 
   const labels: Record<string, string> = {
-    robdog: "job",
+    kiln: "job",
     repo: labelValue("repo", spec.repo),
     kind: spec.kind,
     harness: spec.harness,
@@ -167,7 +167,7 @@ export function decodeJob(root: {
   readonly labels: Readonly<Record<string, string>>;
 }): JobSpec {
   const { labels } = root;
-  if (labels.robdog !== "job") throw new JobError("not a robdog job (label robdog=job missing)");
+  if (labels.kiln !== "job") throw new JobError("not a kiln job (label kiln=job missing)");
   const repo = labels.repo;
   const title = labels.title;
   if (!repo) throw new JobError("label repo is missing");
@@ -209,5 +209,5 @@ export function jobBranch(taskId: string, title: string): string {
     .replace(/^-+|-+$/g, "")
     .slice(0, 40)
     .replace(/-+$/g, "");
-  return slug ? `robdog/${taskId}-${slug}` : `robdog/${taskId}`;
+  return slug ? `kiln/${taskId}-${slug}` : `kiln/${taskId}`;
 }

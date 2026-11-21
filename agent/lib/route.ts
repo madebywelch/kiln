@@ -1,4 +1,4 @@
-// Which Slack messages reach robdog, and how. Pure, so every branch is tested
+// Which Slack messages reach the agent, and how. Pure, so every branch is tested
 // without Slack: the channel passes in the context checks and the I/O.
 
 import type { SessionHistoryMessage } from "eve/channels";
@@ -24,13 +24,13 @@ export interface RouteInput {
   readonly isSubscribed: () => Promise<boolean>;
   /** The channel's messages before this one. */
   readonly history: () => Promise<SessionHistoryMessage[]>;
-  /** Whether a decision model is sure the message needs nothing from robdog. */
-  readonly clearlyNotForRobdog: (history: readonly SessionHistoryMessage[]) => Promise<boolean>;
+  /** Whether a decision model is sure the message needs nothing from the agent. */
+  readonly clearlyNotForAgent: (history: readonly SessionHistoryMessage[]) => Promise<boolean>;
 }
 
 export async function route(input: RouteInput): Promise<SlackMentionResult | null> {
   const { auth } = input;
-  // Other bots, including robdog's own workers' notices, never start turns: two bots answering each other loop.
+  // Other bots, including the agent's own workers' notices, never start turns: two bots answering each other loop.
   if (input.fromBot) return null;
   // Edits only reach threads that already have a session.
   if (input.edit) return { auth, status: "deferred", guidance: THREAD_GUIDANCE };
@@ -45,6 +45,6 @@ export async function route(input: RouteInput): Promise<SlackMentionResult | nul
   }
 
   const history = await input.history();
-  if (await input.clearlyNotForRobdog(history)) return null;
+  if (await input.clearlyNotForAgent(history)) return null;
   return { auth, status: "deferred", guidance: CHANNEL_GUIDANCE, history };
 }

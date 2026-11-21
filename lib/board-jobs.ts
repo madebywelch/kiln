@@ -1,4 +1,4 @@
-// Board operations on jobs, shared by robdog's tools and its report sweep.
+// Board operations on jobs, shared by the agent's tools and its report sweep.
 // Every function takes the board handle, so tests run them on a local board.
 
 import type { Board, MessageView } from "@vercel/board";
@@ -63,7 +63,7 @@ export async function listJobs(
   const { tasks } = await team.tasks.list({
     channel: JOBS_CHANNEL,
     state: query.state ?? "open",
-    label: { robdog: "job" },
+    label: { kiln: "job" },
     limit: query.limit ?? 20,
     latest: true,
   });
@@ -95,7 +95,7 @@ export async function readJob(team: Board, id: string): Promise<{ job: JobView; 
 
 export async function cancelJob(team: Board, id: string, reason: string): Promise<JobView> {
   await team.tasks.cancel(id, reason);
-  // robdog canceled it, so there is nothing to report back.
+  // The agent canceled it, so there is nothing to report back.
   await team.label(id, { unset: [REPORT_LABEL] });
   const { message } = await team.thread(id, { limit: 1 });
   return viewJob(message);
@@ -163,7 +163,7 @@ export async function sweepReports(
       if (job.origin) {
         const { replies } = await team.thread(id, { limit: 100 });
         const last = replies.at(-1);
-        // Files first, so robdog's reply comes after them. A retry of a failed hand-off posts them again.
+        // Files first, so the agent's reply comes after them. A retry of a failed hand-off posts them again.
         const shared: string[] = [];
         for (const attachment of share ? (last?.attachments ?? []) : []) {
           const response = await team.download(attachment.id);

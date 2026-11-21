@@ -23,12 +23,12 @@ describe("parseConfig", () => {
     const parsed = parseConfig({
       ...base,
       JOB_TIMEOUT_MINUTES: "",
-      ROBDOG_GIT_NAME: "",
-      ROBDOG_BOARD_FROM: "",
+      KILN_GIT_NAME: "",
+      KILN_BOARD_FROM: "",
     });
     expect(parsed.success).toBe(true);
-    expect(parsed.data).toMatchObject({ JOB_TIMEOUT_MINUTES: 180, ROBDOG_BOARD_FROM: "", WORK_DIR: "/work" });
-    expect(parsed.data?.ROBDOG_GIT_NAME).toBeUndefined();
+    expect(parsed.data).toMatchObject({ JOB_TIMEOUT_MINUTES: 180, KILN_BOARD_FROM: "", WORK_DIR: "/work" });
+    expect(parsed.data?.KILN_GIT_NAME).toBeUndefined();
   });
 
   it("refuses a profile the board would refuse", () => {

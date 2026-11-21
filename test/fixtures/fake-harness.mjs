@@ -59,8 +59,8 @@ switch (mode) {
     break;
   case "artifact":
     writeFileSync(join(cwd, "theme.css"), "body { background: snow; }\n");
-    mkdirSync(join(cwd, ".robdog", "artifacts"), { recursive: true });
-    writeFileSync(join(cwd, ".robdog", "artifacts", "home.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    mkdirSync(join(cwd, ".kiln", "artifacts"), { recursive: true });
+    writeFileSync(join(cwd, ".kiln", "artifacts", "home.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
     finish("Added snow. Screenshot attached.");
     break;
   case "nothing":

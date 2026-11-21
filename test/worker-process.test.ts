@@ -49,7 +49,7 @@ async function until<T>(what: string, check: () => Promise<T | undefined>, timeo
 }
 
 beforeAll(async () => {
-  root = await mkdtemp(join(tmpdir(), "robdog-process-"));
+  root = await mkdtemp(join(tmpdir(), "kiln-process-"));
   remote = join(root, "remote.git");
   git(["init", "--quiet", "--bare", "-b", "main", remote]);
   const seed = join(root, "seed");
@@ -94,7 +94,7 @@ function startWorker(mode: string, record?: string): { child: ChildProcess; logs
       BOARD_URL: boardUrl,
       BOARD_PROFILE: "claude-1",
       WORKER_HARNESS: "claude",
-      ROBDOG_BOARD_FROM: owner,
+      KILN_BOARD_FROM: owner,
       GH_TOKEN: "test",
       CLAUDE_CODE_OAUTH_TOKEN: "test",
       WORK_DIR: join(root, "work"),

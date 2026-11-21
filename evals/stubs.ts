@@ -1,10 +1,10 @@
 import type { ToolStub } from "eve/evals";
 
 // Tools that reach Slack or the board return canned results in evals, so a run
-// touches nothing real and the assertions see exactly what robdog asked for.
+// touches nothing real and the assertions see exactly what the agent asked for.
 // Every tool that leaves the process is stubbed here; keep it that way.
 
-/** `runsOn` is what the pool reports back; give it the selection the eval expects robdog to ask for. */
+/** `runsOn` is what the pool reports back; give it the selection the eval expects the agent to ask for. */
 export const stubsFor = (runsOn: string): ToolStub[] => [
   {
     id: "start-job",

@@ -13,7 +13,7 @@ import { join } from "node:path";
 import type { Harness } from "../lib/config.ts";
 
 const API = "https://boat.dev/api/v1";
-const NAME_PREFIX = "robdog-";
+const NAME_PREFIX = "kiln-";
 const HOME = "/home/user";
 const UP_STATES = ["ready", "idle", "running"];
 const RUN_ID = Date.now().toString(36);
@@ -32,7 +32,7 @@ export interface PoolWorker {
 
 /**
  * The pool. Codex is left out: its ChatGPT login has to be made on the
- * machine itself (`boat ssh robdog-codex-1 -- codex login --device-auth`).
+ * machine itself (`boat ssh kiln-codex-1 -- codex login --device-auth`).
  */
 export const POOL: readonly PoolWorker[] = [
   { profile: "claude-1", harness: "claude", secret: "CLAUDE_TOKEN_1", type: "default" },
@@ -42,8 +42,8 @@ export const POOL: readonly PoolWorker[] = [
 ];
 
 /** What every worker needs, from .env. */
-const SHARED = ["BOARD_TOKEN", "VERCEL_ORG_ID", "ROBDOG_BOARD_FROM", "GH_TOKEN"] as const;
-const OPTIONAL = ["HARNESS_GH_TOKEN", "ROBDOG_GIT_NAME", "ROBDOG_GIT_EMAIL", "JOB_TIMEOUT_MINUTES"] as const;
+const SHARED = ["BOARD_TOKEN", "VERCEL_ORG_ID", "KILN_BOARD_FROM", "GH_TOKEN"] as const;
+const OPTIONAL = ["HARNESS_GH_TOKEN", "KILN_GIT_NAME", "KILN_GIT_EMAIL", "JOB_TIMEOUT_MINUTES"] as const;
 
 /** The worker's environment on its machine. */
 export function workerEnv(
@@ -69,7 +69,7 @@ export function workerEnv(
     WORKER_HARNESS: worker.harness,
     WORK_DIR: `${HOME}/work`,
     AGENT_BROWSER_EXECUTABLE_PATH: "/usr/bin/google-chrome-stable",
-    ROBDOG_VERSION: version,
+    KILN_VERSION: version,
   };
 }
 
@@ -86,14 +86,14 @@ export function renderEnvFile(env: Readonly<Record<string, string>>): string {
 export function renderUnit(node: string, path: string): string {
   return [
     "[Unit]",
-    "Description=robdog worker",
+    "Description=kiln worker",
     "After=network-online.target",
     "Wants=network-online.target",
     "",
     "[Service]",
     "User=user",
-    `WorkingDirectory=${HOME}/robdog`,
-    `EnvironmentFile=${HOME}/.robdog/worker.env`,
+    `WorkingDirectory=${HOME}/kiln`,
+    `EnvironmentFile=${HOME}/.kiln/worker.env`,
     `Environment=HOME=${HOME}`,
     `Environment=PATH=${path}`,
     `ExecStart=${node} worker/main.ts`,
@@ -247,7 +247,7 @@ async function machineFor(boat: Boat, worker: PoolWorker, existing: Sandbox[]): 
     // would also work, but with boat's delete-on-stop retention a stopped machine is simply gone.
     log(profile, `replacing ${found.id}: ${found.type} -> ${worker.type}`);
     if (UP_STATES.includes(found.state)) {
-      await boat.run(found.id, "sudo systemctl stop robdog-worker || true").catch(() => undefined);
+      await boat.run(found.id, "sudo systemctl stop kiln-worker || true").catch(() => undefined);
     }
     await boat.delete(found.id);
     const created = await boat.create(name, worker.type);
@@ -297,37 +297,37 @@ async function up(boat: Boat, env: Record<string, string | undefined>): Promise<
       const envFile = renderEnvFile(workerEnv(worker, env, mcpSecrets, version));
       const machine = await machineFor(boat, worker, existing);
       log(p, `deploying ${version} to ${machine.id}`);
-      await boat.upload(machine.id, "robdog.tgz", archive);
+      await boat.upload(machine.id, "kiln.tgz", archive);
       await boat.run(
         machine.id,
         [
           "set -e",
-          "rm -rf ~/robdog.next && mkdir -p ~/robdog.next ~/work ~/.robdog && chmod 700 ~/.robdog",
-          "tar xzf ~/robdog.tgz -C ~/robdog.next",
-          `cd ~/robdog.next && npx -y ${PNPM} install --prod --frozen-lockfile --ignore-scripts > /dev/null`,
+          "rm -rf ~/kiln.next && mkdir -p ~/kiln.next ~/work ~/.kiln && chmod 700 ~/.kiln",
+          "tar xzf ~/kiln.tgz -C ~/kiln.next",
+          `cd ~/kiln.next && npx -y ${PNPM} install --prod --frozen-lockfile --ignore-scripts > /dev/null`,
           `npm ls -g agent-browser@${AGENT_BROWSER_VERSION} > /dev/null 2>&1 || npm i -g agent-browser@${AGENT_BROWSER_VERSION} > /dev/null`,
-          "rm -rf ~/robdog && mv ~/robdog.next ~/robdog && rm ~/robdog.tgz",
+          "rm -rf ~/kiln && mv ~/kiln.next ~/kiln && rm ~/kiln.tgz",
         ].join("\n"),
         600,
       );
-      await boat.writeFile(machine.id, ".robdog/worker.env", envFile);
+      await boat.writeFile(machine.id, ".kiln/worker.env", envFile);
       const node = await boat.run(machine.id, "command -v node");
       const path = await boat.run(machine.id, 'printf %s "$PATH"');
-      await boat.writeFile(machine.id, ".robdog/robdog-worker.service", renderUnit(node, path));
+      await boat.writeFile(machine.id, ".kiln/kiln-worker.service", renderUnit(node, path));
       await boat.run(
         machine.id,
         [
           "set -e",
-          "chmod 600 ~/.robdog/worker.env",
-          "sudo install -m 644 ~/.robdog/robdog-worker.service /etc/systemd/system/robdog-worker.service",
+          "chmod 600 ~/.kiln/worker.env",
+          "sudo install -m 644 ~/.kiln/kiln-worker.service /etc/systemd/system/kiln-worker.service",
           "sudo systemctl daemon-reload",
-          "sudo systemctl enable robdog-worker > /dev/null 2>&1",
-          "sudo systemctl restart robdog-worker",
+          "sudo systemctl enable kiln-worker > /dev/null 2>&1",
+          "sudo systemctl restart kiln-worker",
         ].join("\n"),
       );
       for (let attempt = 0; attempt < 20; attempt++) {
         await new Promise((resolve) => setTimeout(resolve, 3_000));
-        const logs = await boat.run(machine.id, "sudo journalctl -u robdog-worker -n 30 --no-pager -o cat");
+        const logs = await boat.run(machine.id, "sudo journalctl -u kiln-worker -n 30 --no-pager -o cat");
         if (logs.includes('"worker.ready"')) {
           log(p, `ready on ${machine.id}`);
           return;
@@ -345,7 +345,7 @@ async function up(boat: Boat, env: Record<string, string | undefined>): Promise<
 
 async function status(boat: Boat): Promise<void> {
   const machines = (await boat.list()).filter((sandbox) => sandbox.name?.startsWith(NAME_PREFIX));
-  if (machines.length === 0) process.stdout.write("no robdog machines\n");
+  if (machines.length === 0) process.stdout.write("no kiln machines\n");
   for (const machine of machines) {
     const profile = machine.name?.slice(NAME_PREFIX.length) ?? machine.id;
     if (!["ready", "idle", "running"].includes(machine.state)) {
@@ -353,10 +353,10 @@ async function status(boat: Boat): Promise<void> {
       continue;
     }
     const service = await boat
-      .run(machine.id, "systemctl is-active robdog-worker || true")
+      .run(machine.id, "systemctl is-active kiln-worker || true")
       .catch((error: unknown) => String(error));
     const last = await boat
-      .run(machine.id, "sudo journalctl -u robdog-worker -n 1 --no-pager -o cat || true")
+      .run(machine.id, "sudo journalctl -u kiln-worker -n 1 --no-pager -o cat || true")
       .catch(() => "");
     log(profile, `${machine.id} ${machine.state} service=${service} ${last.slice(0, 160)}`);
   }
@@ -367,7 +367,7 @@ async function logs(boat: Boat, profile: string | undefined): Promise<void> {
   const machine = (await boat.list()).find((sandbox) => sandbox.name === `${NAME_PREFIX}${profile}`);
   if (!machine) throw new Error(`no machine for ${profile}`);
   process.stdout.write(
-    `${await boat.run(machine.id, "sudo journalctl -u robdog-worker -n 100 --no-pager -o cat")}\n`,
+    `${await boat.run(machine.id, "sudo journalctl -u kiln-worker -n 100 --no-pager -o cat")}\n`,
   );
 }
 

@@ -1,6 +1,12 @@
-// What robdog may work on, and with what by default. Both the agent and the
+// What kiln's agent may work on, and with what by default. Both the agent and the
 // workers read this file, so a repo missing here can be neither dispatched nor
 // worked. Changing it means a redeploy of the agent and an update of workers.
+
+/**
+ * The agent kiln runs: the name it goes by in Slack, answers to without an @mention, and signs its
+ * commits and pull requests with. Its persona is agent/instructions.md; its Slack app has the same name.
+ */
+export const agent = { name: "robdog" } as const;
 
 /** claude and codex run on subscriptions; opencode runs AI Gateway models on the team's credits. */
 export const HARNESSES = ["claude", "codex", "opencode"] as const;
@@ -41,7 +47,7 @@ export type McpServer =
 export interface RepoConfig {
   /** `owner/name` on GitHub. */
   readonly github: string;
-  /** What the repo is, in the words people use for it. robdog maps conversation to repos with this. */
+  /** What the repo is, in the words people use for it. The agent maps conversation to repos with this. */
   readonly description: string;
   /** Branch that job branches start from and pull requests target. Default `main`. */
   readonly baseBranch?: string;

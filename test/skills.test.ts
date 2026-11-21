@@ -7,7 +7,7 @@ import { installSkills, skillTargets } from "../worker/skills.ts";
 let root: string;
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), "robdog-skills-"));
+  root = await mkdtemp(join(tmpdir(), "kiln-skills-"));
 });
 
 afterEach(async () => {

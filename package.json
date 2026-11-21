@@ -1,8 +1,8 @@
 {
-  "name": "robdog",
+  "name": "kiln",
   "private": true,
   "type": "module",
-  "description": "robdog: a Slack agent on eve that ideates with you and hands repo work to a pool of coding-CLI workers through Vercel Board.",
+  "description": "kiln runs a Slack agent on eve that ideates with you and hands repo work to a pool of coding-CLI workers through Vercel Board.",
   "engines": {
     "node": ">=24"
   },

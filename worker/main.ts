@@ -1,4 +1,4 @@
-// A robdog worker: one coding-CLI subscription that claims jobs from Vercel
+// A kiln worker: one coding-CLI subscription that claims jobs from Vercel
 // Board, one at a time, until it is told to stop. Run one per subscription.
 
 import { existsSync } from "node:fs";
@@ -24,13 +24,13 @@ const Config = z
     GH_TOKEN: z.string().min(1, "set GH_TOKEN so the worker can clone, push, and open pull requests"),
     /** Optional read-only GitHub token for the coding CLI itself (CI logs, issues). It never gets GH_TOKEN. */
     HARNESS_GH_TOKEN: z.string().optional(),
-    /** Board actor IDs whose jobs this worker takes, comma-separated: robdog's deployment. Empty: only its own login's. */
-    ROBDOG_BOARD_FROM: z.string().default(""),
+    /** Board actor IDs whose jobs this worker takes, comma-separated: the agent's deployment. Empty: only its own login's. */
+    KILN_BOARD_FROM: z.string().default(""),
     WORK_DIR: z.string().default("/work"),
     JOB_TIMEOUT_MINUTES: z.coerce.number().int().positive().default(180),
     /** Commit identity. Not GIT_AUTHOR_*: git reads those itself, and an empty one breaks every commit. */
-    ROBDOG_GIT_NAME: z.string().optional(),
-    ROBDOG_GIT_EMAIL: z.string().optional(),
+    KILN_GIT_NAME: z.string().optional(),
+    KILN_GIT_EMAIL: z.string().optional(),
     /** Claude Code's subscription login, from `claude setup-token`. */
     CLAUDE_CODE_OAUTH_TOKEN: z.string().optional(),
     /** OpenCode's AI Gateway key, from the Vercel dashboard (AI Gateway, API keys). */
@@ -102,10 +102,10 @@ function keepAlive(claim: ClaimedTask, job: AbortController): () => void {
 }
 
 async function work(config: Config, team: Board, shutdown: AbortSignal, guidance: string): Promise<void> {
-  const from = config.ROBDOG_BOARD_FROM.split(",")
+  const from = config.KILN_BOARD_FROM.split(",")
     .map((actor) => actor.trim())
     .filter(Boolean);
-  const label = { robdog: "job", harness: config.WORKER_HARNESS };
+  const label = { kiln: "job", harness: config.WORKER_HARNESS };
   log("worker.ready", { profile: config.BOARD_PROFILE, harness: config.WORKER_HARNESS, from });
 
   while (!shutdown.aborted) {
@@ -149,8 +149,8 @@ async function work(config: Config, team: Board, shutdown: AbortSignal, guidance
         signal: job.signal,
         log,
         gitIdentity:
-          config.ROBDOG_GIT_NAME && config.ROBDOG_GIT_EMAIL
-            ? { name: config.ROBDOG_GIT_NAME, email: config.ROBDOG_GIT_EMAIL }
+          config.KILN_GIT_NAME && config.KILN_GIT_EMAIL
+            ? { name: config.KILN_GIT_NAME, email: config.KILN_GIT_EMAIL }
             : undefined,
       });
     } finally {

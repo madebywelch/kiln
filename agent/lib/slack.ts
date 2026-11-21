@@ -1,7 +1,7 @@
 // Slack access shared by the channel, tools, and schedules.
 //
 // Credentials: with SLACK_CONNECTOR set (a Vercel Connect connector UID, e.g.
-// `slack/robdog`), Connect holds the bot token and verifies requests. Without
+// `slack/<your app>`), Connect holds the bot token and verifies requests. Without
 // it, the channel reads SLACK_BOT_TOKEN and SLACK_SIGNING_SECRET.
 
 import { connectSlackCredentials } from "@vercel/connect/eve";
@@ -40,7 +40,7 @@ export async function slackApi(
 
 let selfId: Promise<string | undefined> | undefined;
 
-/** robdog's own Slack user ID, from `auth.test`, cached for the life of the process. */
+/** The agent's own Slack user ID, from `auth.test`, cached for the life of the process. */
 export function botUserId(teamId?: string): Promise<string | undefined> {
   selfId ??= slackApi("auth.test", {}, teamId).then(
     (response) => (typeof response.user_id === "string" ? response.user_id : undefined),

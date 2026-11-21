@@ -164,7 +164,7 @@ describe("encodeJob and decodeJob", () => {
   it("round-trips a job", () => {
     const encoded = encodeJob(spec);
     expect(encoded.labels).toMatchObject({
-      robdog: "job",
+      kiln: "job",
       repo: "web",
       harness: "claude",
       slack: "C0123/1731712345.000100",
@@ -187,8 +187,8 @@ describe("encodeJob and decodeJob", () => {
     expect(() => encodeJob({ ...spec, model: "m".repeat(300) })).toThrow(/too long/);
   });
 
-  it("refuses a task that is not a robdog job", () => {
-    expect(() => decodeJob({ text: "hi", labels: {} })).toThrow(/not a robdog job/);
+  it("refuses a task that is not a kiln job", () => {
+    expect(() => decodeJob({ text: "hi", labels: {} })).toThrow(/not a kiln job/);
   });
 
   it("refuses labels outside the contract", () => {
@@ -209,8 +209,8 @@ describe("naming", () => {
   });
 
   it("makes a readable, safe branch name", () => {
-    expect(jobBranch("812", "Add a Christmas theme!")).toBe("robdog/812-add-a-christmas-theme");
-    expect(jobBranch("9", "???")).toBe("robdog/9");
-    expect(jobBranch("9", "a".repeat(80))).toBe(`robdog/9-${"a".repeat(40)}`);
+    expect(jobBranch("812", "Add a Christmas theme!")).toBe("kiln/812-add-a-christmas-theme");
+    expect(jobBranch("9", "???")).toBe("kiln/9");
+    expect(jobBranch("9", "a".repeat(80))).toBe(`kiln/9-${"a".repeat(40)}`);
   });
 });

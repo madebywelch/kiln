@@ -54,7 +54,7 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), "robdog-worker-"));
+  root = await mkdtemp(join(tmpdir(), "kiln-worker-"));
   remote = join(root, "remote.git");
   git(["init", "--quiet", "--bare", "-b", "main", remote]);
   const seed = join(root, "seed");
@@ -76,7 +76,7 @@ afterEach(async () => {
 async function claim(): Promise<ClaimedTask> {
   const claimed = await worker.tasks.claim({
     channel: JOBS_CHANNEL,
-    label: { robdog: "job" },
+    label: { kiln: "job" },
     from: ["board:client"],
     lease: 300,
   });
@@ -332,7 +332,7 @@ describe("artifacts", () => {
     });
     const files = remoteFiles(jobBranch(job.id, spec.title));
     expect(files).toContain("theme.css");
-    expect(files.some((file) => file.startsWith(".robdog"))).toBe(false);
+    expect(files.some((file) => file.startsWith(".kiln"))).toBe(false);
     const { replies } = await team.thread(job.id, { limit: 10 });
     const report = replies.at(-1);
     expect(report?.attachments.map((attachment) => attachment.name)).toEqual(["home.png"]);
@@ -507,7 +507,7 @@ describe("harness adapters", () => {
   });
 
   it("writes a prompt that says how to finish for each kind", () => {
-    const where = { id: "1", github: "acme/web", branch: "robdog/1", resumed: false };
+    const where = { id: "1", github: "acme/web", branch: "kiln/1", resumed: false };
     expect(buildPrompt(spec, where, [])).toContain("The worker pushes and opens a draft pull request");
     expect(buildPrompt({ ...spec, kind: "investigate" }, where, [])).toContain("Investigate and report.");
     expect(buildPrompt(spec, where, [])).toContain("QUESTION: ");

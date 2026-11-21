@@ -7,7 +7,7 @@ import { cp, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 /** Marks a skill folder as installed from the repo, so a later start may replace or remove it. */
-const MARKER = ".robdog-managed";
+const MARKER = ".kiln-managed";
 
 /** Claude Code and OpenCode read ~/.claude/skills; Codex reads ~/.codex/skills. */
 export function skillTargets(home: string): string[] {
@@ -58,7 +58,7 @@ export async function installSkills(source: string, targets: readonly string[]):
       await cp(join(source, name), destination, { recursive: true });
       await writeFile(
         join(destination, MARKER),
-        "Installed from the robdog repo's skills/workers. Edit it there.\n",
+        "Installed from the kiln repo's skills/workers. Edit it there.\n",
       );
       result.installed.push(destination);
     }

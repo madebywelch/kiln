@@ -1,12 +1,13 @@
 import { defaultSlackAuth, slackChannel } from "eve/channels/slack";
-import { channelHistory, clearlyNotForRobdog } from "../lib/ambient.ts";
+import { agent } from "../../lib/config.ts";
+import { channelHistory, clearlyNotForAgent } from "../lib/ambient.ts";
 import { route } from "../lib/route.ts";
 import { slackCredentials } from "../lib/slack.ts";
 
 export default slackChannel({
   credentials: slackCredentials,
-  botName: "robdog",
-  // Each thread's earlier replies, attributed. Within a session only what's new since robdog last spoke.
+  botName: agent.name,
+  // Each thread's earlier replies, attributed. Within a session only what's new since the agent last spoke.
   threadContext: { since: "last-agent-reply" },
   messageContext: { users: {} },
   onMessage: (ctx, message) =>
@@ -19,6 +20,6 @@ export default slackChannel({
       auth: defaultSlackAuth(message, ctx),
       isSubscribed: () => ctx.isSubscribed(),
       history: () => channelHistory(ctx.slack, message),
-      clearlyNotForRobdog: (history) => clearlyNotForRobdog(message, history),
+      clearlyNotForAgent: (history) => clearlyNotForAgent(message, history),
     }),
 });

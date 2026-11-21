@@ -34,7 +34,7 @@ beforeEach(() => {
 async function claimAs(handle: Board) {
   const claim = await handle.tasks.claim({
     channel: JOBS_CHANNEL,
-    label: { robdog: "job" },
+    label: { kiln: "job" },
     from: ["board:client"],
   });
   if (!claim) throw new Error("nothing to claim");
@@ -52,13 +52,13 @@ describe("posting and reading jobs", () => {
     });
     const claim = await worker.tasks.claim({
       channel: JOBS_CHANNEL,
-      label: { robdog: "job", harness: "claude" },
+      label: { kiln: "job", harness: "claude" },
       from: ["board:client"],
     });
     expect(claim?.task.id).toBe(job.id);
     const codex = await team.as("codex-1").tasks.claim({
       channel: JOBS_CHANNEL,
-      label: { robdog: "job", harness: "codex" },
+      label: { kiln: "job", harness: "codex" },
       from: ["board:client"],
     });
     expect(codex).toBeNull();
@@ -66,7 +66,7 @@ describe("posting and reading jobs", () => {
 
   it("lists jobs and skips foreign tasks in the channel", async () => {
     await postJob(team, spec);
-    await team.tasks.create(JOBS_CHANNEL, { text: "someone else's task", labels: { robdog: "job" } });
+    await team.tasks.create(JOBS_CHANNEL, { text: "someone else's task", labels: { kiln: "job" } });
     const jobs = await listJobs(team);
     expect(jobs.map((job) => job.title)).toEqual([spec.title]);
   });
