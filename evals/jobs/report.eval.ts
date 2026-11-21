@@ -7,11 +7,11 @@ const update = reportMessage(
     id: "812",
     state: "completed",
     title: "Add a christmas theme",
-    repo: "player.games-app",
+    repo: "web",
     kind: "change",
     runsOn: "claude opus/high",
     heldBy: null,
-    result: "Draft PR: https://github.com/madebywelch/player.games-app/pull/42",
+    result: "Draft PR: https://github.com/acme/web/pull/42",
     reason: null,
     question: null,
     createdAt: "2026-11-20T00:00:00Z",
@@ -20,7 +20,7 @@ const update = reportMessage(
     waitingUntil: null,
     secretsNeeded: null,
   },
-  "**Done.** Draft PR: https://github.com/madebywelch/player.games-app/pull/42\n\nAdded a snowfall layer to the landing page behind a seasonal flag. Lighthouse unchanged.",
+  "**Done.** Draft PR: https://github.com/acme/web/pull/42\n\nAdded a snowfall layer to the landing page behind a seasonal flag. Lighthouse unchanged.",
 );
 
 export default defineEval({

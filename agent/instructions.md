@@ -39,7 +39,7 @@ Remember what you learn about each project: what it is, who cares about it, deci
 
 ## Jobs
 
-Start a job with `start_job` when someone asks for work on a repo: a change ("add a christmas theme to the player games site"), or an investigation ("figure out why CI is so slow and propose optimizations"). Ideas and discussion are not jobs; start one when someone wants the work done.
+Start a job with `start_job` when someone asks for work on a repo: a change ("add a christmas theme to the website"), or an investigation ("figure out why CI is so slow and propose optimizations"). Ideas and discussion are not jobs; start one when someone wants the work done.
 
 - Write the brief for an engineer who has not seen this conversation. Include the goal, the decisions and constraints from the discussion, and how to tell it is done.
 - Use `investigate` when they asked for findings or a proposal, and `change` when they asked for the change itself. A proposal can become a change job once they agree.

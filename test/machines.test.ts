@@ -34,13 +34,13 @@ const env = {
   WORKER_AI_GATEWAY_API_KEY: "gateway",
   UNRELATED: "not for workers",
   KILN_CONFIG: JSON.stringify({
-    repos: { "player.games-app": { github: "acme/player-games", description: "the games site" } },
+    repos: { web: { github: "acme/web", description: "the games site" } },
   }),
 };
 const config = launchConfig(env) as LaunchConfig;
 
 const spec: JobSpec = {
-  repo: "player.games-app",
+  repo: "web",
   kind: "change",
   title: "Add snow",
   brief: "Make it snow.",
@@ -117,8 +117,8 @@ describe("workerSettings", () => {
       ...env,
       KILN_CONFIG: JSON.stringify({
         repos: {
-          "player.games-app": {
-            github: "acme/player-games",
+          web: {
+            github: "acme/web",
             description: "games",
             baseBranch: "dev",
             mcp: ["linear"],
@@ -128,10 +128,10 @@ describe("workerSettings", () => {
         mcpServers: { linear: { url: "https://mcp.linear.app/mcp" }, other: { command: "x" } },
       }),
     }) as LaunchConfig;
-    const settings = workerSettings("msg_1", "opencode", withMcp, [], "player.games-app");
+    const settings = workerSettings("msg_1", "opencode", withMcp, [], "web");
     expect(JSON.parse(settings.KILN_REPO ?? "{}")).toEqual({
-      key: "player.games-app",
-      github: "acme/player-games",
+      key: "web",
+      github: "acme/web",
       baseBranch: "dev",
     });
     expect(JSON.parse(settings.KILN_MCP_SERVERS ?? "{}")).toEqual({
@@ -147,7 +147,7 @@ describe("workerSettings", () => {
     const job = await postJob(team, spec);
     const gone = launchConfig({ ...env, KILN_CONFIG: "" }) as LaunchConfig;
     const { failed } = await launchMachine({ ...deps, config: gone }, job.message);
-    expect(failed).toMatch(/player.games-app is no longer a repo in kiln.config.yaml/);
+    expect(failed).toMatch(/web is no longer a repo in kiln.config.yaml/);
   });
 
   it("says why a harness can't run", () => {
@@ -178,7 +178,7 @@ describe("launchMachine", () => {
     expect(machine?.id).toBe("bx_2");
 
     const [launched] = fake.machines;
-    expect(launched?.environment).toBe("kiln-player.games-app");
+    expect(launched?.environment).toBe("kiln-web");
     expect(launched?.labels).toEqual({ kiln: "worker", job: job.id, harness: "claude" });
     expect(launched?.snapshots).toBe(false);
     expect(launched?.ttlSeconds).toBe((180 + 30) * 60);

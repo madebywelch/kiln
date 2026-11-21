@@ -53,7 +53,7 @@ beforeAll(async () => {
   git(["init", "--quiet", "--bare", "-b", "main", remote]);
   const seed = join(root, "seed");
   git(["clone", "--quiet", remote, seed]);
-  await writeFile(join(seed, "README.md"), "# player games\n");
+  await writeFile(join(seed, "README.md"), "# the website\n");
   git(["add", "-A"], seed);
   git(["commit", "--quiet", "-m", "init"], seed);
   git(["push", "--quiet", "origin", "HEAD:main"], seed);
@@ -98,7 +98,7 @@ function startWorker(
       BOARD_PROFILE: "claude",
       WORKER_HARNESS: "claude",
       KILN_JOB_ID: jobId,
-      KILN_REPO: JSON.stringify({ key: "player.games-app", github: "madebywelch/player.games-app" }),
+      KILN_REPO: JSON.stringify({ key: "web", github: "acme/web" }),
       GH_TOKEN: "test",
       CLAUDE_CODE_OAUTH_TOKEN: "test",
       WORK_DIR: join(root, "work"),
@@ -106,7 +106,7 @@ function startWorker(
       ...(record ? { FAKE_RECORD: record } : {}),
       GIT_CONFIG_COUNT: "1",
       GIT_CONFIG_KEY_0: `url.${remote}.insteadOf`,
-      GIT_CONFIG_VALUE_0: "https://github.com/madebywelch/player.games-app.git",
+      GIT_CONFIG_VALUE_0: "https://github.com/acme/web.git",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -126,7 +126,7 @@ const exited = (child: ChildProcess) =>
   });
 
 const spec: JobSpec = {
-  repo: "player.games-app",
+  repo: "web",
   kind: "change",
   title: "Add snow",
   brief: "Make it snow.",
@@ -145,7 +145,7 @@ it("claims its job, opens a PR, settles it for the agent's report, and exits", a
     const { message } = await team.thread(job.id, { limit: 1 });
     return message.task?.state === "completed" ? message : undefined;
   });
-  expect(settled.task?.result).toBe("Draft PR: https://github.com/madebywelch/player.games-app/pull/1");
+  expect(settled.task?.result).toBe("Draft PR: https://github.com/acme/web/pull/1");
   expect(settled.labels[REPORT_LABEL]).toBe("pending");
   expect(git(["--git-dir", remote, "ls-tree", "-r", "--name-only", jobBranch(job.id, spec.title)])).toContain(
     "theme.css",

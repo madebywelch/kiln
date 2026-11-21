@@ -67,7 +67,7 @@ kiln routes Claude jobs across every subscription it has a token for, and never 
 
 Each repo's secrets live in its own boat environment, `kiln-<repo>`. kiln creates the environment on first use. The environment passes secrets and nothing else: no GitHub login, no boat key, no agent logins. If someone switches one of those on in the dashboard, kiln switches it off again before the next launch.
 
-- **Setting one.** Ask the agent in Slack ("set the Linear key for player games"), or it asks when a job is paused for one. It posts a button, and the button opens a Slack form. The value goes from the form to boat; the agent never sees it. Anyone in the workspace can set them until `KILN_SECRET_ADMINS` lists Slack user IDs; then only those can, and anyone else who clicks is shown their ID to pass on.
+- **Setting one.** Ask the agent in Slack ("set the Linear key for the website"), or it asks when a job is paused for one. It posts a button, and the button opens a Slack form. The value goes from the form to boat; the agent never sees it. Anyone in the workspace can set them until `KILN_SECRET_ADMINS` lists Slack user IDs; then only those can, and anyone else who clicks is shown their ID to pass on.
 - **Using one.** Jobs get the repo's secrets as environment variables, so MCP servers, tests, and dev servers can read them. A new value reaches the next job; a running one keeps what it started with.
 - **Seeing them.** The agent's `list_secrets` shows names only. `boat env info kiln-<repo>` shows everything.
 

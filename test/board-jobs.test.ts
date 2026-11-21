@@ -15,7 +15,7 @@ import {
 import { JOBS_CHANNEL, type JobSpec, REPORT_LABEL, REPORT_PENDING } from "../lib/jobs.ts";
 
 const spec: JobSpec = {
-  repo: "player.games-app",
+  repo: "web",
   kind: "change",
   title: "Add a christmas theme",
   brief: "Snow on the landing page.",

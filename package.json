@@ -16,7 +16,7 @@
     "fmt": "biome check --write .",
     "test": "vitest run",
     "check": "pnpm lint && pnpm typecheck && pnpm test",
-    "eval": "eve eval",
+    "eval": "KILN_CONFIG=\"$(cat evals/deployment.json)\" eve eval",
     "workers:status": "node scripts/boat-workers.ts status",
     "workers:logs": "node scripts/boat-workers.ts logs"
   },

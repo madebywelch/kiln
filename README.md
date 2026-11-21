@@ -37,7 +37,7 @@ Say the model in Slack, or don't:
 
 | You say | The job runs on |
 |---|---|
-| "add a christmas theme to the player games site" | a change: the repo's default, else `claude opus/high` |
+| "add a christmas theme to the website" | a change: the repo's default, else `claude opus/high` |
 | "figure out why CI is slow" | an investigation: the repo's default, else `opencode openai/gpt-6-luna-fast/medium` |
 | "sonnet, low effort" | `claude sonnet/low` |
 | "deepseek v4.1 flash" | `opencode deepseek/deepseek-v4.1-flash`: any AI Gateway model runs on OpenCode |

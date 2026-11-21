@@ -30,7 +30,7 @@ export const stubsFor = (runsOn: string): ToolStub[] => [
   {
     id: "request-secret",
     tool: "request_secret",
-    outcome: { response: { asked: "LINEAR_API_KEY", repo: "player.games-app" } },
+    outcome: { response: { asked: "LINEAR_API_KEY", repo: "web" } },
   },
   {
     id: "list-subscriptions",
@@ -42,7 +42,7 @@ export const stubsFor = (runsOn: string): ToolStub[] => [
   {
     id: "list-secrets",
     tool: "list_secrets",
-    outcome: { response: { repo: "player.games-app", set: [], missingForMcp: [] } },
+    outcome: { response: { repo: "web", set: [], missingForMcp: [] } },
   },
 ];
 

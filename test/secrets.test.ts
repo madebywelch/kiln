@@ -39,10 +39,10 @@ describe("secretNameIssue", () => {
 
 describe("repoEnvironment", () => {
   it("creates the repo's environment passing secrets and nothing else", async () => {
-    const environment = await repoEnvironment(boat, "player.games-app");
-    expect(environment.name).toBe(environmentName("player.games-app"));
+    const environment = await repoEnvironment(boat, "web");
+    expect(environment.name).toBe(environmentName("web"));
     expect(fake.environments[0]).toMatchObject({
-      name: "kiln-player.games-app",
+      name: "kiln-web",
       safeForThirdParties: false,
       passGithub: false,
       passSecrets: true,
@@ -52,11 +52,11 @@ describe("repoEnvironment", () => {
   });
 
   it("puts the flags back when someone switched GitHub on in the dashboard", async () => {
-    await repoEnvironment(boat, "player.games-app");
+    await repoEnvironment(boat, "web");
     const [environment] = fake.environments;
     if (environment) environment.passGithub = true;
     const events: string[] = [];
-    await repoEnvironment(boat, "player.games-app", (event) => events.push(event));
+    await repoEnvironment(boat, "web", (event) => events.push(event));
     expect(fake.environments[0]?.passGithub).toBe(false);
     expect(events).toEqual(["secrets.environment_flags_reset"]);
   });
@@ -64,22 +64,22 @@ describe("repoEnvironment", () => {
 
 describe("setSecret and secretNames", () => {
   it("stores a value and lists only names", async () => {
-    await setSecret(boat, "player.games-app", "LINEAR_API_KEY", "lin_secret_value");
+    await setSecret(boat, "web", "LINEAR_API_KEY", "lin_secret_value");
     expect(fake.environments[0]?.vars).toEqual({ LINEAR_API_KEY: "lin_secret_value" });
-    const names = await secretNames(boat, "player.games-app");
+    const names = await secretNames(boat, "web");
     expect(names).toEqual(["LINEAR_API_KEY"]);
     expect(JSON.stringify(names)).not.toContain("lin_secret_value");
   });
 
   it("lists nothing for a repo with no environment yet, without creating one", async () => {
-    expect(await secretNames(boat, "player.games-app")).toEqual([]);
+    expect(await secretNames(boat, "web")).toEqual([]);
     expect(fake.environments).toHaveLength(0);
   });
 
   it("refuses empty, multi-line, and reserved secrets before calling boat", async () => {
-    await expect(setSecret(boat, "player.games-app", "LINEAR_API_KEY", "")).rejects.toThrow(/empty/);
-    await expect(setSecret(boat, "player.games-app", "LINEAR_API_KEY", "a\nb")).rejects.toThrow(/one line/);
-    await expect(setSecret(boat, "player.games-app", "GH_TOKEN", "x")).rejects.toThrow(/reserved/);
+    await expect(setSecret(boat, "web", "LINEAR_API_KEY", "")).rejects.toThrow(/empty/);
+    await expect(setSecret(boat, "web", "LINEAR_API_KEY", "a\nb")).rejects.toThrow(/one line/);
+    await expect(setSecret(boat, "web", "GH_TOKEN", "x")).rejects.toThrow(/reserved/);
     expect(fake.requests).toEqual([]);
   });
 });

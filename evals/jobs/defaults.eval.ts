@@ -7,7 +7,7 @@ export default defineEval({
   async test(t) {
     const session = await t.session({ stubs });
     const turn = await session.send(
-      "Add a christmas theme to the player games site. Light snow on the landing page, nothing heavy.",
+      "Add a christmas theme to the website. Light snow on the landing page, nothing heavy.",
     );
     turn.expectOk();
     turn.calledTool("start_job", {
@@ -15,7 +15,7 @@ export default defineEval({
       input: (input: unknown) => {
         const job = asJob(input);
         return (
-          job.repo === "player.games-app" &&
+          job.repo === "web" &&
           job.kind === "change" &&
           job.harness === undefined &&
           job.model === undefined &&

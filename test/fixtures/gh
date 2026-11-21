@@ -5,7 +5,7 @@ case "$1 $2" in
   "pr view") exit 1 ;;
   "pr create")
     cat >/dev/null
-    echo "https://github.com/madebywelch/player.games-app/pull/1"
+    echo "https://github.com/acme/web/pull/1"
     ;;
   *)
     echo "fake gh: unexpected $*" >&2

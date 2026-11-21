@@ -7,7 +7,7 @@ const failed = reportMessage(
     id: "813",
     state: "blocked",
     title: "Triage the Linear backlog",
-    repo: "player.games-app",
+    repo: "web",
     kind: "investigate",
     runsOn: "opencode openai/gpt-6-luna-fast/medium",
     heldBy: null,
@@ -34,7 +34,7 @@ export default defineEval({
       count: 1,
       input: (input: unknown) => {
         const asked = (input ?? {}) as { repo?: string; name?: string; job?: string };
-        return asked.repo === "player.games-app" && asked.name === "LINEAR_API_KEY" && asked.job === "813";
+        return asked.repo === "web" && asked.name === "LINEAR_API_KEY" && asked.job === "813";
       },
     });
     turn.notCalledTool("start_job");

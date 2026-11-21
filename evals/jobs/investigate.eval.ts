@@ -6,7 +6,7 @@ export default defineEval({
   async test(t) {
     const session = await t.session({ stubs: stubsFor("claude sonnet/low") });
     const turn = await session.send(
-      "Have sonnet on low effort figure out why CI is running so slow on player games and propose optimizations.",
+      "Have sonnet on low effort figure out why CI is running so slow on the website and propose optimizations.",
     );
     turn.expectOk();
     turn.calledTool("start_job", {
@@ -14,7 +14,7 @@ export default defineEval({
       input: (input: unknown) => {
         const job = asJob(input);
         return (
-          job.repo === "player.games-app" &&
+          job.repo === "web" &&
           job.kind === "investigate" &&
           /sonnet/i.test(job.model ?? "") &&
           job.effort === "low" &&

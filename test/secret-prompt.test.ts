@@ -39,7 +39,7 @@ function harness(overrides: Partial<InteractivityDeps> = {}) {
   };
   const deps: InteractivityDeps = {
     signingSecret: SECRET,
-    isRepo: (repo) => repo === "player.games-app",
+    isRepo: (repo) => repo === "web",
     mayEdit: secretEditors("U_ADMIN, U_OTHER"),
     openView: async (_trigger, view) => {
       calls.views.push(view);
@@ -68,10 +68,7 @@ function harness(overrides: Partial<InteractivityDeps> = {}) {
   return { deps, calls };
 }
 
-const click = (
-  user: string,
-  value = JSON.stringify({ repo: "player.games-app", name: "LINEAR_API_KEY" }),
-) => ({
+const click = (user: string, value = JSON.stringify({ repo: "web", name: "LINEAR_API_KEY" })) => ({
   type: "block_actions",
   trigger_id: "trig",
   user: { id: user },
@@ -86,7 +83,7 @@ const submit = (user: string, value: string) => ({
   view: {
     callback_id: MODAL_CALLBACK_ID,
     private_metadata: JSON.stringify({
-      repo: "player.games-app",
+      repo: "web",
       name: "LINEAR_API_KEY",
       channel: "C1",
       thread: "1.0",
@@ -131,7 +128,7 @@ describe("handleInteractivity", () => {
     expect(response.status).toBe(200);
     expect(calls.views[0]).toMatchObject({ callback_id: MODAL_CALLBACK_ID });
     expect(JSON.parse(String(calls.views[0]?.private_metadata))).toEqual({
-      repo: "player.games-app",
+      repo: "web",
       name: "LINEAR_API_KEY",
       channel: "C1",
       thread: "1.0",
@@ -158,10 +155,10 @@ describe("handleInteractivity", () => {
     const { deps, calls } = harness();
     const response = await handleInteractivity(signed(submit("U_ADMIN", " lin_secret ")), deps);
     expect(await response.json()).toEqual({ response_action: "clear" });
-    expect(calls.secrets).toEqual([["player.games-app", "LINEAR_API_KEY", "lin_secret"]]);
+    expect(calls.secrets).toEqual([["web", "LINEAR_API_KEY", "lin_secret"]]);
     await Promise.all(calls.pending);
     expect(calls.posts).toEqual([
-      "<@U_ADMIN> set `LINEAR_API_KEY` for *player.games-app*. New jobs on it get the new value.",
+      "<@U_ADMIN> set `LINEAR_API_KEY` for *web*. New jobs on it get the new value.",
     ]);
     expect(JSON.stringify(calls.logs)).not.toContain("lin_secret");
   });
@@ -170,7 +167,7 @@ describe("handleInteractivity", () => {
     const { deps, calls } = harness();
     const payload = submit("U_ADMIN", "lin_secret");
     payload.view.private_metadata = JSON.stringify({
-      repo: "player.games-app",
+      repo: "web",
       name: "LINEAR_API_KEY",
       channel: "C1",
       thread: "1.0",
@@ -178,15 +175,13 @@ describe("handleInteractivity", () => {
     });
     await handleInteractivity(signed(payload), deps);
     await Promise.all(calls.pending);
-    expect(calls.resumed).toEqual([["813", "player.games-app"]]);
-    expect(calls.posts).toEqual([
-      "<@U_ADMIN> set `LINEAR_API_KEY` for *player.games-app*. Job #813 is resuming.",
-    ]);
+    expect(calls.resumed).toEqual([["813", "web"]]);
+    expect(calls.posts).toEqual(["<@U_ADMIN> set `LINEAR_API_KEY` for *web*. Job #813 is resuming."]);
   });
 
   it("carries the job from the button into the form", async () => {
     const { deps, calls } = harness();
-    const value = JSON.stringify({ repo: "player.games-app", name: "LINEAR_API_KEY", job: "813" });
+    const value = JSON.stringify({ repo: "web", name: "LINEAR_API_KEY", job: "813" });
     await handleInteractivity(signed(click("U_ADMIN", value)), deps);
     expect(JSON.parse(String(calls.views[0]?.private_metadata)).job).toBe("813");
   });
@@ -230,9 +225,9 @@ describe("handleInteractivity", () => {
 describe("requestBlocks", () => {
   it("names the repo, the secret, and where it's stored, with a button carrying no value", () => {
     const blocks = JSON.stringify(
-      requestBlocks({ repo: "player.games-app", name: "LINEAR_API_KEY" }, "For Linear's MCP server."),
+      requestBlocks({ repo: "web", name: "LINEAR_API_KEY" }, "For Linear's MCP server."),
     );
-    expect(blocks).toContain("kiln-player.games-app");
+    expect(blocks).toContain("kiln-web");
     expect(blocks).toContain(OPEN_ACTION_ID);
     expect(blocks).toContain("For Linear's MCP server.");
   });

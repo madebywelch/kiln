@@ -4,9 +4,9 @@ import { configSetting } from "../scripts/deploy.ts";
 
 const yaml = `
 repos:
-  player.games-app:
-    github: acme/player-games
-    description: Player Games, the website and its creator hub.
+  web:
+    github: acme/web
+    description: The marketing site and the customer dashboard.
     defaults:
       investigate: { harness: opencode, model: openai/gpt-6-luna-fast }
     mcp: [linear, admin]
@@ -29,14 +29,11 @@ describe("kiln.config.yaml", () => {
   it("becomes KILN_CONFIG: the repos, and each repo's servers and nothing else", () => {
     const config = parseDeployment(configSetting(yaml));
     if (typeof config === "string") throw new Error(config);
-    expect(Object.keys(config.repos)).toEqual(["player.games-app", "docs"]);
+    expect(Object.keys(config.repos)).toEqual(["web", "docs"]);
     expect(config.repos.docs?.mcp).toEqual([]);
-    expect(Object.keys(serversFor(config, "player.games-app"))).toEqual(["linear", "admin"]);
+    expect(Object.keys(serversFor(config, "web"))).toEqual(["linear", "admin"]);
     expect(serversFor(config, "docs")).toEqual({});
-    expect(secretsNamedBy(serversFor(config, "player.games-app"))).toEqual([
-      "ADMIN_MCP_URL",
-      "LINEAR_API_KEY",
-    ]);
+    expect(secretsNamedBy(serversFor(config, "web"))).toEqual(["ADMIN_MCP_URL", "LINEAR_API_KEY"]);
   });
 
   it("refuses a server nobody defined, a repo without its GitHub name, and a server of neither shape", () => {
