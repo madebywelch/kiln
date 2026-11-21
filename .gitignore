@@ -6,6 +6,7 @@ data/
 
 # Secrets and local environment
 .env
+kiln.config.yaml
 .env.*
 !.env.example
 *.pem

@@ -1,0 +1,24 @@
+# This deployment's private kiln settings. Copy to kiln.config.yaml, which git
+# ignores. `pnpm run deploy` checks it and sends it to the agent's Vercel
+# project as KILN_MCP; a job's machine gets only its own repo's servers.
+#
+# Values may name the repo's secrets as ${NAME}. Set those in Slack ("set
+# LINEAR_API_KEY for player games"), or let a job pause and ask for them.
+# Never put a secret's value here.
+
+mcpServers:
+  # A hosted server. Jobs run headless: it must take a token, not a browser sign-in.
+  linear:
+    url: https://mcp.linear.app/mcp
+    headers:
+      Authorization: Bearer ${LINEAR_API_KEY}
+
+  # A server the job's machine runs itself (Node 24 is installed).
+  postgres:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-postgres", "${DATABASE_URL}"]
+
+repos:
+  # Keys are repos in lib/config.ts.
+  player.games-app:
+    mcp: [linear]

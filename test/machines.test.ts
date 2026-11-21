@@ -109,6 +109,25 @@ describe("workerSettings", () => {
     expect(opencode.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
   });
 
+  it("gives a job's machine its own repo's MCP servers and no other repo's", () => {
+    const withMcp = launchConfig({
+      ...env,
+      KILN_MCP: JSON.stringify({
+        mcpServers: { linear: { url: "https://mcp.linear.app/mcp" }, other: { command: "x" } },
+        repos: { "player.games-app": { mcp: ["linear"] } },
+      }),
+    }) as LaunchConfig;
+    const settings = workerSettings("msg_1", "opencode", withMcp, [], "player.games-app");
+    expect(JSON.parse(settings.KILN_MCP_SERVERS ?? "{}")).toEqual({
+      linear: { url: "https://mcp.linear.app/mcp" },
+    });
+    expect(workerSettings("msg_1", "opencode", withMcp, [], "elsewhere").KILN_MCP_SERVERS).toBeUndefined();
+  });
+
+  it("refuses to launch with a KILN_MCP it can't read", () => {
+    expect(launchConfig({ ...env, KILN_MCP: "{nope" })).toMatch(/KILN_MCP is not JSON/);
+  });
+
   it("says why a harness can't run", () => {
     expect(harnessIssue("codex", config)).toMatch(/can't run codex jobs/);
     const noGateway = launchConfig({ ...env, WORKER_AI_GATEWAY_API_KEY: "" }) as LaunchConfig;

@@ -12,6 +12,7 @@ import { type Board, BoardError, board, type ClaimedTask } from "@vercel/board";
 import { z } from "zod";
 import { HARNESSES } from "../lib/config.ts";
 import { WORKER_SETTINGS_PATH } from "../lib/machines.ts";
+import { McpServerSchema } from "../lib/mcp.ts";
 import { type Exec, exec, run } from "./exec.ts";
 import { CLAIM_LOST, harnessEnv, type Logger, type OpenPullRequest, runJob, SHUTDOWN } from "./job.ts";
 import { installSkills, skillTargets } from "./skills.ts";
@@ -30,6 +31,23 @@ const Config = z
     HARNESS_GH_TOKEN: z.string().optional(),
     /** The one job this worker runs. */
     KILN_JOB_ID: z.string().min(1, "set KILN_JOB_ID to the job this worker runs"),
+    /** The repo's MCP servers, as JSON from the agent. */
+    KILN_MCP_SERVERS: z
+      .string()
+      .optional()
+      .transform((value, ctx) => {
+        if (!value) return {};
+        let json: unknown;
+        try {
+          json = JSON.parse(value);
+        } catch {
+          json = undefined;
+        }
+        const parsed = z.record(z.string(), McpServerSchema).safeParse(json);
+        if (parsed.success) return parsed.data;
+        ctx.addIssue({ code: "custom", message: "not a map of MCP servers" });
+        return z.NEVER;
+      }),
     /** For a Claude job, the subscriptions it may use, in the order to try them: JSON from the agent. */
     KILN_SUBSCRIPTIONS: z
       .string()
@@ -160,6 +178,7 @@ async function work(config: Config, team: Board, shutdown: AbortSignal, guidance
       signal: job.signal,
       log,
       subscriptions: config.KILN_SUBSCRIPTIONS,
+      mcpServers: config.KILN_MCP_SERVERS,
       gitIdentity:
         config.KILN_GIT_NAME && config.KILN_GIT_EMAIL
           ? { name: config.KILN_GIT_NAME, email: config.KILN_GIT_EMAIL }

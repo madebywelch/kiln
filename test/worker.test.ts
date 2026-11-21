@@ -7,8 +7,9 @@ import { local } from "@vercel/board/backend-local";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { ledger, readLedger, type WorkerSubscription } from "../lib/accounts.ts";
 import { answerJob, postJob, readJob } from "../lib/board-jobs.ts";
-import type { McpServer, RepoConfig } from "../lib/config.ts";
+import type { RepoConfig } from "../lib/config.ts";
 import { JOBS_CHANNEL, type JobSpec, jobBranch, REPORT_LABEL } from "../lib/jobs.ts";
+import type { McpServer } from "../lib/mcp.ts";
 import { type Exec, exec } from "../worker/exec.ts";
 import { claudeReport, harnessInvocation, opencodeReport, resolveMcp, topEffort } from "../worker/harness.ts";
 import {
@@ -426,20 +427,18 @@ describe("house rules and MCP servers", () => {
     expect(record.stdin).toContain("# House rules\n\nAlways write tests first.");
   });
 
-  it("gives a job its repo's MCP servers, with secrets from the worker's environment", async () => {
+  it("gives a job the MCP servers the agent sent, with secrets from the worker's environment", async () => {
     process.env.TEST_LINEAR_KEY = "lin_secret";
     const servers: Record<string, McpServer> = {
       linear: { url: "https://mcp.linear.app/mcp", headers: { Authorization: "Bearer ${TEST_LINEAR_KEY}" } },
-      unused: { command: "never" },
     };
-    const withMcp = { web: { ...registry.web!, mcp: ["linear"] } };
     await postJob(team, {
       ...spec,
       kind: "investigate",
       harness: "opencode",
       model: "openai/gpt-6-luna-fast",
     });
-    const { record } = await work({ mode: "nothing", registry: withMcp, mcpServers: servers });
+    const { record } = await work({ mode: "nothing", mcpServers: servers });
     expect(JSON.parse(record.env.OPENCODE_CONFIG_CONTENT ?? "{}")).toEqual({
       mcp: {
         linear: {
@@ -458,11 +457,7 @@ describe("house rules and MCP servers", () => {
       linear: { url: "https://mcp.linear.app/mcp", headers: { Authorization: "Bearer ${TEST_MISSING_KEY}" } },
     };
     const job = await postJob(team, spec);
-    const { outcome, runs } = await work({
-      mode: "change",
-      registry: { web: { ...registry.web!, mcp: ["linear"] } },
-      mcpServers: servers,
-    });
+    const { outcome, runs } = await work({ mode: "change", mcpServers: servers });
     expect(outcome).toMatchObject({ kind: "blocked", secrets: ["TEST_MISSING_KEY"] });
     expect(runs).toEqual([]);
     const root = await rootOf(job.id);

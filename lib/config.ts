@@ -31,19 +31,6 @@ export interface Selection {
   readonly effort: Effort;
 }
 
-/**
- * An MCP server a job's harness may use. Header, env, and arg values may name
- * worker environment variables as ${NAME}; the worker fills them in, so
- * secrets live in the worker's environment, not here.
- */
-export type McpServer =
-  | { readonly url: string; readonly headers?: Readonly<Record<string, string>> }
-  | {
-      readonly command: string;
-      readonly args?: readonly string[];
-      readonly env?: Readonly<Record<string, string>>;
-    };
-
 export interface RepoConfig {
   /** `owner/name` on GitHub. */
   readonly github: string;
@@ -51,16 +38,9 @@ export interface RepoConfig {
   readonly description: string;
   /** Branch that job branches start from and pull requests target. Default `main`. */
   readonly baseBranch?: string;
-  /** Overrides of the global defaults for jobs on this repo, by kind of job. */
+  /** Overrides of the global defaults for jobs on this repo, by kind of job. A repo's MCP servers are in kiln.config.yaml. */
   readonly defaults?: Partial<Record<JobKind, Partial<Selection>>>;
-  /** Names from `mcpServers` that jobs on this repo get. */
-  readonly mcp?: readonly string[];
 }
-
-/** MCP servers jobs can use, by name. A repo lists the ones it gets in its `mcp`. */
-export const mcpServers: Readonly<Record<string, McpServer>> = {
-  // linear: { url: "https://mcp.linear.app/mcp", headers: { Authorization: "Bearer ${LINEAR_API_KEY}" } },
-};
 
 export const repos: Readonly<Record<string, RepoConfig>> = {
   "player.games-app": {

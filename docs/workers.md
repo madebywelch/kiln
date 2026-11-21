@@ -85,7 +85,7 @@ The worker blocks the job with kind `needs_secret` and labels it `needs_secrets=
 
 - **Skills** in `skills/workers/` are copied into `~/.claude/skills` (Claude Code and OpenCode) and `~/.codex/skills` (Codex) when a worker starts. A skill for one repo belongs in that repo's own `.claude/skills/`.
 - **House rules** in `worker/instructions.md` go into every job's prompt.
-- **MCP servers** are defined once in `mcpServers` in `lib/config.ts`. A repo lists the ones its jobs get in its `mcp`. Values may name the repo's secrets as `${NAME}`. A job whose MCP servers need a secret the repo lacks pauses before anything runs; see "Paused for secrets" above.
+- **MCP servers** are this deployment's own settings, kept out of the public code in `kiln.config.yaml`, which git ignores. Copy `kiln.config.example.yaml` to start. Define each server once under `mcpServers`, as a hosted `url` with `headers`, or a `command` the machine runs with `args` and `env`. List the servers each repo's jobs get under `repos`. Values may name the repo's secrets as `${NAME}`, including a private server's URL. `pnpm run deploy` checks the file, refusing unknown repos, undefined servers, and broken YAML, and sends it to the Vercel project as `KILN_MCP`. The agent puts only the job's own repo's servers in its machine's settings. Servers have to accept a token: jobs have no browser for an OAuth sign-in. A job whose MCP servers need a secret the repo lacks pauses before anything runs; see "Paused for secrets" above.
 
 ## Codex
 

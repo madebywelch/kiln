@@ -5,7 +5,7 @@ import { appendFile, mkdir, readdir, readFile, rm, stat } from "node:fs/promises
 import { dirname, join } from "node:path";
 import type { Board, ClaimedTask } from "@vercel/board";
 import { benchedUntil, readLedger, usageLabels, type WorkerSubscription } from "../lib/accounts.ts";
-import { agent, type McpServer, mcpServers, type RepoConfig, repos } from "../lib/config.ts";
+import { agent, type RepoConfig, repos } from "../lib/config.ts";
 import {
   decodeJob,
   describeSelection,
@@ -17,6 +17,7 @@ import {
   REPORT_PENDING,
 } from "../lib/jobs.ts";
 import { ACCOUNT_LABEL, WAITING_LABEL } from "../lib/machines.ts";
+import type { McpServer } from "../lib/mcp.ts";
 import { type Exec, type ExecResult, run } from "./exec.ts";
 import {
   ClaudeWatch,
@@ -61,7 +62,7 @@ export interface JobDeps {
   readonly harnessEnv?: NodeJS.ProcessEnv;
   /** Your own guidance for every job, from worker/instructions.md. */
   readonly guidance?: string;
-  /** MCP server definitions; repos pick from them. Default: lib/config.ts. */
+  /** The repo's MCP servers, from the agent (KILN_MCP_SERVERS). Their ${NAME}s come from the environment. */
   readonly mcpServers?: Readonly<Record<string, McpServer>>;
   /** For a Claude job: the subscriptions it may use, in the order to try them. Empty: the CLI's own login. */
   readonly subscriptions?: readonly WorkerSubscription[];
@@ -210,7 +211,8 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string): Promise<
 
   let mcp: ReturnType<typeof resolveMcp>;
   try {
-    mcp = resolveMcp(deps.mcpServers ?? mcpServers, repo.mcp ?? [], process.env);
+    const servers = deps.mcpServers ?? {};
+    mcp = resolveMcp(servers, Object.keys(servers), process.env);
   } catch (error) {
     if (!(error instanceof MissingSecrets)) throw error;
     // Nothing has run yet: wait for the secrets instead of failing.

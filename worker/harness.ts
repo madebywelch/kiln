@@ -3,7 +3,8 @@
 
 import { readFile } from "node:fs/promises";
 import type { RateLimitInfo } from "../lib/accounts.ts";
-import type { Effort, Harness, McpServer, Selection } from "../lib/config.ts";
+import type { Effort, Harness, Selection } from "../lib/config.ts";
+import type { McpServer } from "../lib/mcp.ts";
 
 export interface HarnessInvocation {
   readonly command: string;

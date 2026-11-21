@@ -6,7 +6,7 @@ kiln runs an AI teammate in Slack (the agent) and the coding workers it hands re
 
 - `agent/`: an eve agent deployed to Vercel. Slack in, tools, skills, memory, and two per-minute schedules: reports and machines. `channels/slack-interactivity.ts` serves Slack's buttons and forms.
 - `worker/`: the process on a job's boat.dev machine. Claims its one job from Vercel Board, runs a coding CLI headless, pushes, opens a draft PR, settles, exits.
-- `lib/`: what both sides share. `config.ts` (repos, defaults, MCP servers, machine limits, the agent's name), `jobs.ts` (the job contract), `board-jobs.ts` (Board operations), `boat.ts` (the boat API), `machines.ts` (launching and reconciling job machines), `secrets.ts` (repo secrets in boat environments).
+- `lib/`: what both sides share. `config.ts` (repos, defaults, machine limits, the agent's name), `mcp.ts` (the schema for each repo's MCP servers, which live in the gitignored `kiln.config.yaml`), `jobs.ts` (the job contract), `board-jobs.ts` (Board operations), `boat.ts` (the boat API), `machines.ts` (launching and reconciling job machines), `secrets.ts` (repo secrets in boat environments).
 - `scripts/deploy.ts`: deploys the agent and pins the machines' code to the commit. `scripts/boat-workers.ts`: shows machines and their logs.
 
 ## Terms
@@ -36,6 +36,7 @@ kiln runs an AI teammate in Slack (the agent) and the coding workers it hands re
 - The repo is public. Never commit secrets, account IDs, or private repo details; secrets live in `.env` (ignored) and the Vercel project.
 - The coding CLI never gets worker credentials (`GH_TOKEN`, `BOARD_TOKEN`); see `harnessEnv` in `worker/job.ts`. They reach a machine in a settings file the worker deletes, never in boat's per-machine `env`, which boat exports into every login shell.
 - Secret values never pass through the model, logs, or the board. Tools return secret names only.
+- This deployment's own settings stay out of the public code. MCP servers are in `kiln.config.yaml` (gitignored; `kiln.config.example.yaml` shows the shape), which `pnpm run deploy` checks and sends as `KILN_MCP`.
 - Deploy with `pnpm run deploy`, never bare `eve deploy`: machines download the deployed commit from GitHub, so it must be committed and pushed.
 - Third-party skills are vendored unmodified, with their licenses recorded in `skills/vendor.json`.
 - Biome does not format Markdown or skill folders; don't change that.
