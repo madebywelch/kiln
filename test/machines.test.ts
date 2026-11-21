@@ -33,6 +33,9 @@ const env = {
   WORKER_CLAUDE_CODE_OAUTH_TOKEN: "claude-sub",
   WORKER_AI_GATEWAY_API_KEY: "gateway",
   UNRELATED: "not for workers",
+  KILN_CONFIG: JSON.stringify({
+    repos: { "player.games-app": { github: "acme/player-games", description: "the games site" } },
+  }),
 };
 const config = launchConfig(env) as LaunchConfig;
 
@@ -109,23 +112,42 @@ describe("workerSettings", () => {
     expect(opencode.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
   });
 
-  it("gives a job's machine its own repo's MCP servers and no other repo's", () => {
+  it("gives a job's machine its own repo and that repo's MCP servers, and no other repo's", () => {
     const withMcp = launchConfig({
       ...env,
-      KILN_MCP: JSON.stringify({
+      KILN_CONFIG: JSON.stringify({
+        repos: {
+          "player.games-app": {
+            github: "acme/player-games",
+            description: "games",
+            baseBranch: "dev",
+            mcp: ["linear"],
+          },
+          docs: { github: "acme/docs", description: "docs", mcp: ["other"] },
+        },
         mcpServers: { linear: { url: "https://mcp.linear.app/mcp" }, other: { command: "x" } },
-        repos: { "player.games-app": { mcp: ["linear"] } },
       }),
     }) as LaunchConfig;
     const settings = workerSettings("msg_1", "opencode", withMcp, [], "player.games-app");
+    expect(JSON.parse(settings.KILN_REPO ?? "{}")).toEqual({
+      key: "player.games-app",
+      github: "acme/player-games",
+      baseBranch: "dev",
+    });
     expect(JSON.parse(settings.KILN_MCP_SERVERS ?? "{}")).toEqual({
       linear: { url: "https://mcp.linear.app/mcp" },
     });
-    expect(workerSettings("msg_1", "opencode", withMcp, [], "elsewhere").KILN_MCP_SERVERS).toBeUndefined();
   });
 
-  it("refuses to launch with a KILN_MCP it can't read", () => {
-    expect(launchConfig({ ...env, KILN_MCP: "{nope" })).toMatch(/KILN_MCP is not JSON/);
+  it("refuses to launch with a KILN_CONFIG it can't read", () => {
+    expect(launchConfig({ ...env, KILN_CONFIG: "{nope" })).toMatch(/KILN_CONFIG is not JSON/);
+  });
+
+  it("fails a job whose repo was taken out of kiln.config.yaml", async () => {
+    const job = await postJob(team, spec);
+    const gone = launchConfig({ ...env, KILN_CONFIG: "" }) as LaunchConfig;
+    const { failed } = await launchMachine({ ...deps, config: gone }, job.message);
+    expect(failed).toMatch(/player.games-app is no longer a repo in kiln.config.yaml/);
   });
 
   it("says why a harness can't run", () => {

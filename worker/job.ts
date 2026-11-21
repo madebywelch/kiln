@@ -5,7 +5,8 @@ import { appendFile, mkdir, readdir, readFile, rm, stat } from "node:fs/promises
 import { dirname, join } from "node:path";
 import type { Board, ClaimedTask } from "@vercel/board";
 import { benchedUntil, readLedger, usageLabels, type WorkerSubscription } from "../lib/accounts.ts";
-import { agent, type RepoConfig, repos } from "../lib/config.ts";
+import { agent } from "../lib/config.ts";
+import type { McpServer, RepoConfig } from "../lib/deployment.ts";
 import {
   decodeJob,
   describeSelection,
@@ -17,7 +18,6 @@ import {
   REPORT_PENDING,
 } from "../lib/jobs.ts";
 import { ACCOUNT_LABEL, WAITING_LABEL } from "../lib/machines.ts";
-import type { McpServer } from "../lib/mcp.ts";
 import { type Exec, type ExecResult, run } from "./exec.ts";
 import {
   ClaudeWatch,
@@ -56,7 +56,8 @@ export interface JobDeps {
   readonly signal: AbortSignal;
   readonly log: Logger;
   readonly bins?: HarnessBins;
-  readonly registry?: Readonly<Record<string, RepoConfig>>;
+  /** The job's repo, from the agent (KILN_REPO). */
+  readonly registry?: Readonly<Record<string, Pick<RepoConfig, "github" | "baseBranch">>>;
   readonly gitIdentity?: { readonly name: string; readonly email: string };
   /** The coding CLI's environment. Default: the worker's, without its credentials (see harnessEnv). */
   readonly harnessEnv?: NodeJS.ProcessEnv;
@@ -201,8 +202,8 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string): Promise<
   const { board, claim, exec, signal } = deps;
   const id = claim.task.id;
   const spec = decodeJob(claim.task);
-  const repo = (deps.registry ?? repos)[spec.repo];
-  if (!repo) throw new Error(`repo "${spec.repo}" is not in this worker's registry; rebuild the worker`);
+  const repo = deps.registry?.[spec.repo];
+  if (!repo) throw new Error(`repo "${spec.repo}" is not in this job's settings from the agent`);
   const base = repo.baseBranch ?? "main";
   const branch = jobBranch(id, spec.title);
   const git = (args: readonly string[]) => run(exec, "git", args, { cwd: jobDir, signal });

@@ -11,10 +11,9 @@ import {
   type Harness,
   type JobKind,
   KINDS,
-  type RepoConfig,
-  repos,
   type Selection,
 } from "./config.ts";
+import type { RepoConfig } from "./deployment.ts";
 
 export { type JobKind, KINDS };
 
@@ -86,10 +85,15 @@ export function resolveSelection(
   repoKey: string,
   kind: JobKind,
   request: SelectionRequest,
-  registry: Readonly<Record<string, RepoConfig>> = repos,
+  registry: Readonly<Record<string, RepoConfig>>,
 ): Selection {
   const repo = registry[repoKey];
-  if (!repo) throw new JobError(`unknown repo "${repoKey}"; known: ${Object.keys(registry).join(", ")}`);
+  if (!repo) {
+    const known = Object.keys(registry);
+    throw new JobError(
+      `unknown repo "${repoKey}"; ${known.length ? `known: ${known.join(", ")}` : "kiln.config.yaml names no repos"}`,
+    );
+  }
   const repoDefaults = repo.defaults?.[kind] ?? {};
   const global = defaultSelection[kind];
   const effort = request.effort ?? repoDefaults.effort ?? global.effort;

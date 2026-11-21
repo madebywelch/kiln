@@ -39,6 +39,7 @@ function harness(overrides: Partial<InteractivityDeps> = {}) {
   };
   const deps: InteractivityDeps = {
     signingSecret: SECRET,
+    isRepo: (repo) => repo === "player.games-app",
     mayEdit: secretEditors("U_ADMIN, U_OTHER"),
     openView: async (_trigger, view) => {
       calls.views.push(view);

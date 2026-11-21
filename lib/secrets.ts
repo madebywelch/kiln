@@ -4,7 +4,6 @@
 // never pass through a model, a log, or the board.
 
 import { type Boat, type Environment, type EnvironmentFlags, variableNames } from "./boat.ts";
-import { repos } from "./config.ts";
 
 /** Secrets and nothing else: no GitHub login, no boat key, no agent logins on a job's machine. */
 export const REPO_ENVIRONMENT_FLAGS: EnvironmentFlags = {
@@ -69,11 +68,6 @@ export class SecretError extends Error {
   override readonly name = "SecretError";
 }
 
-function repoKeyOrThrow(repoKey: string): string {
-  if (!repos[repoKey]) throw new SecretError(`${repoKey} is not a kiln repo`);
-  return repoKey;
-}
-
 const flagsDrift = (environment: Environment) =>
   (Object.keys(REPO_ENVIRONMENT_FLAGS) as (keyof EnvironmentFlags)[]).filter(
     (flag) => environment[flag] !== REPO_ENVIRONMENT_FLAGS[flag],
@@ -89,7 +83,7 @@ export async function repoEnvironment(
   repoKey: string,
   log: (event: string, fields: Record<string, unknown>) => void = () => undefined,
 ): Promise<Environment> {
-  const name = environmentName(repoKeyOrThrow(repoKey));
+  const name = environmentName(repoKey);
   let environment = (await boat.environments()).find((candidate) => candidate.name === name);
   if (!environment) {
     environment = await boat.createEnvironment(name);
@@ -115,7 +109,7 @@ export async function setSecret(boat: Boat, repoKey: string, name: string, value
 
 /** The names of a repo's secrets. Never the values. */
 export async function secretNames(boat: Boat, repoKey: string): Promise<string[]> {
-  const name = environmentName(repoKeyOrThrow(repoKey));
+  const name = environmentName(repoKey);
   const environment = (await boat.environments()).find((candidate) => candidate.name === name);
   return environment ? variableNames(environment.envContents) : [];
 }

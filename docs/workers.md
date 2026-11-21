@@ -37,7 +37,7 @@ Everything lives in the agent's Vercel project; nothing runs on your computer.
    |---|---|
    | `WORKER_BOARD_TOKEN` | A Vercel access token for your account, scoped to the team: <https://vercel.com/account/tokens>. Workers act on the board with it. |
    | `WORKER_VERCEL_ORG_ID` | The team that owns the agent's project: `orgId` in `.vercel/project.json`. |
-   | `WORKER_GH_TOKEN` | A GitHub token with Contents and Pull requests read/write on the repos in `lib/config.ts`. |
+   | `WORKER_GH_TOKEN` | A GitHub token with Contents and Pull requests read/write on the repos in `kiln.config.yaml`. |
    | `WORKER_CLAUDE_CODE_OAUTH_TOKEN`, `WORKER_CLAUDE_CODE_OAUTH_TOKEN_<NAME>` | One per Claude subscription, from `claude setup-token` signed in to it. The bare one is subscription `main`; the others are named by their suffix (`_2` is `2`, `_VERIFIED` is `verified`). Only Claude machines get them; see Subscriptions below. |
    | `WORKER_AI_GATEWAY_API_KEY` | An AI Gateway key for opencode jobs, from the Vercel dashboard (AI Gateway, API keys). Only opencode machines get it. |
    | `WORKER_HARNESS_GH_TOKEN` | Optional. A read-only GitHub token for the coding CLI; see below. |
@@ -85,7 +85,7 @@ The worker blocks the job with kind `needs_secret` and labels it `needs_secrets=
 
 - **Skills** in `skills/workers/` are copied into `~/.claude/skills` (Claude Code and OpenCode) and `~/.codex/skills` (Codex) when a worker starts. A skill for one repo belongs in that repo's own `.claude/skills/`.
 - **House rules** in `worker/instructions.md` go into every job's prompt.
-- **MCP servers** are this deployment's own settings, kept out of the public code in `kiln.config.yaml`, which git ignores. Copy `kiln.config.example.yaml` to start. Define each server once under `mcpServers`, as a hosted `url` with `headers`, or a `command` the machine runs with `args` and `env`. List the servers each repo's jobs get under `repos`. Values may name the repo's secrets as `${NAME}`, including a private server's URL. `pnpm run deploy` checks the file, refusing unknown repos, undefined servers, and broken YAML, and sends it to the Vercel project as `KILN_MCP`. The agent puts only the job's own repo's servers in its machine's settings. Servers have to accept a token: jobs have no browser for an OAuth sign-in. A job whose MCP servers need a secret the repo lacks pauses before anything runs; see "Paused for secrets" above.
+- **MCP servers** are this deployment's own settings, kept out of the public code in `kiln.config.yaml`, which git ignores. Copy `kiln.config.example.yaml` to start. Define each server once under `mcpServers`, as a hosted `url` with `headers`, or a `command` the machine runs with `args` and `env`. List the servers each repo's jobs get under `repos`. Values may name the repo's secrets as `${NAME}`, including a private server's URL. `pnpm run deploy` checks the file, refusing unknown repos, undefined servers, and broken YAML, and sends it, with the repos, to the Vercel project as `KILN_CONFIG`. The agent puts only the job's own repo and its servers in the machine's settings. Servers have to accept a token: jobs have no browser for an OAuth sign-in. A job whose MCP servers need a secret the repo lacks pauses before anything runs; see "Paused for secrets" above.
 
 ## Codex
 
@@ -97,7 +97,7 @@ The coding CLI runs with permission prompts off, so it gets none of the worker's
 
 The worker's credentials stay off boat's per-machine environment variables, because boat puts those into every login shell, which is where the CLI runs its commands.
 
-The CLI and the worker run as the same user, so a determined CLI can still read the worker's process environment. The hard boundary is on GitHub: protect each repo's default branch, and scope the GitHub token to the repos in `lib/config.ts`.
+The CLI and the worker run as the same user, so a determined CLI can still read the worker's process environment. The hard boundary is on GitHub: protect each repo's default branch, and scope the GitHub token to the repos in `kiln.config.yaml`.
 
 Planned, not built: replace the personal token with a GitHub App.
 

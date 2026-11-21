@@ -7,9 +7,8 @@ import { local } from "@vercel/board/backend-local";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { ledger, readLedger, type WorkerSubscription } from "../lib/accounts.ts";
 import { answerJob, postJob, readJob } from "../lib/board-jobs.ts";
-import type { RepoConfig } from "../lib/config.ts";
+import type { McpServer, RepoConfig } from "../lib/deployment.ts";
 import { JOBS_CHANNEL, type JobSpec, jobBranch, REPORT_LABEL } from "../lib/jobs.ts";
-import type { McpServer } from "../lib/mcp.ts";
 import { type Exec, exec } from "../worker/exec.ts";
 import { claudeReport, harnessInvocation, opencodeReport, resolveMcp, topEffort } from "../worker/harness.ts";
 import {
@@ -166,7 +165,7 @@ describe("failure paths", () => {
     const { outcome } = await work({ mode: "change", registry: {} });
     expect(outcome).toMatchObject({
       kind: "failed",
-      reason: expect.stringContaining("not in this worker's registry"),
+      reason: expect.stringContaining("not in this job's settings"),
     });
     const settled = await rootOf(job.id);
     expect(settled.task?.state).toBe("failed");

@@ -1,10 +1,20 @@
-# This deployment's private kiln settings. Copy to kiln.config.yaml, which git
-# ignores. `pnpm run deploy` checks it and sends it to the agent's Vercel
-# project as KILN_MCP; a job's machine gets only its own repo's servers.
+# This deployment's own settings: the repos kiln works on and the MCP servers
+# their jobs get. Copy to kiln.config.yaml, which git ignores, so the public
+# code never names your repos or servers. `pnpm run deploy` checks it and sends
+# it to the agent's Vercel project as KILN_CONFIG.
 #
-# Values may name the repo's secrets as ${NAME}. Set those in Slack ("set
-# LINEAR_API_KEY for player games"), or let a job pause and ask for them.
-# Never put a secret's value here.
+# MCP values may name the repo's secrets as ${NAME}. Set those in Slack ("set
+# LINEAR_API_KEY for web"), or let a job pause and ask for them. Never put a
+# secret's value here.
+
+repos:
+  web:                                   # what you call it; jobs and secrets are keyed by it
+    github: acme/web                     # owner/name
+    description: The marketing site and the customer dashboard.  # how the agent recognizes it in conversation
+    baseBranch: main                     # optional, default main
+    defaults:                            # optional, per kind of job; see lib/config.ts for the global ones
+      investigate: { harness: opencode, model: openai/gpt-6-luna-fast, effort: medium }
+    mcp: [linear]                        # servers below that this repo's jobs get
 
 mcpServers:
   # A hosted server. Jobs run headless: it must take a token, not a browser sign-in.
@@ -17,8 +27,3 @@ mcpServers:
   postgres:
     command: npx
     args: ["-y", "@modelcontextprotocol/server-postgres", "${DATABASE_URL}"]
-
-repos:
-  # Keys are repos in lib/config.ts.
-  player.games-app:
-    mcp: [linear]

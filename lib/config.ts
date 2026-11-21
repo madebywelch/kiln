@@ -1,6 +1,7 @@
-// What kiln's agent may work on, and with what by default. Both the agent and the
-// workers read this file, so a repo missing here can be neither dispatched nor
-// worked. Changing it means a redeploy of the agent and an update of workers.
+// kiln's own settings, the same for everyone who runs it: the harnesses, the
+// default models, and the limits. Which repos a deployment works on, and their
+// MCP servers, are its own business: they live in kiln.config.yaml (see
+// lib/deployment.ts), never here.
 
 /**
  * The agent kiln runs: the name it goes by in Slack, answers to without an @mention, and signs its
@@ -30,24 +31,6 @@ export interface Selection {
   readonly model: string | undefined;
   readonly effort: Effort;
 }
-
-export interface RepoConfig {
-  /** `owner/name` on GitHub. */
-  readonly github: string;
-  /** What the repo is, in the words people use for it. The agent maps conversation to repos with this. */
-  readonly description: string;
-  /** Branch that job branches start from and pull requests target. Default `main`. */
-  readonly baseBranch?: string;
-  /** Overrides of the global defaults for jobs on this repo, by kind of job. A repo's MCP servers are in kiln.config.yaml. */
-  readonly defaults?: Partial<Record<JobKind, Partial<Selection>>>;
-}
-
-export const repos: Readonly<Record<string, RepoConfig>> = {
-  "player.games-app": {
-    github: "madebywelch/player.games-app",
-    description: "Player Games, the player.games website and its creator hub.",
-  },
-};
 
 /** The default when neither the request nor the repo says otherwise: a cheap model reads, a heavy one writes. */
 export const defaultSelection: Readonly<Record<JobKind, Selection>> = {

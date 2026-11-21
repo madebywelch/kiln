@@ -52,8 +52,8 @@ What you ask for wins over the repo's defaults for that kind of job, which win o
 | To change | Edit | Then |
 |---|---|---|
 | The agent's name | `agent.name` in [lib/config.ts](lib/config.ts), its persona, and its Slack app | redeploy; a new name starts a fresh memory |
-| Repos and their default models | [lib/config.ts](lib/config.ts) | `pnpm run deploy` |
-| Each repo's MCP servers | `kiln.config.yaml`, gitignored; copy [kiln.config.example.yaml](kiln.config.example.yaml) | `pnpm run deploy` |
+| Repos, their default models, and their MCP servers | `kiln.config.yaml`, gitignored; copy [kiln.config.example.yaml](kiln.config.example.yaml) | `pnpm run deploy` |
+| Global default models | `defaultSelection` in [lib/config.ts](lib/config.ts) | `pnpm run deploy` |
 | How many jobs run at once per subscription or harness, and machine size | `jobsPerSubscription`, `machineLimits`, and `machineType` in [lib/config.ts](lib/config.ts) | `pnpm run deploy` |
 | Claude subscriptions | `WORKER_CLAUDE_CODE_OAUTH_TOKEN` and `WORKER_CLAUDE_CODE_OAUTH_TOKEN_<NAME>` on the Vercel project | `pnpm run deploy` |
 | The agent's persona and rules | [agent/instructions.md](agent/instructions.md) | `pnpm run deploy` |
@@ -63,7 +63,7 @@ What you ask for wins over the repo's defaults for that kind of job, which win o
 | Worker credentials | `WORKER_*` on the Vercel project; see [docs/workers.md](docs/workers.md) | `pnpm run deploy` |
 | A repo's secrets | Ask the agent in Slack | nothing: the next job gets them |
 
-`pnpm run deploy` deploys the agent and pins the code job machines download to the same commit, so commit and push first. It also checks `kiln.config.yaml` and sends it to the Vercel project as `KILN_MCP`; a broken file stops the deploy before anything changes.
+`pnpm run deploy` deploys the agent and pins the code job machines download to the same commit, so commit and push first. It also checks `kiln.config.yaml` and sends it to the Vercel project as `KILN_CONFIG`; a broken file stops the deploy before anything changes.
 
 Third-party skills are vendored unmodified under their own licenses; [skills/vendor.json](skills/vendor.json) records each one's source, hash, and license, and [skills/LICENSES/](skills/LICENSES) holds the texts. A skill for one repo belongs in that repo's `.claude/skills/`.
 
@@ -73,8 +73,9 @@ Third-party skills are vendored unmodified under their own licenses; [skills/ven
 2. **Memory.** `pnpm exec eve integration setup file-memory`.
 3. **Board.** A team's default grants let every project read, post, and label. If yours were narrowed: `pnpm exec vb grants create --project <project> --environment production --can 'jobs=read,post,label'`.
 4. **Slack.** Create the app from the manifest in [docs/slack.md](docs/slack.md), then set `SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET` on the Vercel project.
-5. **Workers.** Create a boat API key and set it and the worker credentials on the Vercel project; see [docs/workers.md](docs/workers.md).
-6. **Deploy.** Commit, push, and `pnpm run deploy`.
+5. **Repos.** `cp kiln.config.example.yaml kiln.config.yaml` and list your repos. kiln ships naming none, and the file is gitignored.
+6. **Workers.** Create a boat API key and set it and the worker credentials on the Vercel project; see [docs/workers.md](docs/workers.md).
+7. **Deploy.** Commit, push, and `pnpm run deploy`.
 
 | Agent setting | Default | |
 |---|---|---|

@@ -1,13 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { Boat, variableNames } from "../lib/boat.ts";
-import {
-  environmentName,
-  repoEnvironment,
-  SecretError,
-  secretNameIssue,
-  secretNames,
-  setSecret,
-} from "../lib/secrets.ts";
+import { environmentName, repoEnvironment, secretNameIssue, secretNames, setSecret } from "../lib/secrets.ts";
 import { FakeBoat } from "./fixtures/fake-boat.ts";
 
 let fake: FakeBoat;
@@ -66,10 +59,6 @@ describe("repoEnvironment", () => {
     await repoEnvironment(boat, "player.games-app", (event) => events.push(event));
     expect(fake.environments[0]?.passGithub).toBe(false);
     expect(events).toEqual(["secrets.environment_flags_reset"]);
-  });
-
-  it("refuses a repo kiln doesn't know", async () => {
-    await expect(repoEnvironment(boat, "someone-elses-repo")).rejects.toThrow(SecretError);
   });
 });
 

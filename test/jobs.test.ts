@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { RepoConfig } from "../lib/config.ts";
+import type { RepoConfig } from "../lib/deployment.ts";
 import {
   decodeJob,
   describeSelection,

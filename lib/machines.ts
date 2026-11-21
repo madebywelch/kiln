@@ -16,8 +16,8 @@ import {
 } from "./accounts.ts";
 import { type Boat, BoatError, type Machine } from "./boat.ts";
 import { type Harness, jobsPerSubscription, machineLimits, machineType } from "./config.ts";
+import { type Deployment, parseDeployment, serversFor } from "./deployment.ts";
 import { decodeJob, JOBS_CHANNEL, type JobSpec, REPORT_LABEL, REPORT_PENDING } from "./jobs.ts";
-import { type McpConfig, parseMcpConfig, serversFor } from "./mcp.ts";
 import { environmentName, repoEnvironment } from "./secrets.ts";
 
 /** Machine labels: every kiln job machine has kiln=worker, its job's ID, and its harness. */
@@ -52,8 +52,8 @@ export interface LaunchConfig {
   readonly code: string;
   /** The worker's credentials and settings, by the names the worker reads. */
   readonly settings: Readonly<Record<string, string>>;
-  /** Each repo's MCP servers, from KILN_MCP. */
-  readonly mcp: McpConfig;
+  /** This deployment's repos and their MCP servers, from KILN_CONFIG. */
+  readonly deployment: Deployment;
   /** The subscriptions each subscription harness's jobs run on, in fill order. */
   readonly subscriptions: Readonly<Partial<Record<Harness, readonly Subscription[]>>>;
   /** Minutes a job may run; the machine's own deadline is this plus a margin. */
@@ -76,10 +76,10 @@ export function launchConfig(env: Readonly<Record<string, string | undefined>>):
     ...REQUIRED.filter((name) => !settings[name]).map((name) => `${ENV_PREFIX}${name}`),
   ];
   if (missing.length > 0) return `set ${missing.join(", ")} on the agent's Vercel project`;
-  const mcp = parseMcpConfig(env.KILN_MCP);
-  if (typeof mcp === "string") return mcp;
+  const deployment = parseDeployment(env.KILN_CONFIG);
+  if (typeof deployment === "string") return deployment;
   return {
-    mcp,
+    deployment,
     code: env.KILN_WORKER_CODE as string,
     settings,
     subscriptions: { claude: claudeSubscriptions(env) },
@@ -116,7 +116,8 @@ export function workerSettings(
   subscriptions: readonly WorkerSubscription[] = [],
   repo?: string,
 ): Record<string, string> {
-  const servers = repo ? serversFor(config.mcp, repo) : {};
+  const servers = repo ? serversFor(config.deployment, repo) : {};
+  const repoConfig = repo ? config.deployment.repos[repo] : undefined;
   const own = KEY_CREDENTIAL[harness];
   const shared = Object.fromEntries(
     Object.entries(config.settings).filter(([name]) => !KEY_CREDENTIALS.has(name) || name === own),
@@ -126,6 +127,15 @@ export function workerSettings(
     ...shared,
     ...(first
       ? { CLAUDE_CODE_OAUTH_TOKEN: first.token, KILN_SUBSCRIPTIONS: JSON.stringify(subscriptions) }
+      : {}),
+    ...(repo && repoConfig
+      ? {
+          KILN_REPO: JSON.stringify({
+            key: repo,
+            github: repoConfig.github,
+            ...(repoConfig.baseBranch ? { baseBranch: repoConfig.baseBranch } : {}),
+          }),
+        }
       : {}),
     ...(Object.keys(servers).length > 0 ? { KILN_MCP_SERVERS: JSON.stringify(servers) } : {}),
     BOARD_PROFILE: harness,
@@ -200,6 +210,7 @@ export async function launchMachine(
   }
   const failedStarts = Number(job.labels[FAILED_STARTS_LABEL] ?? 0);
   const reason =
+    (config.deployment.repos[spec.repo] ? null : `${spec.repo} is no longer a repo in kiln.config.yaml`) ??
     harnessIssue(spec.harness, config) ??
     (failedStarts >= MAX_FAILED_STARTS
       ? `its worker machine failed to start ${failedStarts} times; see the agent's logs for machines.reconciled`

@@ -8,7 +8,6 @@
 // to eve's Slack route.
 
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { repos } from "../../lib/config.ts";
 import { environmentName, secretNameIssue } from "../../lib/secrets.ts";
 
 export const OPEN_ACTION_ID = "kiln_secret_open";
@@ -115,6 +114,8 @@ function noticeModal(title: string, text: string): Record<string, unknown> {
 }
 
 export interface InteractivityDeps {
+  /** Whether a repo is one this deployment works on. */
+  readonly isRepo: (repo: string) => boolean;
   readonly signingSecret: string | undefined;
   /** Whether a Slack user may set secrets. */
   readonly mayEdit: (userId: string) => boolean;
@@ -150,10 +151,10 @@ export function secretEditors(value: string | undefined): (userId: string) => bo
 const notAllowed = (userId: string) =>
   `Only the people in \`KILN_SECRET_ADMINS\` can set repo secrets. Ask an operator to add your Slack user ID, \`${userId}\`.`;
 
-function parseRequest(value: unknown): SecretRequest | null {
+function parseRequest(value: unknown, isRepo: (repo: string) => boolean): SecretRequest | null {
   try {
     const parsed = JSON.parse(String(value)) as Partial<SecretRequest>;
-    if (typeof parsed.repo === "string" && typeof parsed.name === "string" && repos[parsed.repo]) {
+    if (typeof parsed.repo === "string" && typeof parsed.name === "string" && isRepo(parsed.repo)) {
       return {
         repo: parsed.repo,
         name: parsed.name,
@@ -213,7 +214,7 @@ export async function handleInteractivity(request: Request, deps: InteractivityD
     payload.type === "block_actions" && payload.actions?.find((a) => a.action_id === OPEN_ACTION_ID);
   if (open && payload.trigger_id) {
     // Slack takes the trigger for about three seconds, so open the modal before anything else.
-    const secret = parseRequest(open.value);
+    const secret = parseRequest(open.value, deps.isRepo);
     const channel = payload.channel?.id ?? payload.container?.channel_id;
     let view: Record<string, unknown>;
     if (!deps.mayEdit(userId)) view = noticeModal("Not allowed", notAllowed(userId));
