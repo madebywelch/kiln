@@ -79,7 +79,7 @@ Third-party skills are vendored unmodified under their own licenses; [skills/ven
 | `BOAT_API_KEY` | required for jobs | Launches and deletes job machines and writes repo secrets. |
 | `WORKER_*` | required for jobs | The workers' credentials, passed to each machine without the prefix. See [docs/workers.md](docs/workers.md). |
 | `KILN_WORKER_CODE` | written by `pnpm run deploy` | The kiln commit job machines run. |
-| `KILN_SECRET_ADMINS` | nobody | Slack user IDs, comma-separated, allowed to set repo secrets. |
+| `KILN_SECRET_ADMINS` | anyone | Slack user IDs, comma-separated, allowed to set repo secrets. Unset, anyone in the workspace can. |
 
 ## Operate it
 
@@ -97,7 +97,7 @@ pnpm exec vb inspect             # the board's UI, served from your machine
 - Other people's messages reach the model as conversation, and its instructions say so. That is a soft boundary.
 - Coding CLIs run with permission prompts off, alone on their job's machine, without the worker's GitHub or Board credentials. Protect each repo's default branch: workers push only `kiln/*` branches.
 - A job's machine has its own repo's secrets and none of another repo's, and none of your boat, GitHub, or agent logins. The coding CLI can read its repo's secrets; that is what they are for.
-- Secret values go from a Slack form to boat. They never reach the agent's model, its logs, or the board. Only `KILN_SECRET_ADMINS` can set them.
+- Secret values go from a Slack form to boat. They never reach the agent's model, its logs, or the board. Anyone in the workspace can set them until `KILN_SECRET_ADMINS` lists who may.
 
 ## Develop it
 

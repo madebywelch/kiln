@@ -6,7 +6,7 @@
 import { defineChannel, POST } from "eve/channels";
 import { setSecret } from "../../lib/secrets.ts";
 import { boatClient, log } from "../lib/machines.ts";
-import { handleInteractivity, parseAdmins } from "../lib/secret-prompt.ts";
+import { handleInteractivity, secretEditors } from "../lib/secret-prompt.ts";
 import { slackApi } from "../lib/slack.ts";
 
 const FORWARDED_HEADERS = [
@@ -22,7 +22,7 @@ export default defineChannel({
     POST("/slack/interactivity", (request, { waitUntil }) =>
       handleInteractivity(request, {
         signingSecret: process.env.SLACK_SIGNING_SECRET,
-        admins: parseAdmins(process.env.KILN_SECRET_ADMINS),
+        mayEdit: secretEditors(process.env.KILN_SECRET_ADMINS),
         openView: (triggerId, view) => slackApi("views.open", { trigger_id: triggerId, view }),
         setSecret: async (repo, name, value) => {
           const boat = boatClient();

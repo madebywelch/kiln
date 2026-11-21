@@ -114,8 +114,8 @@ function noticeModal(title: string, text: string): Record<string, unknown> {
 
 export interface InteractivityDeps {
   readonly signingSecret: string | undefined;
-  /** Slack user IDs allowed to set secrets. */
-  readonly admins: ReadonlySet<string>;
+  /** Whether a Slack user may set secrets. */
+  readonly mayEdit: (userId: string) => boolean;
   readonly openView: (triggerId: string, view: Record<string, unknown>) => Promise<unknown>;
   readonly setSecret: (repo: string, name: string, value: string) => Promise<void>;
   readonly postMessage: (channel: string, thread: string | undefined, text: string) => Promise<unknown>;
@@ -126,17 +126,22 @@ export interface InteractivityDeps {
   readonly nowSeconds?: () => number;
 }
 
-export function parseAdmins(value: string | undefined): Set<string> {
-  return new Set(
+/**
+ * Who may set secrets, from KILN_SECRET_ADMINS: a comma-separated list of Slack user IDs. Unset, anyone
+ * in the workspace may, which suits a workspace of one; set it once anyone else can talk to the agent.
+ */
+export function secretEditors(value: string | undefined): (userId: string) => boolean {
+  const ids = new Set(
     (value ?? "")
       .split(",")
       .map((id) => id.trim())
       .filter(Boolean),
   );
+  return (userId) => ids.size === 0 || ids.has(userId);
 }
 
 const notAllowed = (userId: string) =>
-  `Only kiln's operators can set repo secrets. Ask one to add your Slack user ID, \`${userId}\`, to \`KILN_SECRET_ADMINS\` on the agent's Vercel project.`;
+  `Only the people in \`KILN_SECRET_ADMINS\` can set repo secrets. Ask an operator to add your Slack user ID, \`${userId}\`.`;
 
 function parseRequest(value: unknown): SecretRequest | null {
   try {
@@ -200,7 +205,7 @@ export async function handleInteractivity(request: Request, deps: InteractivityD
     const secret = parseRequest(open.value);
     const channel = payload.channel?.id ?? payload.container?.channel_id;
     let view: Record<string, unknown>;
-    if (!deps.admins.has(userId)) view = noticeModal("Not allowed", notAllowed(userId));
+    if (!deps.mayEdit(userId)) view = noticeModal("Not allowed", notAllowed(userId));
     else if (!secret || !channel)
       view = noticeModal("Can't set this", "This button no longer names a kiln repo.");
     else {
@@ -220,7 +225,7 @@ export async function handleInteractivity(request: Request, deps: InteractivityD
   if (payload.type === "view_submission" && payload.view?.callback_id === MODAL_CALLBACK_ID) {
     const errors = (text: string) =>
       Response.json({ response_action: "errors", errors: { [INPUT_BLOCK_ID]: text } });
-    if (!deps.admins.has(userId)) return errors(notAllowed(userId));
+    if (!deps.mayEdit(userId)) return errors(notAllowed(userId));
     let context: ModalContext;
     try {
       context = JSON.parse(payload.view.private_metadata ?? "") as ModalContext;

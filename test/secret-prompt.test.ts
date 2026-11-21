@@ -5,8 +5,8 @@ import {
   type InteractivityDeps,
   MODAL_CALLBACK_ID,
   OPEN_ACTION_ID,
-  parseAdmins,
   requestBlocks,
+  secretEditors,
   verifySlackSignature,
 } from "../agent/lib/secret-prompt.ts";
 
@@ -38,7 +38,7 @@ function harness(overrides: Partial<InteractivityDeps> = {}) {
   };
   const deps: InteractivityDeps = {
     signingSecret: SECRET,
-    admins: parseAdmins("U_ADMIN, U_OTHER"),
+    mayEdit: secretEditors("U_ADMIN, U_OTHER"),
     openView: async (_trigger, view) => {
       calls.views.push(view);
     },
@@ -87,6 +87,16 @@ const submit = (user: string, value: string) => ({
     }),
     state: { values: { secret: { value: { value } } } },
   },
+});
+
+describe("secretEditors", () => {
+  it("lets anyone set secrets while KILN_SECRET_ADMINS is unset, and only those listed once it is", () => {
+    expect(secretEditors(undefined)("U_ANYONE")).toBe(true);
+    expect(secretEditors(" ")("U_ANYONE")).toBe(true);
+    const listed = secretEditors("U_ADMIN, U_OTHER");
+    expect(listed("U_OTHER")).toBe(true);
+    expect(listed("U_ANYONE")).toBe(false);
+  });
 });
 
 describe("verifySlackSignature", () => {

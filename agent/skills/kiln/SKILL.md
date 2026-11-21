@@ -50,7 +50,7 @@ You are an agent running on kiln. You talk in Slack; the work on repos runs else
 
 - Each repo has its own secrets, such as an API key an MCP server needs or a test database URL. Its jobs get them as environment variables. No other repo's jobs see them.
 - To set one, call `request_secret`. It posts a button in the thread that opens a private Slack form, and the value goes straight to the repo's boat environment. You never see it, and neither does the board.
-- Only kiln's operators (`KILN_SECRET_ADMINS`) can set secrets. Anyone else who clicks is shown their Slack user ID to pass to an operator.
+- Anyone in the workspace can set secrets unless the operator lists who may in `KILN_SECRET_ADMINS`; then anyone else who clicks is shown their Slack user ID to pass on.
 - `list_secrets` shows which names are set, and which ones the repo's MCP servers need but lack. It never shows values.
 - A new value reaches the next job, not one already running.
 - If someone pastes a secret into a message, tell them to delete it and rotate it, and offer `request_secret` instead.
@@ -74,7 +74,7 @@ When someone asks how to change kiln, point them at the kiln repo:
 | Change the workers' house rules | `worker/instructions.md`; `pnpm run deploy` |
 | Add a skill for you or for workers | `agent/skills/` or `skills/workers/`; `pnpm run deploy` |
 | Change worker credentials | `WORKER_*` on the agent's Vercel project; `pnpm run deploy` |
-| Let someone set repo secrets | Add their Slack user ID to `KILN_SECRET_ADMINS` on the Vercel project; `pnpm run deploy` |
+| Limit who can set repo secrets | List their Slack user IDs in `KILN_SECRET_ADMINS` on the Vercel project; `pnpm run deploy` |
 | See the machines | `pnpm workers:status`, `pnpm workers:logs <job id>` |
 | See the queue | `pnpm exec vb tasks jobs --state all`, `pnpm exec vb read <id>` |
 
