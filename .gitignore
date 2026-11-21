@@ -1,13 +1,8 @@
-# Runtime state: the database, memory folders, and credentials
+# Local scratch and build output from the Go agent era, and logs
+bin/
 data/
 .kiln/
 *.log
-
-# Build output
-bin/
-kiln
-*.test
-coverage.out
 
 # Secrets and local environment
 .env

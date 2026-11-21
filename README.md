@@ -69,7 +69,7 @@ Field by field, what you ask for wins over the repo's defaults for that kind of 
 | | robdog (Slack) | Workers |
 |---|---|---|
 | Prompt | [agent/instructions.md](agent/instructions.md) | [worker/instructions.md](worker/instructions.md), plus each repo's own `CLAUDE.md` or `AGENTS.md` |
-| Skills | [agent/skills/](agent/skills): grilling, grill-with-docs, domain-modeling, teach, find-skills | [skills/workers/](skills/workers): agent-browser, ui-taste, domain-modeling, vercel-react-best-practices |
+| Skills | [agent/skills/](agent/skills): kiln (how kiln works, so the agent can explain itself), grilling, grill-with-docs, domain-modeling, teach, find-skills | [skills/workers/](skills/workers): agent-browser, ui-taste, domain-modeling, vercel-react-best-practices |
 
 Third-party skills are vendored unmodified under their own licenses (MIT or Apache-2.0); [skills/vendor.json](skills/vendor.json) records each one's source, hash, and license, and [skills/LICENSES/](skills/LICENSES) holds the texts. To add one, run `npx skills add <source> --skill <name> --copy` in a scratch directory, read it, and copy it into the right folder. A skill for one repo belongs in that repo's `.claude/skills/`.
 
