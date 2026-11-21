@@ -355,7 +355,13 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string): Promise<
   if (result.timedOut) {
     throw new JobFailure(`${spec.harness} timed out after ${minutes(deps.timeoutMs)}`, tail(result));
   }
-  if (result.code !== 0) throw new JobFailure(`${spec.harness} exited ${result.code}`, tail(result));
+  if (result.code !== 0) {
+    const why = harnessError(result.stdout);
+    throw new JobFailure(
+      `${spec.harness} exited ${result.code}${why ? `: ${clip(why, 600)}` : ""}`,
+      tail(result),
+    );
+  }
   deps.log("job.harness_done", { task: id, seconds: Math.round((Date.now() - started) / 1000) });
 
   const report = await invocation.readReport(result.stdout);
@@ -509,8 +515,59 @@ export function firstLine(report: string): string {
   );
 }
 
+/** Lines CLIs print by the hundred that say nothing about why a run failed. */
+const NOISE = [/unknown format "[^"]+" ignored in schema/];
+
+/** The end of a failed run's output: stderr and stdout, without noise, so the cause isn't pushed out. */
 function tail(result: { readonly stdout: string; readonly stderr: string }): string {
-  return (result.stderr.trim() ? result.stderr : result.stdout).slice(-LOG_TAIL_CHARS);
+  const keep = (text: string) =>
+    text
+      .split("\n")
+      .filter((line) => !NOISE.some((pattern) => pattern.test(line)))
+      .join("\n")
+      .trim();
+  const parts = [keep(result.stderr), keep(result.stdout)].filter(Boolean);
+  return parts.join("\n---\n").slice(-LOG_TAIL_CHARS);
+}
+
+/**
+ * The CLI's own explanation of a failed run, from its JSON output: OpenCode's last `error` event, or
+ * Claude Code's error result. Model providers nest the useful message a few layers down.
+ */
+export function harnessError(stdout: string): string | undefined {
+  let found: string | undefined;
+  for (const line of stdout.split("\n")) {
+    if (!line.trim().startsWith("{")) continue;
+    let event: { type?: string; is_error?: boolean; result?: unknown; error?: unknown };
+    try {
+      event = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (event.type === "error") found = innermostMessage(event.error);
+    else if (event.type === "result" && event.is_error === true) found = String(event.result);
+  }
+  return found;
+}
+
+function innermostMessage(value: unknown, depth = 0): string | undefined {
+  if (depth > 6 || value === null || value === undefined) return undefined;
+  if (typeof value === "string") {
+    try {
+      return innermostMessage(JSON.parse(value), depth + 1) ?? value;
+    } catch {
+      return value;
+    }
+  }
+  if (typeof value !== "object") return String(value);
+  const record = value as Record<string, unknown>;
+  for (const key of ["value", "error", "data", "cause"]) {
+    const deeper = innermostMessage(record[key], depth + 1);
+    if (deeper && !deeper.startsWith("{")) return deeper;
+  }
+  return typeof record.message === "string"
+    ? (innermostMessage(record.message, depth + 1) ?? record.message)
+    : undefined;
 }
 
 async function logTail(logFile: string): Promise<string> {

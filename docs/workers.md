@@ -116,6 +116,7 @@ Agent logs (`pnpm exec vercel logs`) carry the `machines.*` events. A machine's 
 | `machines.launch_failed` | boat refused the machine; the error says why. The next minute retries. |
 | `machines.reconciled` with `deleted ... setup failed` | The setup script failed; `setupError` says where. Often an undeployed commit: deploy with `pnpm run deploy`. |
 | `machines.job_failed` | The job can't run on kiln as configured; the reason is in its thread. |
+| A job failed with `invalid_json_schema` | The model's provider refused one of the repo's MCP tool schemas. OpenAI models reject regex lookaround, which zod's `.email()` produces. Run that repo's jobs on claude (`defaults` in `kiln.config.yaml`), or loosen the schema in the MCP server. |
 | `config.invalid` in a machine's log | A worker setting is missing or malformed; the field is named. |
 | `job.unavailable` in a machine's log | Another machine had the job, or it was canceled before this one came up. Harmless. |
 | `job.subscription_switched` in a machine's log | Its subscription ran out; the job resumed on the next one. |

@@ -126,6 +126,22 @@ switch (mode) {
     writeFileSync(join(cwd, "draft.css"), "/* half done */\n");
     exhaust();
     break;
+  case "noisy-fail": {
+    // What OpenCode printed when a model rejected an MCP tool's schema: noise on stderr, the cause on stdout.
+    for (let i = 0; i < 500; i++)
+      process.stderr.write(`unknown format "uint32" ignored in schema at path "#/x/${i}"\n`);
+    const rejected = {
+      type: "error",
+      error: {
+        message:
+          "Invalid JSON schema: regex lookaround is not supported. Found at $.properties.email.pattern.",
+      },
+    };
+    const message = JSON.stringify({ name: "AI_TypeValidationError", value: rejected });
+    line({ type: "error", error: { name: "UnknownError", data: { message } } });
+    process.exit(1);
+    break;
+  }
   case "fail":
     process.stderr.write("working...\nboom: rate limited\n");
     process.exit(3);

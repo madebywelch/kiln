@@ -556,6 +556,24 @@ describe("harness adapters", () => {
   });
 });
 
+describe("failure reports", () => {
+  it("names the CLI's own error, dug out of its JSON, past hundreds of noise lines", async () => {
+    await postJob(team, {
+      ...spec,
+      kind: "investigate",
+      harness: "opencode",
+      model: "openai/gpt-6-luna-fast",
+    });
+    const { outcome } = await work({ mode: "noisy-fail" });
+    expect(outcome).toMatchObject({
+      kind: "failed",
+      reason:
+        "opencode exited 1: Invalid JSON schema: regex lookaround is not supported. Found at $.properties.email.pattern.",
+    });
+    expect(outcome.kind === "failed" && outcome.report).not.toContain("unknown format");
+  });
+});
+
 describe("subscriptions", () => {
   async function subscriptions(): Promise<WorkerSubscription[]> {
     const states = await ledger(team, "claude", ["a", "b"]);
