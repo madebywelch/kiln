@@ -1,0 +1,14 @@
+#!/bin/sh
+# Stands in for the GitHub CLI in the worker process test.
+case "$1 $2" in
+  "auth setup-git") exit 0 ;;
+  "pr view") exit 1 ;;
+  "pr create")
+    cat >/dev/null
+    echo "https://github.com/madebywelch/player.games-app/pull/1"
+    ;;
+  *)
+    echo "fake gh: unexpected $*" >&2
+    exit 64
+    ;;
+esac

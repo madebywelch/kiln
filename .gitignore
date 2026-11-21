@@ -21,3 +21,14 @@ coverage.out
 .idea/
 .vscode/
 *.swp
+
+# Node and eve
+node_modules/
+.eve/
+.vercel/
+.output/
+.nitro/
+.board/
+dist/
+*.tsbuildinfo
+.env*

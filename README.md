@@ -1,179 +1,141 @@
 # kiln
 
-An always-on agent in its most primitive form: one Go process, one SQLite file, one folder of memory.
-
-Five tables, one folder, three polling loops, one gate function. Every primitive is the same move: write intent to durable storage, then let a loop act on it.
+robdog: an AI teammate in Slack that thinks through ideas with you and hands work on your repos to a pool of coding agents running on your own subscriptions.
 
 ```
-Slack, POST /inbox/{user} ──> inbox ──> worker ──> run (model + tools) ──> outbox ──> dispatcher ──> Slack, webhook, stdout
-       (adapters in)            ^                    │   │                              (adapters out)
-               scheduler <── timers <────────────────┘   └──> memory folder
+Slack ──> robdog (eve on Vercel) ──start_job──> Vercel Board  "jobs"  <──claim── workers (boat.dev machines)
+  ^          │  memory, tools, MCP                    │                            claude-1..3  Claude Code
+  │          │                                        │ report=pending              codex-1      Codex CLI
+  └──────────┴──── job-reports schedule (every minute) ┘                            opencode-1   AI Gateway models
+                                                                                        clone, branch, run, push, draft PR
 ```
 
-## The primitives
+- **robdog** is an [eve](https://vercel.com/docs/eve) agent deployed to Vercel. It hears Slack, keeps one shared memory, and decides when to speak, react, or start a job.
+- **Vercel Board** holds the jobs. A job is a task in the `jobs` channel: the brief in its text, everything a worker routes and runs on in its labels.
+- **Workers** are boat.dev machines, one per subscription or key. Each claims jobs for its harness, does the work in a fresh clone, opens a draft pull request, and settles the task.
+- **Reports** flow back through the board: a worker marks a settled job `report=pending`, and robdog's `job-reports` schedule hands it to the Slack thread that asked, once.
 
-| Primitive | Irreducible idea | Here |
+## What robdog does in Slack
+
+| | |
+|---|---|
+| Hears | DMs, @mentions, its name, replies in threads it is part of, and every other message in channels it is in. A cheap decision model screens out what clearly needs nothing from it; robdog judges the rest and usually stays quiet. |
+| Sees | The channel's recent messages when a new thread of talk starts, each thread's earlier replies, sender names, attached files, and its shared memory. `slack_history` reads any channel or thread it is in. |
+| Says | Replies in the thread, top-level posts in the channel (`slack_post`), new threads, Block Kit layouts, emoji reactions (`slack_react`), and files (`slack_upload`). Tool approvals and questions appear as buttons. |
+| Does | Starts, lists, inspects, cancels, and answers jobs. Searches and reads the web. Runs code in its own sandbox. |
+
+Setup: [docs/slack.md](docs/slack.md).
+
+## Repos and defaults
+
+Workers touch only the repos in [lib/config.ts](lib/config.ts). Each has a description robdog uses to map conversation to a repo, so talk about several projects can share a channel. Add your repos there; the agent and the workers both read it, so redeploy the agent and run `pnpm workers:up` after a change.
+
+```ts
+export const repos = {
+  "player.games-app": {
+    github: "madebywelch/player.games-app",
+    description: "Player Games, the player.games website: ...",
+    // baseBranch: "main",
+    // defaults: { change: { harness: "codex", model: "gpt-5.5", effort: "xhigh" } },
+    // mcp: ["linear"],
+  },
+};
+// A cheap model reads, a heavy one writes.
+export const defaultSelection = {
+  change: { harness: "claude", model: "opus", effort: "high" },
+  investigate: { harness: "opencode", model: "openai/gpt-6-luna-fast", effort: "medium" },
+};
+```
+
+## Choosing the model and effort
+
+Say it in Slack, or don't:
+
+| You say | The job runs on |
+|---|---|
+| "add a christmas theme to the player games site" | a change: the repo's default, else `claude opus/high` |
+| "figure out why CI is slow" | an investigation: the repo's default, else `opencode openai/gpt-6-luna-fast/medium` |
+| "use codex for this" | `codex` with its CLI default model |
+| "sonnet, low effort" | `claude sonnet/low` |
+| "deepseek v4.1 flash" | `opencode deepseek/deepseek-v4.1-flash`: any AI Gateway model runs on OpenCode |
+| "gpt-5.5 at max" | `codex gpt-5.5/xhigh` (Codex's top effort) |
+
+Field by field, what you ask for wins over the repo's defaults for that kind of job, which win over the global ones. A model picks its harness: a Claude name runs on Claude Code, an OpenAI name on Codex, and an AI Gateway ID (`provider/model`) or another vendor's model on OpenCode. A harness named alone gets its own default model. The resolution is `resolveSelection` in [lib/jobs.ts](lib/jobs.ts), tested in [test/jobs.test.ts](test/jobs.test.ts).
+
+## Skills and prompts
+
+| | robdog (Slack) | Workers |
 |---|---|---|
-| Event inbox | Record that something happened before doing anything about it. | `inbox` table. The HTTP handler does one INSERT and returns 202. The worker takes every pending event for a user, runs the agent once, and marks them done only when the run commits. |
-| Timers | A row with a due time that turns into an inbox event. | `timers` table. The scheduler never runs the agent; it only writes to the inbox. `interval_seconds` NULL is a one-off follow-up, otherwise a schedule. |
-| Memory | Text that outlives the process, plus a table of contents that is always loaded. | `data/users/{user}/`: `instructions.md`, `index.md`, `notes/`, `transcripts/`. A run starts with the instructions and the index, nothing else. |
-| Tasks | Work in flight is a row with notes and a wake time, written the moment it is taken on. | `tasks` table. `open_task` and `update_task` write at once, outside the run's transaction. An open task wakes the agent through the inbox until it is closed. |
-| Permissions | One function between the model's tool call and its execution: allow, deny, or ask. | `gate()` in `internal/agent/gate.go`. Credentials are added by the tool executor and never enter the prompt. `ask` parks the session in `pending_approvals` and frees the worker. |
-| Outbox | The agent records an intent to send; something else sends. | `outbox` table. `send_message` only inserts a row. The dispatcher delivers in order, paced, with backoff. |
+| Prompt | [agent/instructions.md](agent/instructions.md) | [worker/instructions.md](worker/instructions.md), plus each repo's own `CLAUDE.md` or `AGENTS.md` |
+| Skills | [agent/skills/](agent/skills): grilling, grill-with-docs, domain-modeling, teach, find-skills | [skills/workers/](skills/workers): agent-browser, ui-taste, domain-modeling, vercel-react-best-practices |
 
-A run is a transaction. Everything a run wants in the database (messages, timers, a parked approval) is buffered and committed together with marking its events done. A failed run leaves nothing behind and is retried.
+Third-party skills are vendored unmodified under their own licenses (MIT or Apache-2.0); [skills/vendor.json](skills/vendor.json) records each one's source, hash, and license, and [skills/LICENSES/](skills/LICENSES) holds the texts. To add one, run `npx skills add <source> --skill <name> --copy` in a scratch directory, read it, and copy it into the right folder. A skill for one repo belongs in that repo's `.claude/skills/`.
 
-Tasks are the deliberate exception. A task and its progress notes are saved as the agent writes them, so they outlive a run that fails, is cut off at its step limit, or dies with the process. The next run is a fresh session, but it opens with every open task and its notes, and carries on from there.
+## Jobs
 
-## Run it
+- **change** jobs commit to `robdog/<id>-<title>`, push it, and open a draft pull request. Workers never merge.
+- **investigate** jobs report findings and change nothing.
+- A harness that cannot go on without a person ends with `QUESTION: ...`. The worker pushes its work and blocks the task; robdog asks in the thread and passes the answer back with `answer_job`; the next worker resumes from the branch.
+- A worker that stops (an update, a crash, `boat stop`) hands its job back to the queue. A worker that loses its claim (lease expired, job canceled) stops the harness without settling.
+
+Watch the queue:
 
 ```sh
-cp .env.example .env   # set KILN_TOKEN, KILN_MODEL_KEY, KILN_MODEL
-docker compose up --build
+npx vb tasks jobs --state all     # every job and its state
+npx vb read <id>                  # one job's thread: brief, progress, report
+npx vb inspect                    # the board's UI, served from your machine
 ```
 
-Or without Docker: `make build && (set -a; . ./.env; bin/kiln)`.
+## Set it up
 
-| Variable | Default | |
+1. **Agent.** `pnpm install`, then `pnpm exec eve link` to create or link the Vercel project. Vercel Pro: the report schedule runs every minute, and Hobby allows one run per 15 minutes.
+2. **Memory.** `pnpm exec eve integration setup file-memory` provisions a private Blob store for robdog's memory.
+3. **Board.** A team's default grants already let every project read, post, and label. If yours were narrowed, grant robdog's project: `pnpm exec vb grants create --project <project> --environment production --can 'jobs=read,post,label'`. Without a grant robdog's job tools fail with `404 no_board`.
+4. **Slack.** Create the app from the manifest in [docs/slack.md](docs/slack.md) and set `SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET` on the project.
+5. **Deploy.** `pnpm exec eve deploy`.
+6. **Workers.** [docs/workers.md](docs/workers.md).
+
+| Agent setting | Default | |
 |---|---|---|
-| `KILN_TOKEN` | required | Bearer token for the inbox endpoint, 32+ characters. |
-| `KILN_MODEL` | required | Model id at the endpoint, e.g. `anthropic/claude-opus-5.5` on OpenRouter. |
-| `KILN_MODEL_URL` | `https://openrouter.ai/api/v1` | Any OpenAI-compatible chat completions endpoint with tool calling: OpenRouter, OpenAI, Anthropic, Gemini, LM Studio, Ollama. |
-| `KILN_MODEL_KEY` | empty | API key for the endpoint. Empty for local servers. |
-| `KILN_MODEL_PARAMS` | empty | JSON object of extra request fields, sent as given. This is where vendor differences go, e.g. `{"reasoning":{"effort":"low"}}` on OpenRouter or `{"reasoning_effort":"low"}` on OpenAI. |
-| `KILN_SLACK_BOT_TOKEN`, `KILN_SLACK_APP_TOKEN` | empty | Connects Slack. See [docs/slack.md](docs/slack.md). |
-| `KILN_SLACK_USERS` | empty | Optional. Unset, everyone in the workspace shares one agent. Set it to restrict or split that. |
-| `KILN_OUTBOX_URL` | empty | The channel of last resort. Outbox entries are POSTed here as `{"id","user_id","kind","body",...}`. Empty: JSON lines on stdout. |
-| `KILN_DATA` | `data` | Database, memory folders, `origins.json`, lock file. |
-| `KILN_ADDR` | `127.0.0.1:8080` | Listen address. |
+| `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET` | required | The Slack app's credentials. Or `SLACK_CONNECTOR`, a Vercel Connect connector UID, instead of both. |
+| `ROBDOG_MODEL` | `anthropic/claude-opus-5.5` | robdog's own model: an AI Gateway model ID, which needs no key on Vercel. |
+| `ROBDOG_MODEL_URL`, `ROBDOG_MODEL_KEY` | unset | Use any OpenAI-compatible endpoint instead of AI Gateway, such as OpenRouter. `ROBDOG_MODEL` is then that endpoint's model name. |
 
-## Talk to it
+## MCP servers, APIs, and GitHub
 
-```sh
-curl -H "Authorization: Bearer $KILN_TOKEN" \
-  --data 'Remind me every weekday at 9 to review open PRs.' \
-  http://127.0.0.1:8080/inbox/robert
-```
+- **Workers** carry `git`, `gh` (with `GH_TOKEN`), and the MCP servers their repo lists. Define a server once in `mcpServers` in `lib/config.ts`, name it in a repo's `mcp`, and put any secret it needs in `.env.mcp`. See [docs/workers.md](docs/workers.md#skills-house-rules-and-mcp).
+- **robdog** reaches an MCP server or an OpenAPI service through a file in `agent/connections/`. See [eve connections](https://vercel.com/docs/eve).
 
-The body is the event text. The reply arrives on the user's channel, not in the HTTP response: their Slack DM if they are mapped there, otherwise the webhook or stdout.
+## Trust
 
-With Slack connected, talk to it there instead: DM the bot, @mention it, or address it by name in a channel it is in. Setup takes five minutes: [docs/slack.md](docs/slack.md).
-
-Webhooks from other systems post to the same endpoint with `?source=github` (any short label). Only events with the default source, `user`, carry instructions or answer approvals. Everything else is presented to the model as data. The label is self-declared: anything holding the token can claim to be the user, so give the token only to callers you would let speak as you.
-
-## Adapters
-
-An adapter connects one channel. It does two things and holds no agent logic: it writes what it hears to the inbox, and it delivers what the outbox holds for it.
-
-| Adapter | Hears | Sends |
-|---|---|---|
-| `slack` | DMs, @mentions, ambient channel messages, reactions on the agent's messages, clicks on Block Kit elements | Markdown messages, threaded replies, reactions, Block Kit layouts, approval prompts with buttons |
-| `webhook` | nothing | every outbox entry as a JSON POST |
-| `stdout` | nothing | every outbox entry as a JSON line |
-
-Every event and message carries an address of the form `adapter:rest`, for example `slack:C0123:1731712345.000100`. The agent reads only the adapter name. A reply goes to the conversation its event came from; a message that answers nothing (a timer's result) goes to the user's default route, which is the first adapter that knows the user.
-
-An adapter that can read its channel's history also implements `agent.Contexter`. The agent then opens each run with the recent messages around its events, read from the channel at that moment, never copied into kiln. This is how it sees what was said before it was woken.
-
-To add a channel, implement `agent.Adapter` (five methods, documented in `internal/agent/adapter.go`) in its own package and append it to the list in `cmd/kiln/main.go`. Nothing in the agent changes. An adapter declares what its channel can do beyond text through `Features`: whether it takes reactions, and any extra `send_message` parameters, which the agent offers to the model and hands back untouched. Slack's `blocks` parameter is one of those.
-
-## Give it HTTP access
-
-Without `data/origins.json` the agent has no network tool. With it, `http_request` reaches exactly the listed origins, and the executor adds the listed headers:
-
-```json
-{
-  "https://api.linear.app": { "Authorization": "lin_api_..." },
-  "https://status.example.com": {}
-}
-```
-
-The file must be mode 600. GET and HEAD run directly. Other methods need approval. Redirects are not followed. Header values are redacted from responses before the model sees them.
-
-## Approvals
-
-The gate asks for approval on any state-changing HTTP method and on any write to `instructions.md`. The run stops, and the outbox carries:
-
-```
-Approval needed: http_request {"method":"POST","url":"https://api.linear.app/graphql","body":"..."}
-Why: it changes state on https://api.linear.app.
-Reply "yes" to approve. Any other reply declines and is passed on as your answer.
-```
-
-In Slack the same prompt has Approve and Decline buttons. A button answers only the prompt it belongs to, and only for people who share the kiln user the prompt is for; a click on an old prompt changes nothing.
-
-The reply is an ordinary inbox event. `yes`, `y`, `approve`, or `approved` runs the saved call exactly as shown and resumes the session. Anything else declines it and hands your text to the model. One approval per user can be open at a time; a later call that needs one is refused until you answer.
-
-## Quiet by default
-
-Only `send_message` reaches you. Runs started by timers and webhooks may end in silence. A run that includes a message from you gets one nudge if it is about to end with nothing sent, because chat-trained models tend to answer in plain text; after that, silence stands.
-
-## Durable work
-
-For anything longer than a few steps the agent opens a task and notes its progress as it goes: what is finished, what is next, where the results are.
-
-- A run that fails is retried. The retry sees the open task and resumes from the notes instead of starting over.
-- A run cut off at its limit of 40 model calls wakes again at once and continues. Without a task, it stops and tells you the work may be incomplete.
-- An open task wakes the agent five minutes after its last progress note, unless the agent set a longer wait because it depends on someone else. Each wake-up that finds no progress doubles the wait, up to a day. A stalled task costs little and is never forgotten.
-- A wake-up returns to the conversation the task was taken on in, so results land where the work was asked for.
-- Closing a task as `done` or `dropped` ends the wake-ups.
-
-```sh
-sqlite3 data/kiln.db "SELECT id, user_id, state, title, datetime(wake_at, 'unixepoch', 'localtime'), idle_wakes FROM tasks ORDER BY id DESC LIMIT 20"
-sqlite3 data/kiln.db "SELECT notes FROM tasks WHERE id = 1"
-```
-
-## Dreaming
-
-A user's first event seeds a daily timer whose note tells the agent to review recent transcripts, curate its notes, and fix the index. It needs no machinery of its own. Cancel or reschedule it by asking the agent.
-
-## Operating it
-
-State is plain. Look at it.
-
-```sh
-sqlite3 data/kiln.db "SELECT id, user_id, source, origin, status, attempts FROM inbox ORDER BY id DESC LIMIT 20"
-sqlite3 data/kiln.db "SELECT id, user_id, datetime(due_at, 'unixepoch'), interval_seconds, note FROM timers"
-sqlite3 data/kiln.db "SELECT id, user_id, kind, address, status, attempts, body FROM outbox ORDER BY id DESC LIMIT 20"
-sqlite3 data/kiln.db "SELECT id, user_id, tool_call FROM pending_approvals"
-ls data/users/*/transcripts/
-```
-
-Failure handling:
-
-- A failed run retries with backoff (30s doubling to 1h). After 8 attempts its events are marked `failed` and the user is told.
-- A failed delivery retries on the same schedule. After 8 attempts the message is marked `failed` and the queue moves on. A delivery the channel can never accept (a deleted channel, an unknown emoji) fails at once.
-- An event an adapter delivers twice is recorded once.
-- The schema migrates itself on start. `PRAGMA user_version` holds the version.
-- Delivery to the channel is at-least-once. Receivers deduplicate on `id`.
-- A second process on the same data directory refuses to start.
-
-## Limits of the primitive form
-
-Each is the first upgrade when it starts to hurt, not before.
-
-- One worker handles users one at a time. A long run for one user delays the others. Upgrade: a lock row per user and several workers.
-- Every run is a fresh session. Memory files carry continuity, and each run opens with the agent's last eight exchanges from every place it is present, plus the channel's own recent history around the new events. Upgrade: compaction for sessions that must persist.
-- The gate is a hard-coded deny list. Upgrade: a second model call that classifies risky calls.
-- Credentials live in the executor's file. Upgrade: a real proxy, needed once the agent gets a shell.
-- One token, self-declared sources. Upgrade: a token per source.
-- Tool calls an interrupted run already made are repeated on retry. Reads and file writes are idempotent and database effects are transactional. Two things can double: a task progress note, which is harmless, and an approved HTTP call, only if the process dies in the instant between the call and saving its result.
-- Open approvals do not expire.
-- Tasks have no dependencies or priorities. They are a list of work in flight, not a tracker.
-- Whether work is tracked as a task is the model's judgment. Work it chose not to track is not resumed.
-- Messages are delivered when the run ends, not while it works. A reaction the agent adds to acknowledge a message arrives with the reply, not before it.
+- Anyone in the Slack workspace can talk to robdog and start jobs. robdog has one memory for everyone. Restrict it in `agent/channels/slack.ts` (an allowlist in `onMessage`) and scope `agent/memory.ts` if the workspace stops being private.
+- What other people say reaches the model as conversation, and the instructions tell it so. That is a soft boundary.
+- Workers run their CLIs with permission prompts off, each alone on its own boat machine. The worker holds a GitHub token that can push to the listed repos; the CLI does not get it. Protect each repo's default branch: workers push only `robdog/*` branches, and nothing stops a harness from trying otherwise except that token's reach and branch protection.
+- Board text is instructions to whoever claims it. Workers take jobs only from robdog's actor (`ROBDOG_BOARD_FROM`).
 
 ## Development
 
 ```sh
-make check        # gofmt, vet, race tests, build
-make docker-test  # the same in a clean container
+pnpm check        # biome, tsc, vitest
+pnpm build        # eve build
+pnpm dev          # robdog locally, with eve's terminal UI
 ```
 
-Tests drive the three loops directly against a fake clock and a scripted OpenAI-compatible server. The Slack adapter is tested against a fake Web API and a real WebSocket. Nothing needs the network or a key.
+Tests run without network or keys. Worker tests drive real git and a real Board (in memory, and over HTTP with `vb serve`) with fake coding CLIs. Slack tools run against a fake Web API.
 
-One test is opt-in because it spends tokens: a real model driving the Slack adapter against the fake Slack, through a threaded reply, a reaction, a Block Kit message, an approval by button, and a channel where it must stay silent on chatter and answer when named. Run it after changing prompts, tools, or the adapter, on more than one vendor:
+Evals drive robdog's real model and spend tokens. Run them after changing instructions or tool descriptions, on more than one vendor:
 
 ```sh
-KILN_LIVE_MODEL=anthropic/claude-haiku-5.5 KILN_MODEL_KEY=... go test ./internal/slack -run TestLiveModel -v
+ROBDOG_MODEL_URL=https://openrouter.ai/api/v1 ROBDOG_MODEL_KEY=$OPENROUTER_API_KEY \
+  ROBDOG_MODEL=anthropic/claude-sonnet-5.5 pnpm eval
 ```
+
+## Limits
+
+- Board is experimental. Its API and limits may change.
+- A job's result reaches Slack within a minute of settling, not at once.
+- Reactions people put on robdog's messages don't reach it.
+- Jobs run on one repo each. Work across repos is several jobs.
+- Each worker runs one job at a time. Four machines, four jobs at once.
+- A subscription's usage limit fails the job with the CLI's message; robdog reports it, and you retry later or on another harness.
+- Antigravity has no headless CLI to drive yet. A new harness is an entry in `HARNESSES`, a case in `worker/harness.ts`, and a worker in `POOL`.

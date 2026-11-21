@@ -17,19 +17,15 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v7
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
         with:
-          go-version: '1.27.2'
-          cache: true
-      - run: make check
-
-  container:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - run: make docker-test
-      - run: docker build -t kiln .
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm build
+      - run: pnpm audit --prod
 
   secrets:
     runs-on: ubuntu-latest
@@ -44,16 +40,3 @@ jobs:
       - uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  vulnerabilities:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v7
-        with:
-          go-version: '1.27.2'
-          cache: true
-      - uses: golang/govulncheck-action@v1
-        with:
-          go-package: ./...
