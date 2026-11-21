@@ -48,10 +48,14 @@ export function viewJob(root: MessageView): JobView {
   };
 }
 
-export async function postJob(team: Board, spec: JobSpec): Promise<JobView> {
+/** Posts a job to the board and returns it, with the board's own message for whoever launches its machine. */
+export async function postJob(
+  team: Board,
+  spec: JobSpec,
+): Promise<JobView & { readonly message: MessageView }> {
   const { text, labels } = encodeJob(spec);
   const { task } = await team.tasks.create(JOBS_CHANNEL, { text, labels });
-  return viewJob(task);
+  return { ...viewJob(task), message: task };
 }
 
 export type JobStateFilter = NonNullable<NonNullable<Parameters<Board["tasks"]["list"]>[0]>["state"]>;

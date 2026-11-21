@@ -10,6 +10,7 @@ import {
   resolveSelection,
 } from "../../lib/jobs.ts";
 import { team } from "../lib/board.ts";
+import { launchNow } from "../lib/machines.ts";
 import { slackHere } from "../lib/slack.ts";
 
 const repoKeys = Object.keys(repos) as [string, ...string[]];
@@ -74,6 +75,7 @@ export default defineTool({
       brief: input.brief,
       origin: here?.threadTs ? { channelId: here.channelId, threadTs: here.threadTs } : undefined,
     });
+    await launchNow(job.message);
     return {
       id: job.id,
       state: job.state,

@@ -63,7 +63,9 @@ export function resolveMcp(
     }
   }
   if (missing.size > 0) {
-    throw new Error(`MCP servers need ${[...missing].join(", ")} in the worker's environment`);
+    throw new Error(
+      `MCP servers need ${[...missing].join(", ")}, which this repo's secrets don't have. Ask in Slack to set them.`,
+    );
   }
   return resolved;
 }

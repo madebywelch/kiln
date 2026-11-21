@@ -4,10 +4,10 @@ kiln runs an AI teammate in Slack (the agent) and the coding workers it hands re
 
 ## Shape
 
-- `agent/`: an eve agent deployed to Vercel. Slack in, tools, skills, memory, and the per-minute report schedule.
-- `worker/`: the process on each boat.dev machine. Claims jobs from Vercel Board, runs a coding CLI headless, pushes, opens draft PRs, settles.
-- `lib/`: what both sides share. `config.ts` (repos, defaults, MCP servers, the agent's name), `jobs.ts` (the job contract), `board-jobs.ts` (Board operations).
-- `scripts/boat-workers.ts`: provisions and updates the worker machines.
+- `agent/`: an eve agent deployed to Vercel. Slack in, tools, skills, memory, and two per-minute schedules: reports and machines. `channels/slack-interactivity.ts` serves Slack's buttons and forms.
+- `worker/`: the process on a job's boat.dev machine. Claims its one job from Vercel Board, runs a coding CLI headless, pushes, opens a draft PR, settles, exits.
+- `lib/`: what both sides share. `config.ts` (repos, defaults, MCP servers, machine limits, the agent's name), `jobs.ts` (the job contract), `board-jobs.ts` (Board operations), `boat.ts` (the boat API), `machines.ts` (launching and reconciling job machines), `secrets.ts` (repo secrets in boat environments).
+- `scripts/deploy.ts`: deploys the agent and pins the machines' code to the commit. `scripts/boat-workers.ts`: shows machines and their logs.
 
 ## Terms
 
@@ -19,7 +19,9 @@ kiln runs an AI teammate in Slack (the agent) and the coding workers it hands re
 | kind | `change` (branch `kiln/<id>-<title>` and a draft PR) or `investigate` (a report, no changes). |
 | harness | The coding CLI a job runs on: `claude`, `codex`, or `opencode`. |
 | selection | A job's harness, model, and effort, resolved by `resolveSelection`: request, then repo default for the kind, then global default. |
-| worker | One harness on one boat machine (`kiln-<profile>`), one job at a time. |
+| machine | A fresh boat machine per job, labeled `kiln=worker` and `job=<id>`. The agent launches it with the job and deletes it after the job settles. |
+| worker | The process on a machine: claims its job by ID, runs it, exits. |
+| repo secrets | A repo's environment variables, in boat environment `kiln-<repo>`, which passes secrets and nothing else. Set through a Slack form, never through the model. |
 | report | A settled job's result. The worker labels it `report=pending`; the agent's schedule delivers it to the Slack origin and clears the label. |
 | artifacts | Files a CLI saves in `.kiln/artifacts/`; attached to the report and posted to Slack, never committed. |
 | house rules | `worker/instructions.md`, added to every job's prompt. |
@@ -30,6 +32,8 @@ kiln runs an AI teammate in Slack (the agent) and the coding workers it hands re
 - `pnpm check` must pass: biome, tsc, vitest. Tests need no network or keys; keep it that way.
 - Run `pnpm eval` on at least two vendors after changing the agent's instructions or tool descriptions.
 - The repo is public. Never commit secrets, account IDs, or private repo details; secrets live in `.env` (ignored) and the Vercel project.
-- The coding CLI never gets worker credentials (`GH_TOKEN`, `BOARD_TOKEN`); see `harnessEnv` in `worker/job.ts`.
+- The coding CLI never gets worker credentials (`GH_TOKEN`, `BOARD_TOKEN`); see `harnessEnv` in `worker/job.ts`. They reach a machine in a settings file the worker deletes, never in boat's per-machine `env`, which boat exports into every login shell.
+- Secret values never pass through the model, logs, or the board. Tools return secret names only.
+- Deploy with `pnpm run deploy`, never bare `eve deploy`: machines download the deployed commit from GitHub, so it must be committed and pushed.
 - Third-party skills are vendored unmodified, with their licenses recorded in `skills/vendor.json`.
 - Biome does not format Markdown or skill folders; don't change that.

@@ -27,6 +27,16 @@ export const stubsFor = (runsOn: string): ToolStub[] => [
   },
   { id: "react", tool: "slack_react", outcome: { response: { reacted: "eyes" } } },
   { id: "post", tool: "slack_post", outcome: { response: { channel: "C0123", ts: "1.0", endsTurn: true } } },
+  {
+    id: "request-secret",
+    tool: "request_secret",
+    outcome: { response: { asked: "LINEAR_API_KEY", repo: "player.games-app" } },
+  },
+  {
+    id: "list-secrets",
+    tool: "list_secrets",
+    outcome: { response: { repo: "player.games-app", set: [], missingForMcp: [] } },
+  },
 ];
 
 export const stubs = stubsFor("claude opus/high");

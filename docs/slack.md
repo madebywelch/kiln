@@ -1,10 +1,10 @@
 # Slack
 
-robdog receives Slack's Events API and interactivity at `https://<deployment>/eve/v1/slack`. Slack signs each request; the channel verifies it with the signing secret.
+The agent receives Slack's Events API at `https://<deployment>/eve/v1/slack` and interactivity (buttons and forms) at `https://<deployment>/slack/interactivity`. The interactivity route handles kiln's repo-secret form itself, because eve ignores forms it didn't create, and forwards every other payload unchanged to `/eve/v1/slack`. Slack signs each request; both routes verify it with the signing secret.
 
 ## Create the app
 
-1. Deploy robdog once (`pnpm exec eve deploy`) and note its production URL.
+1. Deploy the agent once (`pnpm run deploy`) and note its production URL.
 2. At <https://api.slack.com/apps>, choose **Create New App**, then **From a manifest**. Paste this, with your URL in both places:
 
    ```yaml
@@ -49,7 +49,7 @@ robdog receives Slack's Events API and interactivity at `https://<deployment>/ev
          - message.mpim
      interactivity:
        is_enabled: true
-       request_url: https://YOUR-ROBDOG.vercel.app/eve/v1/slack
+       request_url: https://YOUR-ROBDOG.vercel.app/slack/interactivity
      org_deploy_enabled: false
      socket_mode_enabled: false
      token_rotation_enabled: false
@@ -61,12 +61,14 @@ robdog receives Slack's Events API and interactivity at `https://<deployment>/ev
    ```sh
    vercel env add SLACK_BOT_TOKEN production
    vercel env add SLACK_SIGNING_SECRET production
-   pnpm exec eve deploy
+   pnpm run deploy
    ```
 
 5. DM robdog. Invite it to channels with `/invite @robdog`.
 
-To let Vercel Connect hold the token instead, create a Slack connector with triggers at `/eve/v1/slack`, give it the scopes and events above, and set `SLACK_CONNECTOR` to its UID in place of the two variables.
+An app made before the secret form existed has its interactivity at `/eve/v1/slack`. Change it under **Interactivity & Shortcuts**, **Request URL**, to `https://<deployment>/slack/interactivity`.
+
+To let Vercel Connect hold the token instead, create a Slack connector with triggers at `/eve/v1/slack`, give it the scopes and events above, and set `SLACK_CONNECTOR` to its UID in place of the two variables. The secret form still needs `SLACK_SIGNING_SECRET` to verify its requests; without it, the interactivity route forwards everything to eve and the form doesn't open.
 
 After changing scopes or events, reinstall the app from **Install App**.
 

@@ -48,6 +48,7 @@ Start a job with `start_job` when someone asks for work on a repo: a change ("ad
 - Workers can return files, such as screenshots and reports. They are posted in the thread before the "[job update]" arrives, so a job that should produce a screenshot or a file says so in its brief: "save the screenshot in .kiln/artifacts/". Never start a job only to move a file.
 - Results arrive in the thread as a "[job update]" message from the worker pool. Tell the thread what came of it in a sentence or two, with the pull request link. When a worker asks a question, relay it, and pass the answer on with `answer_job`.
 - `list_jobs` and `job_details` show what is running. `cancel_job` stops one.
+- Each repo has its own secrets, which its jobs get as environment variables. When a job fails for a missing secret, or someone wants one set, call `request_secret`: it posts a button that opens a private form, and you never see the value. Never ask anyone to paste a secret into a message; if someone does, tell them to delete it and rotate it. `list_secrets` shows which names are set.
 
 Workers open draft pull requests and never merge. Merging is for people.
 

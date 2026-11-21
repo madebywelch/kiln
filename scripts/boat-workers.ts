@@ -1,113 +1,15 @@
-// Runs the worker pool on boat.dev: one always-on machine per worker, the
-// worker under systemd, the code deployed from a commit.
+// Looks at the job machines on boat.dev. The agent launches and deletes them
+// (lib/machines.ts); these commands only read.
 //
-//   node scripts/boat-workers.ts up              create or update every worker whose secret is set
-//   node scripts/boat-workers.ts status          each machine's state, service, and last log line
-//   node scripts/boat-workers.ts logs <profile>  the last 100 log lines of one worker
+//   node scripts/boat-workers.ts status       every job machine: its job, harness, state, and setup
+//   node scripts/boat-workers.ts logs <id>    a machine's worker log, by job ID or machine ID
 //
-// Settings come from .env (see .env.example), plus .env.mcp when MCP servers need secrets.
+// Reads BOAT_API_KEY from .env.
 
-import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Harness } from "../lib/config.ts";
-
-const API = "https://boat.dev/api/v1";
-const NAME_PREFIX = "kiln-";
-const HOME = "/home/user";
-const UP_STATES = ["ready", "idle", "running"];
-const RUN_ID = Date.now().toString(36);
-const DEPLOY_PATHS = ["package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "lib", "worker", "skills"];
-const AGENT_BROWSER_VERSION = "0.43.0";
-const PNPM = "pnpm@12.11.2";
-
-export interface PoolWorker {
-  readonly profile: string;
-  readonly harness: Harness;
-  /** The .env variable holding this worker's model credential. The worker is skipped while it is unset. */
-  readonly secret: string;
-  /** boat machine size. A Next.js dev build of a large app needs more than small's 4 GB. */
-  readonly type: "small" | "default" | "large";
-}
-
-/**
- * The pool. Codex is left out: its ChatGPT login has to be made on the
- * machine itself (`boat ssh kiln-codex-1 -- codex login --device-auth`).
- */
-export const POOL: readonly PoolWorker[] = [
-  { profile: "claude-1", harness: "claude", secret: "CLAUDE_TOKEN_1", type: "default" },
-  { profile: "claude-2", harness: "claude", secret: "CLAUDE_TOKEN_2", type: "default" },
-  { profile: "claude-3", harness: "claude", secret: "CLAUDE_TOKEN_3", type: "default" },
-  { profile: "opencode-1", harness: "opencode", secret: "AI_GATEWAY_API_KEY", type: "default" },
-];
-
-/** What every worker needs, from .env. */
-const SHARED = ["BOARD_TOKEN", "VERCEL_ORG_ID", "KILN_BOARD_FROM", "GH_TOKEN"] as const;
-const OPTIONAL = ["HARNESS_GH_TOKEN", "KILN_GIT_NAME", "KILN_GIT_EMAIL", "JOB_TIMEOUT_MINUTES"] as const;
-
-/** The worker's environment on its machine. */
-export function workerEnv(
-  worker: PoolWorker,
-  env: Readonly<Record<string, string | undefined>>,
-  mcpSecrets: Readonly<Record<string, string>>,
-  version: string,
-): Record<string, string> {
-  const missing = SHARED.filter((name) => !env[name]);
-  if (missing.length > 0) throw new Error(`set ${missing.join(", ")} in .env`);
-  const out: Record<string, string> = { ...mcpSecrets };
-  for (const name of [...SHARED, ...OPTIONAL]) {
-    const value = env[name];
-    if (value) out[name] = value;
-  }
-  const credential = env[worker.secret];
-  if (!credential) throw new Error(`set ${worker.secret} in .env for ${worker.profile}`);
-  if (worker.harness === "claude") out.CLAUDE_CODE_OAUTH_TOKEN = credential;
-  if (worker.harness === "opencode") out.AI_GATEWAY_API_KEY = credential;
-  return {
-    ...out,
-    BOARD_PROFILE: worker.profile,
-    WORKER_HARNESS: worker.harness,
-    WORK_DIR: `${HOME}/work`,
-    AGENT_BROWSER_EXECUTABLE_PATH: "/usr/bin/google-chrome-stable",
-    KILN_VERSION: version,
-  };
-}
-
-/** A systemd EnvironmentFile: one KEY="value" per line. */
-export function renderEnvFile(env: Readonly<Record<string, string>>): string {
-  return `${Object.entries(env)
-    .map(([key, value]) => {
-      if (/[\n\r]/.test(value)) throw new Error(`${key} must be one line`);
-      return `${key}="${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
-    })
-    .join("\n")}\n`;
-}
-
-export function renderUnit(node: string, path: string): string {
-  return [
-    "[Unit]",
-    "Description=kiln worker",
-    "After=network-online.target",
-    "Wants=network-online.target",
-    "",
-    "[Service]",
-    "User=user",
-    `WorkingDirectory=${HOME}/kiln`,
-    `EnvironmentFile=${HOME}/.kiln/worker.env`,
-    `Environment=HOME=${HOME}`,
-    `Environment=PATH=${path}`,
-    `ExecStart=${node} worker/main.ts`,
-    "Restart=always",
-    "RestartSec=10",
-    // The worker releases its job on SIGTERM; give the coding CLI time to stop.
-    "KillSignal=SIGTERM",
-    "TimeoutStopSec=30",
-    "",
-    "[Install]",
-    "WantedBy=multi-user.target",
-    "",
-  ].join("\n");
-}
+import { Boat } from "../lib/boat.ts";
+import { MACHINE_LABEL, WORKER_LOG_PATH } from "../lib/machines.ts";
 
 /** Reads a dotenv file without interpreting it beyond KEY=value lines. */
 export function readEnvFile(path: string): Record<string, string> {
@@ -122,268 +24,32 @@ export function readEnvFile(path: string): Record<string, string> {
   return out;
 }
 
-interface Sandbox {
-  readonly id: string;
-  readonly name?: string;
-  readonly state: string;
-  readonly type?: string;
-}
-
-class Boat {
-  readonly #key: string;
-  constructor(key: string) {
-    this.#key = key;
-  }
-
-  async call<T>(
-    method: string,
-    path: string,
-    body?: unknown,
-    headers: Record<string, string> = {},
-  ): Promise<T> {
-    const response = await fetch(`${API}${path}`, {
-      method,
-      headers: { authorization: `Bearer ${this.#key}`, "content-type": "application/json", ...headers },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    });
-    const data = (await response.json()) as T & { ok?: boolean; code?: string; message?: string };
-    if (!response.ok || data.ok === false) {
-      throw new Error(
-        `boat ${method} ${path}: ${response.status} ${data.code ?? ""} ${data.message ?? ""}`.trim(),
-      );
-    }
-    return data;
-  }
-
-  async list(): Promise<Sandbox[]> {
-    const { sandboxes } = await this.call<{ sandboxes: Sandbox[] }>("GET", "/sandboxes");
-    return sandboxes;
-  }
-
-  async get(id: string): Promise<Sandbox> {
-    return (await this.call<{ sandbox: Sandbox }>("GET", `/sandboxes/${id}`)).sandbox;
-  }
-
-  async create(name: string, type: string): Promise<Sandbox> {
-    // No auto-stop: the worker is a service. noEnv: the machine carries only the credentials this script writes.
-    const body = { type, name, ttlSeconds: null, noEnv: true };
-    return (
-      await this.call<{ sandbox: Sandbox }>("POST", "/sandboxes", body, {
-        // One key per run of this script: a retried request within the run creates once.
-        "idempotency-key": `create-${name}-${RUN_ID}`,
-      })
-    ).sandbox;
-  }
-
-  /** boat's stop is asynchronous; a resume only works once the stop has finished. */
-  async waitUntilState(id: string, wanted: string): Promise<void> {
-    for (let attempt = 0; attempt < 100; attempt++) {
-      const { state } = await this.get(id);
-      if (state === wanted) return;
-      if (state === "error") throw new Error(`machine ${id} is in state error`);
-      await new Promise((resolve) => setTimeout(resolve, 3_000));
-    }
-    throw new Error(`machine ${id} never reached ${wanted}`);
-  }
-
-  async resume(id: string): Promise<void> {
-    await this.call("POST", `/sandboxes/${id}/resume`, { ttlSeconds: null });
-  }
-
-  async delete(id: string): Promise<void> {
-    await this.call("DELETE", `/sandboxes/${id}`, undefined, { "x-ascii-confirm-delete": id });
-  }
-
-  async waitUntilUp(id: string): Promise<void> {
-    for (let attempt = 0; attempt < 100; attempt++) {
-      const { state } = await this.get(id);
-      if (UP_STATES.includes(state)) return;
-      if (state === "error") throw new Error(`machine ${id} is in state error`);
-      await new Promise((resolve) => setTimeout(resolve, 3_000));
-    }
-    throw new Error(`machine ${id} did not come up`);
-  }
-
-  /** Runs a command and returns its stdout; throws on a non-zero exit. */
-  async run(id: string, command: string, timeoutSeconds = 120): Promise<string> {
-    const result = await this.call<{ exitCode: number; stdout?: string; stderr?: string }>(
-      "POST",
-      `/sandboxes/${id}/commands`,
-      { command, timeoutSeconds },
-    );
-    if (result.exitCode !== 0) {
-      throw new Error(
-        `"${command.slice(0, 80)}" exited ${result.exitCode}: ${(result.stderr || result.stdout || "").slice(-1_500)}`,
-      );
-    }
-    return (result.stdout ?? "").trim();
-  }
-
-  async writeFile(id: string, path: string, content: string): Promise<void> {
-    await this.call("PUT", `/sandboxes/${id}/files`, { path, content, encoding: "utf8" });
-  }
-
-  async upload(id: string, path: string, bytes: Uint8Array): Promise<void> {
-    const { url } = await this.call<{ url: string }>("POST", `/sandboxes/${id}/files/upload-url`, { path });
-    const response = await fetch(url, { method: "PUT", body: new Uint8Array(bytes) });
-    if (!response.ok) throw new Error(`upload of ${path} failed: HTTP ${response.status}`);
-  }
-}
-
-const shellQuote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
-
-async function machineFor(boat: Boat, worker: PoolWorker, existing: Sandbox[]): Promise<Sandbox> {
-  const profile = worker.profile;
-  const name = `${NAME_PREFIX}${profile}`;
-  const found = existing.find((sandbox) => sandbox.name === name);
-  if (!found) {
-    log(profile, `creating a ${worker.type} machine`);
-    const created = await boat.create(name, worker.type);
-    await boat.waitUntilUp(created.id);
-    return created;
-  }
-  if (found.type !== undefined && found.type !== worker.type) {
-    // Machines hold nothing the pool can't rebuild, so a new size is a new machine. Stopping and resuming
-    // would also work, but with boat's delete-on-stop retention a stopped machine is simply gone.
-    log(profile, `replacing ${found.id}: ${found.type} -> ${worker.type}`);
-    if (UP_STATES.includes(found.state)) {
-      await boat.run(found.id, "sudo systemctl stop kiln-worker || true").catch(() => undefined);
-    }
-    await boat.delete(found.id);
-    const created = await boat.create(name, worker.type);
-    await boat.waitUntilUp(created.id);
-    return created;
-  }
-  if (["archiving", "archived"].includes(found.state)) {
-    log(profile, `resuming ${found.id}`);
-    await boat.waitUntilState(found.id, "archived");
-    await boat.resume(found.id);
-  }
-  await boat.waitUntilUp(found.id);
-  return found;
-}
-
-function log(profile: string, message: string): void {
-  process.stdout.write(`${profile.padEnd(11)} ${message}\n`);
-}
-
-async function up(boat: Boat, env: Record<string, string | undefined>): Promise<void> {
-  const repoRoot = join(import.meta.dirname, "..");
-  const version = execFileSync("git", ["rev-parse", "--short", "HEAD"], {
-    cwd: repoRoot,
-    encoding: "utf8",
-  }).trim();
-  const dirty = execFileSync("git", ["status", "--porcelain", "--", ...DEPLOY_PATHS], {
-    cwd: repoRoot,
-    encoding: "utf8",
-  });
-  if (dirty.trim())
-    process.stdout.write(`warning: uncommitted changes are not deployed; deploying ${version}\n`);
-  const archive = execFileSync("git", ["archive", "--format=tar.gz", "HEAD", ...DEPLOY_PATHS], {
-    cwd: repoRoot,
-  });
-  const mcpSecrets = readEnvFile(join(repoRoot, ".env.mcp"));
-
-  const workers = POOL.filter((worker) => {
-    if (env[worker.secret]) return true;
-    log(worker.profile, `skipped: ${worker.secret} is not set`);
-    return false;
-  });
-  const existing = await boat.list();
-
-  await Promise.all(
-    workers.map(async (worker) => {
-      const p = worker.profile;
-      const envFile = renderEnvFile(workerEnv(worker, env, mcpSecrets, version));
-      const machine = await machineFor(boat, worker, existing);
-      log(p, `deploying ${version} to ${machine.id}`);
-      await boat.upload(machine.id, "kiln.tgz", archive);
-      await boat.run(
-        machine.id,
-        [
-          "set -e",
-          "rm -rf ~/kiln.next && mkdir -p ~/kiln.next ~/work ~/.kiln && chmod 700 ~/.kiln",
-          "tar xzf ~/kiln.tgz -C ~/kiln.next",
-          `cd ~/kiln.next && npx -y ${PNPM} install --prod --frozen-lockfile --ignore-scripts > /dev/null`,
-          `npm ls -g agent-browser@${AGENT_BROWSER_VERSION} > /dev/null 2>&1 || npm i -g agent-browser@${AGENT_BROWSER_VERSION} > /dev/null`,
-          "rm -rf ~/kiln && mv ~/kiln.next ~/kiln && rm ~/kiln.tgz",
-        ].join("\n"),
-        600,
-      );
-      await boat.writeFile(machine.id, ".kiln/worker.env", envFile);
-      const node = await boat.run(machine.id, "command -v node");
-      const path = await boat.run(machine.id, 'printf %s "$PATH"');
-      await boat.writeFile(machine.id, ".kiln/kiln-worker.service", renderUnit(node, path));
-      await boat.run(
-        machine.id,
-        [
-          "set -e",
-          "chmod 600 ~/.kiln/worker.env",
-          "sudo install -m 644 ~/.kiln/kiln-worker.service /etc/systemd/system/kiln-worker.service",
-          "sudo systemctl daemon-reload",
-          "sudo systemctl enable kiln-worker > /dev/null 2>&1",
-          "sudo systemctl restart kiln-worker",
-        ].join("\n"),
-      );
-      for (let attempt = 0; attempt < 20; attempt++) {
-        await new Promise((resolve) => setTimeout(resolve, 3_000));
-        const logs = await boat.run(machine.id, "sudo journalctl -u kiln-worker -n 30 --no-pager -o cat");
-        if (logs.includes('"worker.ready"')) {
-          log(p, `ready on ${machine.id}`);
-          return;
-        }
-        if (logs.includes('"config.invalid"') || logs.includes('"worker.crashed"')) {
-          throw new Error(`${p} failed to start:\n${logs.split("\n").slice(-8).join("\n")}`);
-        }
-      }
-      throw new Error(
-        `${p} did not report ready within a minute; see: node scripts/boat-workers.ts logs ${p}`,
-      );
-    }),
-  );
-}
-
 async function status(boat: Boat): Promise<void> {
-  const machines = (await boat.list()).filter((sandbox) => sandbox.name?.startsWith(NAME_PREFIX));
-  if (machines.length === 0) process.stdout.write("no kiln machines\n");
+  const machines = await boat.machines(MACHINE_LABEL);
+  if (machines.length === 0) process.stdout.write("no job machines: nothing is running\n");
   for (const machine of machines) {
-    const profile = machine.name?.slice(NAME_PREFIX.length) ?? machine.id;
-    if (!["ready", "idle", "running"].includes(machine.state)) {
-      log(profile, `${machine.id} ${machine.state}`);
-      continue;
-    }
-    const service = await boat
-      .run(machine.id, "systemctl is-active kiln-worker || true")
-      .catch((error: unknown) => String(error));
-    const last = await boat
-      .run(machine.id, "sudo journalctl -u kiln-worker -n 1 --no-pager -o cat || true")
-      .catch(() => "");
-    log(profile, `${machine.id} ${machine.state} service=${service} ${last.slice(0, 160)}`);
+    const minutes = Math.round((Date.now() - Date.parse(machine.createdAt)) / 60_000);
+    process.stdout.write(
+      `${machine.id}  ${(machine.labels?.harness ?? "?").padEnd(8)} ${machine.state.padEnd(8)} setup=${machine.setupStatus ?? "?"}  ${minutes}m  job ${machine.labels?.job ?? "?"}${machine.setupError ? `  ${machine.setupError}` : ""}\n`,
+    );
   }
 }
 
-async function logs(boat: Boat, profile: string | undefined): Promise<void> {
-  if (!profile) throw new Error("usage: node scripts/boat-workers.ts logs <profile>");
-  const machine = (await boat.list()).find((sandbox) => sandbox.name === `${NAME_PREFIX}${profile}`);
-  if (!machine) throw new Error(`no machine for ${profile}`);
-  process.stdout.write(
-    `${await boat.run(machine.id, "sudo journalctl -u kiln-worker -n 100 --no-pager -o cat")}\n`,
-  );
+async function logs(boat: Boat, id: string | undefined): Promise<void> {
+  if (!id) throw new Error("usage: node scripts/boat-workers.ts logs <job id | machine id>");
+  const machine = (await boat.machines(MACHINE_LABEL)).find((m) => m.id === id || m.labels?.job === id);
+  if (!machine) throw new Error(`no job machine for ${id}; it may have finished and been deleted`);
+  process.stdout.write(`${await boat.run(machine.id, `tail -n 100 ~/${WORKER_LOG_PATH}`)}\n`);
 }
 
 async function main(): Promise<void> {
-  const env: Record<string, string | undefined> = {
-    ...readEnvFile(join(import.meta.dirname, "..", ".env")),
-    ...process.env,
-  };
-  const key = env.BOAT_API_KEY;
-  if (!key) throw new Error("set BOAT_API_KEY in .env");
-  const boat = new Boat(key);
+  const env = { ...readEnvFile(join(import.meta.dirname, "..", ".env")), ...process.env };
+  if (!env.BOAT_API_KEY) throw new Error("set BOAT_API_KEY in .env");
+  const boat = new Boat(env.BOAT_API_KEY);
   const [command, argument] = process.argv.slice(2);
-  if (command === "up") await up(boat, env);
-  else if (command === "status") await status(boat);
+  if (command === "status") await status(boat);
   else if (command === "logs") await logs(boat, argument);
-  else throw new Error("usage: node scripts/boat-workers.ts up | status | logs <profile>");
+  else throw new Error("usage: node scripts/boat-workers.ts status | logs <job id | machine id>");
 }
 
 if (import.meta.main) {

@@ -10,14 +10,13 @@
   "scripts": {
     "dev": "eve dev",
     "build": "eve build",
-    "deploy": "eve deploy",
+    "deploy": "node scripts/deploy.ts",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "fmt": "biome check --write .",
     "test": "vitest run",
     "check": "pnpm lint && pnpm typecheck && pnpm test",
     "eval": "eve eval",
-    "workers:up": "node scripts/boat-workers.ts up",
     "workers:status": "node scripts/boat-workers.ts status",
     "workers:logs": "node scripts/boat-workers.ts logs"
   },

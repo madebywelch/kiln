@@ -1,7 +1,9 @@
-// A kiln worker: one coding-CLI subscription that claims jobs from Vercel
-// Board, one at a time, until it is told to stop. Run one per subscription.
+// A kiln worker: runs one job on its own boat machine. The agent launches the
+// machine with the job's ID and this worker's settings; the worker claims that
+// job, runs the coding CLI on it, settles it, and exits. The agent then deletes
+// the machine.
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -9,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { type Board, BoardError, board, type ClaimedTask } from "@vercel/board";
 import { z } from "zod";
 import { HARNESSES } from "../lib/config.ts";
-import { JOBS_CHANNEL } from "../lib/jobs.ts";
+import { WORKER_SETTINGS_PATH } from "../lib/machines.ts";
 import { type Exec, exec, run } from "./exec.ts";
 import { CLAIM_LOST, harnessEnv, type Logger, type OpenPullRequest, runJob, SHUTDOWN } from "./job.ts";
 import { installSkills, skillTargets } from "./skills.ts";
@@ -24,8 +26,8 @@ const Config = z
     GH_TOKEN: z.string().min(1, "set GH_TOKEN so the worker can clone, push, and open pull requests"),
     /** Optional read-only GitHub token for the coding CLI itself (CI logs, issues). It never gets GH_TOKEN. */
     HARNESS_GH_TOKEN: z.string().optional(),
-    /** Board actor IDs whose jobs this worker takes, comma-separated: the agent's deployment. Empty: only its own login's. */
-    KILN_BOARD_FROM: z.string().default(""),
+    /** The one job this worker runs. */
+    KILN_JOB_ID: z.string().min(1, "set KILN_JOB_ID to the job this worker runs"),
     WORK_DIR: z.string().default("/work"),
     JOB_TIMEOUT_MINUTES: z.coerce.number().int().positive().default(180),
     /** Commit identity. Not GIT_AUTHOR_*: git reads those itself, and an empty one breaks every commit. */
@@ -47,7 +49,6 @@ const Config = z
 type Config = z.infer<typeof Config>;
 
 const LEASE_SECONDS = 300; // Vercel's board caps a lease at 5 minutes
-const CLAIM_WAIT_SECONDS = 60;
 
 const log: Logger = (event, fields = {}) => {
   process.stdout.write(`${JSON.stringify({ at: new Date().toISOString(), event, ...fields })}\n`);
@@ -101,64 +102,65 @@ function keepAlive(claim: ClaimedTask, job: AbortController): () => void {
   return () => clearInterval(timer);
 }
 
+/** Claims the worker's job and runs it. Returns once the job is settled, handed back, or someone else's. */
 async function work(config: Config, team: Board, shutdown: AbortSignal, guidance: string): Promise<void> {
-  const from = config.KILN_BOARD_FROM.split(",")
-    .map((actor) => actor.trim())
-    .filter(Boolean);
-  const label = { kiln: "job", harness: config.WORKER_HARNESS };
-  log("worker.ready", { profile: config.BOARD_PROFILE, harness: config.WORKER_HARNESS, from });
-
-  while (!shutdown.aborted) {
-    let claim: ClaimedTask | null;
-    try {
-      claim = await team.tasks.claim(
-        {
-          channel: JOBS_CHANNEL,
-          label,
-          wait: CLAIM_WAIT_SECONDS,
-          lease: LEASE_SECONDS,
-          ...(from.length ? { from } : {}),
-        },
-        { signal: shutdown },
-      );
-    } catch (error) {
-      if (shutdown.aborted) break;
-      log("claim.failed", { error: String(error) });
-      await new Promise((resolve) => setTimeout(resolve, 15_000));
-      continue;
+  log("worker.ready", {
+    profile: config.BOARD_PROFILE,
+    harness: config.WORKER_HARNESS,
+    task: config.KILN_JOB_ID,
+  });
+  let claim: ClaimedTask;
+  try {
+    claim = await team.tasks.claim(config.KILN_JOB_ID, { lease: LEASE_SECONDS });
+  } catch (error) {
+    // Another machine has it, or it was canceled or settled before this one came up: nothing to do.
+    if (error instanceof BoardError) {
+      log("job.unavailable", { task: config.KILN_JOB_ID, code: error.code, error: error.message });
+      return;
     }
-    if (!claim) continue;
-
-    const job = new AbortController();
-    const onShutdown = () => job.abort(SHUTDOWN);
-    shutdown.addEventListener("abort", onShutdown, { once: true });
-    const stop = keepAlive(claim, job);
-    log("job.claimed", { task: claim.task.id });
-    try {
-      await runJob({
-        board: team,
-        claim,
-        profile: config.BOARD_PROFILE,
-        workDir: config.WORK_DIR,
-        exec,
-        cloneUrl: (github) => `https://github.com/${github}.git`,
-        openPullRequest: ghPullRequest(exec),
-        timeoutMs: config.JOB_TIMEOUT_MINUTES * 60_000,
-        harnessEnv: harnessEnv(process.env, config.HARNESS_GH_TOKEN),
-        guidance,
-        signal: job.signal,
-        log,
-        gitIdentity:
-          config.KILN_GIT_NAME && config.KILN_GIT_EMAIL
-            ? { name: config.KILN_GIT_NAME, email: config.KILN_GIT_EMAIL }
-            : undefined,
-      });
-    } finally {
-      stop();
-      shutdown.removeEventListener("abort", onShutdown);
-    }
+    throw error;
   }
-  log("worker.stopped", { profile: config.BOARD_PROFILE });
+
+  const job = new AbortController();
+  const onShutdown = () => job.abort(SHUTDOWN);
+  shutdown.addEventListener("abort", onShutdown, { once: true });
+  const stop = keepAlive(claim, job);
+  log("job.claimed", { task: claim.task.id });
+  try {
+    await runJob({
+      board: team,
+      claim,
+      profile: config.BOARD_PROFILE,
+      workDir: config.WORK_DIR,
+      exec,
+      cloneUrl: (github) => `https://github.com/${github}.git`,
+      openPullRequest: ghPullRequest(exec),
+      timeoutMs: config.JOB_TIMEOUT_MINUTES * 60_000,
+      harnessEnv: harnessEnv(process.env, config.HARNESS_GH_TOKEN),
+      guidance,
+      signal: job.signal,
+      log,
+      gitIdentity:
+        config.KILN_GIT_NAME && config.KILN_GIT_EMAIL
+          ? { name: config.KILN_GIT_NAME, email: config.KILN_GIT_EMAIL }
+          : undefined,
+    });
+  } finally {
+    stop();
+    shutdown.removeEventListener("abort", onShutdown);
+  }
+}
+
+/**
+ * Moves the settings file the agent wrote into the environment, overriding what is there, and deletes
+ * it, so the coding CLI doesn't find the worker's credentials lying in the home directory.
+ */
+export function loadSettingsFile(path: string, env: NodeJS.ProcessEnv): boolean {
+  if (!existsSync(path)) return false;
+  const settings = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+  for (const [key, value] of Object.entries(settings)) if (typeof value === "string") env[key] = value;
+  rmSync(path);
+  return true;
 }
 
 /** Reads the worker's settings. An empty value means unset, as an env file writes an unset optional one. */
@@ -167,6 +169,7 @@ export function parseConfig(env: NodeJS.ProcessEnv) {
 }
 
 async function main(): Promise<void> {
+  if (loadSettingsFile(join(homedir(), WORKER_SETTINGS_PATH), process.env)) log("settings.loaded");
   const parsed = parseConfig(process.env);
   if (!parsed.success) {
     for (const issue of parsed.error.issues)
@@ -205,6 +208,7 @@ async function main(): Promise<void> {
     });
   }
   await work(config, team, shutdown.signal, guidance);
+  log("worker.done", { task: config.KILN_JOB_ID });
 }
 
 if (import.meta.main) {

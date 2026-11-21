@@ -81,3 +81,13 @@ export const defaultModels: Readonly<Record<Harness, string | undefined>> = {
   codex: undefined,
   opencode: "openai/gpt-6-luna-fast",
 };
+
+/**
+ * How many jobs may run at once on each harness, each on its own boat machine. One per Claude
+ * subscription keeps a subscription's usage limits predictable. Codex needs a long-lived machine
+ * for its login, so per-job machines can't run it.
+ */
+export const machineLimits: Readonly<Record<Harness, number>> = { claude: 1, codex: 0, opencode: 3 };
+
+/** boat machine size for jobs. A Next.js dev build of a large app needs more than small's 4 GB. */
+export const machineType = "default" as const;

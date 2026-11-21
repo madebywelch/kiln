@@ -20,7 +20,6 @@ let remote: string;
 let boardUrl: string;
 let server: ChildProcess;
 let team: Board;
-let owner: string;
 
 const git = (args: string[], cwd?: string) =>
   execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], {
@@ -75,7 +74,7 @@ beforeAll(async () => {
   );
   process.env.BOARD_URL = boardUrl;
   team = board();
-  owner = await until("the board to answer", async () => (await team.me()).actor);
+  await until("the board to answer", async () => (await team.me()).actor);
 }, 60_000);
 
 afterAll(async () => {
@@ -84,7 +83,11 @@ afterAll(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-function startWorker(mode: string, record?: string): { child: ChildProcess; logs: () => string } {
+function startWorker(
+  jobId: string,
+  mode: string,
+  record?: string,
+): { child: ChildProcess; logs: () => string } {
   let output = "";
   const child = spawn(process.execPath, [join(repoRoot, "worker", "main.ts")], {
     cwd: repoRoot,
@@ -92,9 +95,9 @@ function startWorker(mode: string, record?: string): { child: ChildProcess; logs
       ...process.env,
       PATH: `${join(root, "bin")}:${process.env.PATH}`,
       BOARD_URL: boardUrl,
-      BOARD_PROFILE: "claude-1",
+      BOARD_PROFILE: "claude",
       WORKER_HARNESS: "claude",
-      KILN_BOARD_FROM: owner,
+      KILN_JOB_ID: jobId,
       GH_TOKEN: "test",
       CLAUDE_CODE_OAUTH_TOKEN: "test",
       WORK_DIR: join(root, "work"),
@@ -132,10 +135,10 @@ const spec: JobSpec = {
   origin: { channelId: "C0123", threadTs: "1700000000.000100" },
 };
 
-it("claims a job, opens a PR, settles it for robdog's report, and stops cleanly", async () => {
+it("claims its job, opens a PR, settles it for the agent's report, and exits", async () => {
   const job = await postJob(team, spec);
   const record = join(root, "record.json");
-  const worker = startWorker("change", record);
+  const worker = startWorker(job.id, "change", record);
 
   const settled = await until("the job to complete", async () => {
     const { message } = await team.thread(job.id, { limit: 1 });
@@ -157,14 +160,23 @@ it("claims a job, opens a PR, settles it for robdog's report, and stops cleanly"
   });
   expect(keys).toEqual([`job:${job.id}:completed:1`]);
 
-  worker.child.kill("SIGTERM");
   expect(await exited(worker.child)).toBe(0);
-  expect(worker.logs()).toContain('"event":"worker.stopped"');
+  expect(worker.logs()).toContain('"event":"worker.done"');
+}, 60_000);
+
+it("exits without touching a job another machine already holds", async () => {
+  const job = await postJob(team, { ...spec, title: "Taken" });
+  await team.as("other").tasks.claim(job.id, { lease: 300 });
+  const worker = startWorker(job.id, "change");
+  expect(await exited(worker.child)).toBe(0);
+  expect(worker.logs()).toContain('"event":"job.unavailable"');
+  const { message } = await team.thread(job.id, { limit: 1 });
+  expect(message.task?.state).toBe("claimed");
 }, 60_000);
 
 it("hands a running job back to the queue when stopped", async () => {
   const job = await postJob(team, { ...spec, title: "Slow job" });
-  const worker = startWorker("hang");
+  const worker = startWorker(job.id, "hang");
   await until("the job to be claimed", async () => {
     const { message } = await team.thread(job.id, { limit: 1 });
     return message.task?.state === "claimed" ? true : undefined;
