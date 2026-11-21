@@ -17,6 +17,8 @@ const failed = reportMessage(
     question: null,
     createdAt: "2026-11-20T00:00:00Z",
     origin: undefined,
+    subscription: null,
+    waitingUntil: null,
   },
   "",
 );

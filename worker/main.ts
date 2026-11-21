@@ -16,6 +16,8 @@ import { type Exec, exec, run } from "./exec.ts";
 import { CLAIM_LOST, harnessEnv, type Logger, type OpenPullRequest, runJob, SHUTDOWN } from "./job.ts";
 import { installSkills, skillTargets } from "./skills.ts";
 
+const Subscriptions = z.array(z.object({ id: z.string(), token: z.string(), record: z.string() }));
+
 const Config = z
   .object({
     BOARD_PROFILE: z
@@ -28,6 +30,23 @@ const Config = z
     HARNESS_GH_TOKEN: z.string().optional(),
     /** The one job this worker runs. */
     KILN_JOB_ID: z.string().min(1, "set KILN_JOB_ID to the job this worker runs"),
+    /** For a Claude job, the subscriptions it may use, in the order to try them: JSON from the agent. */
+    KILN_SUBSCRIPTIONS: z
+      .string()
+      .optional()
+      .transform((value, ctx) => {
+        if (!value) return [];
+        let json: unknown;
+        try {
+          json = JSON.parse(value);
+        } catch {
+          json = undefined;
+        }
+        const parsed = Subscriptions.safeParse(json);
+        if (parsed.success) return parsed.data;
+        ctx.addIssue({ code: "custom", message: "not a list of {id, token, record}" });
+        return z.NEVER;
+      }),
     WORK_DIR: z.string().default("/work"),
     JOB_TIMEOUT_MINUTES: z.coerce.number().int().positive().default(180),
     /** Commit identity. Not GIT_AUTHOR_*: git reads those itself, and an empty one breaks every commit. */
@@ -140,6 +159,7 @@ async function work(config: Config, team: Board, shutdown: AbortSignal, guidance
       guidance,
       signal: job.signal,
       log,
+      subscriptions: config.KILN_SUBSCRIPTIONS,
       gitIdentity:
         config.KILN_GIT_NAME && config.KILN_GIT_EMAIL
           ? { name: config.KILN_GIT_NAME, email: config.KILN_GIT_EMAIL }

@@ -42,7 +42,9 @@ Say the model in Slack, or don't:
 | "deepseek v4.1 flash" | `opencode deepseek/deepseek-v4.1-flash`: any AI Gateway model runs on OpenCode |
 | "use codex" | `codex` with its CLI's default model |
 
-What you ask for wins over the repo's defaults for that kind of job, which win over the global ones. A Claude name runs on Claude Code, an OpenAI name on Codex, and an AI Gateway ID (`provider/model`) or another vendor's model on OpenCode.
+What you ask for wins over the repo's defaults for that kind of job, which win over the global ones. Once a job starts, its harness and model are fixed.
+
+**Subscriptions.** Give kiln several Claude subscriptions and it routes between them. A job sticks to one subscription, keeping its prompt cache warm, until that subscription runs out of usage. Then the worker resumes the same session on the next subscription that can run the job's model. kiln learns each subscription's limits from what Claude Code reports, including 5-hour windows, weekly windows, and per-model weekly windows. When every subscription that can run the model is out, the job waits for the earliest reset, and the agent tells the thread so you can wait or restart it on another model. A Claude name runs on Claude Code, an OpenAI name on Codex, and an AI Gateway ID (`provider/model`) or another vendor's model on OpenCode.
 
 ## Configure it
 
@@ -50,7 +52,8 @@ What you ask for wins over the repo's defaults for that kind of job, which win o
 |---|---|---|
 | The agent's name | `agent.name` in [lib/config.ts](lib/config.ts), its persona, and its Slack app | redeploy; a new name starts a fresh memory |
 | Repos, defaults, and per-repo MCP servers | [lib/config.ts](lib/config.ts) | `pnpm run deploy` |
-| How many jobs run at once per harness, and machine size | `machineLimits` and `machineType` in [lib/config.ts](lib/config.ts) | `pnpm run deploy` |
+| How many jobs run at once per subscription or harness, and machine size | `jobsPerSubscription`, `machineLimits`, and `machineType` in [lib/config.ts](lib/config.ts) | `pnpm run deploy` |
+| Claude subscriptions | `WORKER_CLAUDE_CODE_OAUTH_TOKEN` and `WORKER_CLAUDE_CODE_OAUTH_TOKEN_<NAME>` on the Vercel project | `pnpm run deploy` |
 | The agent's persona and rules | [agent/instructions.md](agent/instructions.md) | `pnpm run deploy` |
 | The agent's skills | [agent/skills/](agent/skills) | `pnpm run deploy` |
 | The workers' house rules | [worker/instructions.md](worker/instructions.md) | `pnpm run deploy` |
@@ -124,7 +127,7 @@ pnpm eval         # the agent's real model on scripted conversations; spends tok
 - Board is experimental; its API and limits may change.
 - A job's result reaches Slack within a minute of settling.
 - A job waits about 20 seconds for its machine before it starts.
-- Claude jobs run one at a time, opencode jobs three at a time (`machineLimits`). Codex can't run on per-job machines.
-- A subscription's usage limit fails the job with the CLI's message.
+- Each Claude subscription runs two jobs at a time (`jobsPerSubscription`), opencode three in all (`machineLimits`). Codex can't run on per-job machines yet.
+- A job whose every subscription is out of usage for its model waits for the earliest reset; it never moves to another model on its own.
 - Reactions on the agent's messages don't reach it.
 - One repo per job.

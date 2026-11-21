@@ -1,20 +1,25 @@
 import { type Board, board } from "@vercel/board";
 import { local } from "@vercel/board/backend-local";
 import { beforeEach, describe, expect, it } from "vitest";
+import { ledger } from "../lib/accounts.ts";
 import { postJob } from "../lib/board-jobs.ts";
 import { Boat } from "../lib/boat.ts";
 import { type JobSpec, REPORT_LABEL, REPORT_PENDING } from "../lib/jobs.ts";
 import {
+  ACCOUNT_LABEL,
+  FAILED_STARTS_LABEL,
   harnessIssue,
   LAUNCHES_LABEL,
   type LaunchConfig,
   launchConfig,
   launchMachine,
-  MAX_LAUNCHES,
+  MAX_FAILED_STARTS,
   type MachineDeps,
+  NOTIFIED_LABEL,
   reconcileMachines,
   STARTUP_GRACE_MS,
   setupScript,
+  WAITING_LABEL,
   WORKER_SETTINGS_PATH,
   workerSettings,
 } from "../lib/machines.ts";
@@ -77,18 +82,23 @@ describe("launchConfig", () => {
       BOARD_TOKEN: "board",
       VERCEL_ORG_ID: "team_x",
       GH_TOKEN: "ghp_push",
-      CLAUDE_CODE_OAUTH_TOKEN: "claude-sub",
       AI_GATEWAY_API_KEY: "gateway",
     });
+    expect(config.subscriptions.claude).toEqual([{ id: "main", token: "claude-sub" }]);
     expect(config.jobTimeoutMinutes).toBe(180);
   });
 });
 
 describe("workerSettings", () => {
   it("gives each machine its own harness's credential and not another's", () => {
-    const claude = workerSettings("msg_1", "claude", config);
+    const subscriptions = [
+      { id: "2", token: "second", record: "r2" },
+      { id: "main", token: "claude-sub", record: "rm" },
+    ];
+    const claude = workerSettings("msg_1", "claude", config, subscriptions);
+    expect(JSON.parse(claude.KILN_SUBSCRIPTIONS ?? "[]")).toEqual(subscriptions);
     expect(claude).toMatchObject({
-      CLAUDE_CODE_OAUTH_TOKEN: "claude-sub",
+      CLAUDE_CODE_OAUTH_TOKEN: "second",
       KILN_JOB_ID: "msg_1",
       WORKER_HARNESS: "claude",
       BOARD_PROFILE: "claude",
@@ -104,6 +114,8 @@ describe("workerSettings", () => {
     const noGateway = launchConfig({ ...env, WORKER_AI_GATEWAY_API_KEY: "" }) as LaunchConfig;
     expect(harnessIssue("opencode", noGateway)).toMatch(/WORKER_AI_GATEWAY_API_KEY/);
     expect(harnessIssue("claude", config)).toBeNull();
+    const noClaude = launchConfig({ ...env, WORKER_CLAUDE_CODE_OAUTH_TOKEN: "" }) as LaunchConfig;
+    expect(harnessIssue("claude", noClaude)).toMatch(/WORKER_CLAUDE_CODE_OAUTH_TOKEN/);
   });
 });
 
@@ -119,7 +131,9 @@ describe("setupScript", () => {
 describe("launchMachine", () => {
   it("starts a machine in the repo's secrets-only environment, with the job's settings in a file", async () => {
     const job = await postJob(team, spec);
-    const { machine } = await launchMachine(deps, job.message);
+    const { machine } = await launchMachine(deps, job.message, [
+      { id: "main", token: "claude-sub", record: "r" },
+    ]);
     expect(machine?.id).toBe("bx_2");
 
     const [launched] = fake.machines;
@@ -142,7 +156,7 @@ describe("launchMachine", () => {
       passSandboxCredentials: false,
       passAgentsCredentials: false,
     });
-    expect((await message(job.id)).labels[LAUNCHES_LABEL]).toBe("1");
+    expect((await message(job.id)).labels).toMatchObject({ [LAUNCHES_LABEL]: "1", [ACCOUNT_LABEL]: "main" });
   });
 
   it("gives two launches of the same job one machine", async () => {
@@ -163,7 +177,7 @@ describe("launchMachine", () => {
 
   it("gives up after the machine failed to start too often", async () => {
     const job = await postJob(team, spec);
-    await team.label(job.id, { set: { [LAUNCHES_LABEL]: String(MAX_LAUNCHES) } });
+    await team.label(job.id, { set: { [FAILED_STARTS_LABEL]: String(MAX_FAILED_STARTS) } });
     const { failed } = await launchMachine(deps, await message(job.id));
     expect(failed).toMatch(/failed to start 3 times/);
     expect((await message(job.id)).task?.state).toBe("failed");
@@ -179,9 +193,10 @@ describe("launchMachine", () => {
 });
 
 describe("reconcileMachines", () => {
-  it("launches a machine for each ready job, within each harness's limit", async () => {
+  it("launches a machine for each ready job, two per subscription", async () => {
     const first = await postJob(team, spec);
     const second = await postJob(team, { ...spec, title: "More snow" });
+    const third = await postJob(team, { ...spec, title: "Even more snow" });
     const research = await postJob(team, {
       ...spec,
       kind: "investigate",
@@ -189,26 +204,86 @@ describe("reconcileMachines", () => {
       model: "openai/gpt-6-luna-fast",
     });
     const result = await reconcileMachines(deps);
-    expect(result.launched.sort()).toEqual([first.id, research.id].sort());
-    expect(result.waiting).toEqual([second.id]); // claude allows one at a time
-    expect(fake.machines).toHaveLength(2);
+    expect(result.launched.sort()).toEqual([first.id, second.id, research.id].sort());
+    expect(result.waiting).toEqual([third.id]); // main runs two at a time
+    expect(fake.machines).toHaveLength(3);
 
     // Nothing changes on the next pass while those run.
     const again = await reconcileMachines(deps);
     expect(again.launched).toEqual([]);
-    expect(fake.machines).toHaveLength(2);
+    expect(fake.machines).toHaveLength(3);
+  });
+
+  it("fills one subscription before starting the next", async () => {
+    const two = { ...deps, config: launchConfig({ ...env, WORKER_CLAUDE_CODE_OAUTH_TOKEN_2: "second" }) };
+    const jobs = [];
+    for (const title of ["a", "b", "c"]) jobs.push(await postJob(team, { ...spec, title }));
+    await reconcileMachines(two);
+    const accounts = await Promise.all(
+      jobs.map(async (job) => (await message(job.id)).labels[ACCOUNT_LABEL]),
+    );
+    expect(accounts).toEqual(["main", "main", "2"]);
+    const settings = JSON.parse(fake.machines[0]?.files[0]?.content ?? "{}");
+    expect(JSON.parse(settings.KILN_SUBSCRIPTIONS).map((s: { id: string }) => s.id)).toEqual(["main", "2"]);
+  });
+
+  it("waits for usage when every subscription is out for the job's model, tells the thread once, and starts at the reset", async () => {
+    const nowSeconds = Math.floor(now / 1000);
+    const states = await ledger(team, "claude", ["main"]);
+    await team.label(states.get("main")?.record ?? "", { set: { "bench.all": String(nowSeconds + 600) } });
+    const told: number[] = [];
+    const notifying = { ...deps, notify: async (_job: unknown, until: number) => told.push(until) };
+    const job = await postJob(team, spec);
+
+    const result = await reconcileMachines(notifying);
+    expect(result.exhausted).toEqual([{ job: job.id, until: nowSeconds + 600 }]);
+    await reconcileMachines(notifying);
+    expect(told).toEqual([nowSeconds + 600]);
+    expect((await message(job.id)).labels).toMatchObject({
+      [WAITING_LABEL]: String(nowSeconds + 600),
+      [NOTIFIED_LABEL]: String(nowSeconds + 600),
+    });
+    expect(fake.machines).toHaveLength(0);
+
+    now += 601_000;
+    const after = await reconcileMachines(notifying);
+    expect(after.launched).toEqual([job.id]);
+    expect((await message(job.id)).labels[WAITING_LABEL]).toBeUndefined();
+  });
+
+  it("keeps running other models on a subscription whose limit for one model ran out", async () => {
+    const states = await ledger(team, "claude", ["main"]);
+    await team.label(states.get("main")?.record ?? "", {
+      set: { "bench.opus": String(Math.floor(now / 1000) + 600) },
+    });
+    const opus = await postJob(team, spec);
+    const sonnet = await postJob(team, { ...spec, model: "sonnet", title: "Sonnet snow" });
+    const result = await reconcileMachines(deps);
+    expect(result.exhausted.map((e) => e.job)).toEqual([opus.id]);
+    expect(result.launched).toEqual([sonnet.id]);
+  });
+
+  it("deletes the machine of a job its worker handed back to wait for usage", async () => {
+    const job = await postJob(team, spec);
+    await reconcileMachines(deps);
+    const claim = await team.as("claude").tasks.claim(job.id, { lease: 60 });
+    await team.label(job.id, { set: { [WAITING_LABEL]: String(Math.floor(now / 1000) + 600) } });
+    await claim.release();
+    const result = await reconcileMachines(deps);
+    expect(result.deleted).toEqual([{ machine: "bx_2", job: job.id, why: "its job is waiting for usage" }]);
   });
 
   it("launches nothing for a job someone other than the agent posted", async () => {
     await postJob(team.as("intruder"), spec);
     const result = await reconcileMachines(deps);
-    expect(result).toEqual({ launched: [], deleted: [], failed: [], waiting: [] });
+    expect(result).toEqual({ launched: [], deleted: [], failed: [], waiting: [], exhausted: [] });
     expect(fake.machines).toHaveLength(0);
   });
 
   it("deletes the machine once its job is over, and starts the next job", async () => {
     const first = await postJob(team, spec);
-    const second = await postJob(team, { ...spec, title: "More snow" });
+    await postJob(team, { ...spec, title: "More snow" });
+    const second = await postJob(team, { ...spec, title: "Most snow" });
     await reconcileMachines(deps);
     const claim = await team.as("claude").tasks.claim(first.id, { lease: 60 });
     await claim.complete("done");
@@ -216,7 +291,7 @@ describe("reconcileMachines", () => {
     const result = await reconcileMachines(deps);
     expect(result.deleted).toEqual([{ machine: "bx_2", job: first.id, why: "its job is over" }]);
     expect(result.launched).toEqual([second.id]);
-    expect(fake.machines.map((m) => m.labels.job)).toEqual([second.id]);
+    expect(fake.machines.map((m) => m.labels.job)).not.toContain(first.id);
   });
 
   it("deletes the machine of a job waiting for an answer, and of a canceled job", async () => {
@@ -240,7 +315,7 @@ describe("reconcileMachines", () => {
     expect(fake.machines).toHaveLength(0);
   });
 
-  it("replaces a machine whose worker never claimed the job, counting the launch", async () => {
+  it("replaces a machine whose worker never claimed the job, counting the failed start", async () => {
     const job = await postJob(team, spec);
     await reconcileMachines(deps);
     now += STARTUP_GRACE_MS + 1;
@@ -250,7 +325,10 @@ describe("reconcileMachines", () => {
     ]);
     expect(result.launched).toEqual([job.id]);
     expect(fake.machines.map((m) => m.id)).toEqual(["bx_3"]);
-    expect((await message(job.id)).labels[LAUNCHES_LABEL]).toBe("2");
+    expect((await message(job.id)).labels).toMatchObject({
+      [LAUNCHES_LABEL]: "2",
+      [FAILED_STARTS_LABEL]: "1",
+    });
   });
 
   it("replaces a machine whose setup failed", async () => {

@@ -33,6 +33,13 @@ export const stubsFor = (runsOn: string): ToolStub[] => [
     outcome: { response: { asked: "LINEAR_API_KEY", repo: "player.games-app" } },
   },
   {
+    id: "list-subscriptions",
+    tool: "list_subscriptions",
+    outcome: {
+      response: { fillOrder: ["main"], subscriptions: [{ name: "main", windows: {}, outOfUsage: {} }] },
+    },
+  },
+  {
     id: "list-secrets",
     tool: "list_secrets",
     outcome: { response: { repo: "player.games-app", set: [], missingForMcp: [] } },

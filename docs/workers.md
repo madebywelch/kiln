@@ -21,7 +21,8 @@ The minute's check also does the following:
 
 | It finds | It does |
 |---|---|
-| A ready job with no machine | Launches one, within the harness's limit (`machineLimits` in `lib/config.ts`: claude 1, opencode 3). Jobs over the limit wait their turn, oldest first. |
+| A ready job with no machine | Launches one. A Claude job goes on the first subscription with room (`jobsPerSubscription`, 2) that can run its model; opencode jobs are capped at `machineLimits` (3). Jobs over a limit wait their turn, oldest first. |
+| A ready Claude job whose every subscription is out of usage for its model | Labels it `waiting` with the earliest reset, tells its thread once, and launches it when that subscription resets. |
 | A machine whose setup failed, or whose job is still unclaimed after 10 minutes | Deletes it and launches another. After 3 launches the job fails, with the reason in its thread. |
 | A job for a harness that can't run | Fails it at once, with the reason in its thread: Codex, or a harness without its credential. |
 
@@ -37,7 +38,7 @@ Everything lives in the agent's Vercel project; nothing runs on your computer.
    | `WORKER_BOARD_TOKEN` | A Vercel access token for your account, scoped to the team: <https://vercel.com/account/tokens>. Workers act on the board with it. |
    | `WORKER_VERCEL_ORG_ID` | The team that owns the agent's project: `orgId` in `.vercel/project.json`. |
    | `WORKER_GH_TOKEN` | A GitHub token with Contents and Pull requests read/write on the repos in `lib/config.ts`. |
-   | `WORKER_CLAUDE_CODE_OAUTH_TOKEN` | Claude Code's login for claude jobs, from `claude setup-token`. Only claude machines get it. |
+   | `WORKER_CLAUDE_CODE_OAUTH_TOKEN`, `WORKER_CLAUDE_CODE_OAUTH_TOKEN_<NAME>` | One per Claude subscription, from `claude setup-token` signed in to it. The bare one is subscription `main`; the others are named by their suffix (`_2` is `2`, `_VERIFIED` is `verified`). Only Claude machines get them; see Subscriptions below. |
    | `WORKER_AI_GATEWAY_API_KEY` | An AI Gateway key for opencode jobs, from the Vercel dashboard (AI Gateway, API keys). Only opencode machines get it. |
    | `WORKER_HARNESS_GH_TOKEN` | Optional. A read-only GitHub token for the coding CLI; see below. |
    | `WORKER_KILN_GIT_NAME`, `WORKER_KILN_GIT_EMAIL` | Optional commit identity. Default: `<agent name> (<harness>)`. |
@@ -51,6 +52,16 @@ pnpm workers:logs <job id>       # a running machine's worker log
 ```
 
 Machines are deleted with their jobs, so the logs of a finished job are gone; its thread on the board (`pnpm exec vb read <job id>`) keeps the report and the output's tail.
+
+## Subscriptions
+
+kiln routes Claude jobs across every subscription it has a token for, and never changes a job's model.
+
+- **Sticky.** A job runs on one subscription until that subscription runs out, so its prompt cache stays warm. Subscriptions fill in order: `main`, then by name. A later subscription's 5-hour window starts only when the ones before it are busy or out.
+- **Learning limits.** Claude Code reports usage on every run (`rate_limit_event`): each window's use, its reset, and whether it is exhausted. The worker writes this to the subscription's record on the board, a message in channel `kiln-accounts` labeled `usage.<window>`, `reset.<window>`, and `bench.<scope>`. Tokens never go there. A 5-hour or weekly window that runs out benches the subscription for every model. A model's own weekly window, such as Fable's on verified accounts, benches it for that model only.
+- **Mid-job.** When a run's subscription runs out, the worker stops it, benches the subscription, and runs `claude -p --resume <session>` on the next subscription that can run the job's model, on the same machine. The thread gets a line saying so. The first turn after a switch rebuilds the prompt cache, and Claude drops reasoning made under the other account. The job's work and conversation carry over.
+- **All out.** With no subscription left for the model, the worker pushes the work, labels the job `waiting` with the earliest reset, and hands it back. The agent tells the thread once. The job relaunches at the reset on the same model, unless someone cancels it and starts it again on another.
+- The worker gets every token that can run the job, because it switches without the agent. The coding CLI gets only the one in use, as `CLAUDE_CODE_OAUTH_TOKEN`.
 
 ## Repo secrets
 
@@ -98,4 +109,5 @@ Agent logs (`pnpm exec vercel logs`) carry the `machines.*` events. A machine's 
 | `machines.job_failed` | The job can't run on kiln as configured; the reason is in its thread. |
 | `config.invalid` in a machine's log | A worker setting is missing or malformed; the field is named. |
 | `job.unavailable` in a machine's log | Another machine had the job, or it was canceled before this one came up. Harmless. |
-| A job failed with a usage-limit message | That subscription is spent for now. Retry later, or on another harness. |
+| `job.subscription_switched` in a machine's log | Its subscription ran out; the job resumed on the next one. |
+| `job.waiting`, or a job labeled `waiting` | Every subscription that can run its model is out; it starts again at the reset. `list_subscriptions` in Slack shows usage. |

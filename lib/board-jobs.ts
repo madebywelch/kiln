@@ -27,6 +27,10 @@ export interface JobView {
   readonly question: string | null;
   readonly createdAt: string;
   readonly origin: SlackOrigin | undefined;
+  /** The subscription it runs on, for a Claude job. */
+  readonly subscription: string | null;
+  /** When it starts again, if it is waiting for a subscription's usage to reset. */
+  readonly waitingUntil: string | null;
 }
 
 export function viewJob(root: MessageView): JobView {
@@ -45,6 +49,8 @@ export function viewJob(root: MessageView): JobView {
     question: task?.blocked?.reason ?? null,
     createdAt: root.createdAt,
     origin: spec.origin,
+    subscription: root.labels.account ?? null,
+    waitingUntil: root.labels.waiting ? new Date(Number(root.labels.waiting) * 1000).toISOString() : null,
   };
 }
 
@@ -235,4 +241,18 @@ export function reportMessage(job: JobView, lastReport: string, files: readonly 
     lines.push("", "Worker's last message:", clipped);
   }
   return lines.join("\n");
+}
+
+/**
+ * Tells the agent a job is waiting because every subscription that can run its model is out of usage.
+ * The model is the person's choice, so the agent offers to wait or restart and never picks one itself.
+ */
+export function waitingMessage(job: JobView, until: number): string {
+  const when = new Date(until * 1000).toISOString();
+  return [
+    "[job update from the worker pool, not from a person]",
+    `Job #${job.id} "${job.title}" on ${job.repo} (${job.runsOn}) is waiting: every subscription that can run it is out of usage.`,
+    `The earliest one resets at ${when}; the job starts again on its own then, on the same model.`,
+    "Tell this thread in a sentence, with the reset time in their words. Offer the choice: wait, or cancel it and start it again on a model they name. Never choose another model yourself.",
+  ].join("\n");
 }

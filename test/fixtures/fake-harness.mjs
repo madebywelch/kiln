@@ -3,7 +3,7 @@
 // what it does; FAKE_RECORD names a file where it writes its argv and stdin.
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const args = process.argv.slice(2);
@@ -22,9 +22,31 @@ const seen = {
   GH_TOKEN: process.env.GH_TOKEN ?? null,
   BOARD_TOKEN: process.env.BOARD_TOKEN ?? null,
   OPENCODE_CONFIG_CONTENT: process.env.OPENCODE_CONFIG_CONTENT ?? null,
+  CLAUDE_CODE_OAUTH_TOKEN: process.env.CLAUDE_CODE_OAUTH_TOKEN ?? null,
+  KILN_SUBSCRIPTIONS: process.env.KILN_SUBSCRIPTIONS ?? null,
 };
 if (process.env.FAKE_RECORD) {
   writeFileSync(process.env.FAKE_RECORD, JSON.stringify({ args, stdin, cwd, head, env: seen }));
+  // One line per run, for jobs that run the harness more than once.
+  appendFileSync(
+    `${process.env.FAKE_RECORD}.runs`,
+    `${JSON.stringify({ args, token: seen.CLAUDE_CODE_OAUTH_TOKEN })}\n`,
+  );
+}
+
+const line = (event) => process.stdout.write(`${JSON.stringify(event)}\n`);
+const SESSION = "ses-claude-1";
+const RESETS_AT = 1_900_000_000;
+if (!isCodex && !isOpencode) line({ type: "system", subtype: "init", session_id: SESSION });
+
+/** Claude Code saying the subscription is out, then waiting, as it may instead of exiting. */
+function exhaust() {
+  line({
+    type: "rate_limit_event",
+    rate_limit_info: { status: "rejected", resetsAt: RESETS_AT, rateLimitType: "five_hour", utilization: 1 },
+    session_id: SESSION,
+  });
+  setTimeout(() => process.exit(0), 60_000);
 }
 
 function finish(report) {
@@ -41,7 +63,17 @@ function finish(report) {
     writeFileSync(args[args.indexOf("-o") + 1], `${report}\n`);
     process.stdout.write("codex: done\n");
   } else {
-    process.stdout.write(`${JSON.stringify({ type: "result", is_error: false, result: report })}\n`);
+    line({
+      type: "rate_limit_event",
+      rate_limit_info: {
+        status: "allowed",
+        resetsAt: RESETS_AT,
+        rateLimitType: "seven_day",
+        utilization: 0.42,
+      },
+      session_id: SESSION,
+    });
+    line({ type: "result", is_error: false, result: report, session_id: SESSION });
   }
   process.exit(0);
 }
@@ -75,6 +107,20 @@ switch (mode) {
       `${JSON.stringify({ type: "result", is_error: true, result: "usage limit reached" })}\n`,
     );
     process.exit(0);
+    break;
+  case "exhausted-first":
+    // The first subscription runs out mid-job; the next one resumes the session and finishes.
+    if (process.env.CLAUDE_CODE_OAUTH_TOKEN === "sub-a") {
+      writeFileSync(join(cwd, "theme.css"), "body { background: white; }\n");
+      exhaust();
+    } else {
+      writeFileSync(join(cwd, "theme.css"), "body { background: snow; }\n");
+      finish("Added snow to the landing page.");
+    }
+    break;
+  case "exhausted-all":
+    writeFileSync(join(cwd, "draft.css"), "/* half done */\n");
+    exhaust();
     break;
   case "fail":
     process.stderr.write("working...\nboom: rate limited\n");

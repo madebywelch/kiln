@@ -18,7 +18,9 @@ kiln runs an AI teammate in Slack (the agent) and the coding workers it hands re
 | job | A Vercel Board task in the `jobs` channel, labeled `kiln=job`. The brief is its text; repo, kind, harness, model, effort, and Slack origin are labels. |
 | kind | `change` (branch `kiln/<id>-<title>` and a draft PR) or `investigate` (a report, no changes). |
 | harness | The coding CLI a job runs on: `claude`, `codex`, or `opencode`. |
-| selection | A job's harness, model, and effort, resolved by `resolveSelection`: request, then repo default for the kind, then global default. |
+| selection | A job's harness, model, and effort, resolved by `resolveSelection`: request, then repo default for the kind, then global default. Fixed for the job's life. |
+| subscription | One Claude login a job runs on (`WORKER_CLAUDE_CODE_OAUTH_TOKEN[_<NAME>]`). A job sticks to one until it runs out, then moves to the next that can run its model, never to another model. |
+| ledger | Each subscription's record in Board channel `kiln-accounts`: usage, resets, and benches as labels (`lib/accounts.ts`). |
 | machine | A fresh boat machine per job, labeled `kiln=worker` and `job=<id>`. The agent launches it with the job and deletes it after the job settles. |
 | worker | The process on a machine: claims its job by ID, runs it, exits. |
 | repo secrets | A repo's environment variables, in boat environment `kiln-<repo>`, which passes secrets and nothing else. Set through a Slack form, never through the model. |

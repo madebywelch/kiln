@@ -4,6 +4,7 @@
 import { appendFile, mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Board, ClaimedTask } from "@vercel/board";
+import { benchedUntil, readLedger, usageLabels, type WorkerSubscription } from "../lib/accounts.ts";
 import { agent, type McpServer, mcpServers, type RepoConfig, repos } from "../lib/config.ts";
 import {
   decodeJob,
@@ -13,8 +14,15 @@ import {
   REPORT_LABEL,
   REPORT_PENDING,
 } from "../lib/jobs.ts";
-import { type Exec, run } from "./exec.ts";
-import { type HarnessBins, harnessInvocation, resolveMcp } from "./harness.ts";
+import { ACCOUNT_LABEL, WAITING_LABEL } from "../lib/machines.ts";
+import { type Exec, type ExecResult, run } from "./exec.ts";
+import {
+  ClaudeWatch,
+  type HarnessBins,
+  type HarnessInvocation,
+  harnessInvocation,
+  resolveMcp,
+} from "./harness.ts";
 
 export type Logger = (event: string, fields?: Record<string, unknown>) => void;
 
@@ -52,10 +60,18 @@ export interface JobDeps {
   readonly guidance?: string;
   /** MCP server definitions; repos pick from them. Default: lib/config.ts. */
   readonly mcpServers?: Readonly<Record<string, McpServer>>;
+  /** For a Claude job: the subscriptions it may use, in the order to try them. Empty: the CLI's own login. */
+  readonly subscriptions?: readonly WorkerSubscription[];
 }
+
+/** Why the worker stopped a run itself: its subscription ran out. */
+const EXHAUSTED = "subscription exhausted";
+const CONTINUE_PROMPT =
+  "Your last turn was cut off because its subscription ran out of usage. Continue the job from where you stopped. Everything above still applies.";
 
 /** Credentials only the worker holds: its push token and its board login. */
 const WORKER_SECRETS = [
+  "KILN_SUBSCRIPTIONS", // every subscription's token; the CLI gets only its own, as CLAUDE_CODE_OAUTH_TOKEN
   "GH_TOKEN",
   "GITHUB_TOKEN",
   "HARNESS_GH_TOKEN",
@@ -81,6 +97,8 @@ export type Outcome =
   | { readonly kind: "completed"; readonly result: string; readonly report: string }
   | { readonly kind: "failed"; readonly reason: string; readonly report: string }
   | { readonly kind: "blocked"; readonly question: string; readonly report: string }
+  /** Every subscription that can run the job's model is out of usage until `until` (unix seconds). */
+  | { readonly kind: "waiting"; readonly until: number; readonly report: string }
   | { readonly kind: "abandoned"; readonly why: string };
 
 const MAX_SETTLE_CHARS = 900; // the local board caps results and reasons at 1,000
@@ -157,7 +175,10 @@ export async function runJob(deps: JobDeps): Promise<Outcome> {
     }
   }
 
-  const artifacts = outcome.kind === "abandoned" ? [] : await collectArtifacts(join(jobDir, ARTIFACTS_DIR));
+  const artifacts =
+    outcome.kind === "abandoned" || outcome.kind === "waiting"
+      ? []
+      : await collectArtifacts(join(jobDir, ARTIFACTS_DIR));
   log("job.outcome", { task: id, outcome: outcome.kind, artifacts: artifacts.length });
   await settle(deps, outcome, artifacts);
   await rm(jobDir, { recursive: true, force: true });
@@ -209,24 +230,102 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string): Promise<
   const earlier = thread.replies.filter((reply) => !reply.text.startsWith(STARTED));
   const prompt = buildPrompt(spec, { id, github: repo.github, branch, resumed }, earlier, deps.guidance);
   const reportFile = join(deps.workDir, "logs", `${id}.report.md`);
-  const invocation = harnessInvocation(spec, prompt, jobDir, reportFile, mcp, deps.bins);
-
-  deps.log("job.harness", {
-    task: id,
-    harness: spec.harness,
-    model: spec.model ?? "default",
-    effort: spec.effort,
-  });
+  const subscriptions = spec.harness === "claude" ? (deps.subscriptions ?? []) : [];
+  let current = 0;
+  let session: string | undefined;
+  let invocation: HarnessInvocation;
+  let result: ExecResult;
   const started = Date.now();
-  const result = await exec(invocation.command, invocation.args, {
-    cwd: jobDir,
-    input: invocation.stdin,
-    env: { ...(deps.harnessEnv ?? harnessEnv(process.env)), ...invocation.env },
-    signal,
-    timeoutMs: deps.timeoutMs,
-    onOutput: (chunk) => void appendFile(logFile, chunk),
-  });
-  if (result.aborted) throw new Error(String(signal.reason));
+  for (;;) {
+    const subscription = subscriptions[current];
+    invocation = harnessInvocation(
+      spec,
+      session ? CONTINUE_PROMPT : prompt,
+      jobDir,
+      reportFile,
+      mcp,
+      deps.bins,
+      session,
+    );
+    deps.log("job.harness", {
+      task: id,
+      harness: spec.harness,
+      model: spec.model ?? "default",
+      effort: spec.effort,
+      ...(subscription ? { subscription: subscription.id } : {}),
+      ...(session ? { resumed: session } : {}),
+    });
+    const watch = spec.harness === "claude" ? new ClaudeWatch() : undefined;
+    // Stopping the run is the worker's own decision when the subscription runs out, and the job's on shutdown.
+    const runStop = new AbortController();
+    const onJobStop = () => runStop.abort(signal.reason);
+    signal.addEventListener("abort", onJobStop, { once: true });
+    try {
+      result = await exec(invocation.command, invocation.args, {
+        cwd: jobDir,
+        input: invocation.stdin,
+        env: {
+          ...(deps.harnessEnv ?? harnessEnv(process.env)),
+          ...invocation.env,
+          ...(subscription ? { CLAUDE_CODE_OAUTH_TOKEN: subscription.token } : {}),
+        },
+        signal: runStop.signal,
+        timeoutMs: Math.max(1_000, deps.timeoutMs - (Date.now() - started)),
+        onOutput: (chunk) => {
+          void appendFile(logFile, chunk);
+          watch?.feed(chunk);
+          // Claude Code may wait out a limit instead of exiting; there is another subscription to use.
+          if (watch?.exhausted && !runStop.signal.aborted) runStop.abort(EXHAUSTED);
+        },
+      });
+    } finally {
+      signal.removeEventListener("abort", onJobStop);
+    }
+    if (signal.aborted) throw new Error(String(signal.reason));
+    session = watch?.sessionId ?? session;
+    const exhausted = watch?.exhausted;
+    if (subscription && watch) await recordUsage(deps, subscription, watch, spec.model);
+    if (!exhausted || !subscription) break;
+
+    const states = await readLedger(board, "claude").catch(() => new Map());
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const next = subscriptions.findIndex((candidate, index) => {
+      if (index === current) return false;
+      const state = states.get(candidate.id);
+      return !state || benchedUntil(state, spec.model, nowSeconds) === null;
+    });
+    const resetsAt = exhausted.resetsAt ? new Date(exhausted.resetsAt * 1000).toISOString() : "later";
+    if (next >= 0 && session) {
+      const to = subscriptions[next] as WorkerSubscription;
+      await board.label(id, { set: { [ACCOUNT_LABEL]: to.id } });
+      await board.reply(
+        id,
+        `Subscription ${subscription.id} is out of usage (${exhausted.rateLimitType ?? "limit"}, resets ${resetsAt}); continuing on ${to.id}, same model.`,
+      );
+      deps.log("job.subscription_switched", {
+        task: id,
+        from: subscription.id,
+        to: to.id,
+        window: exhausted.rateLimitType ?? null,
+      });
+      current = next;
+      continue;
+    }
+    if (spec.kind === "change") await pushWork(git, spec.title, startSha, branch);
+    const resets = subscriptions
+      .map((candidate) => {
+        const state = states.get(candidate.id);
+        return state ? benchedUntil(state, spec.model, nowSeconds) : null;
+      })
+      .filter((until): until is number => until !== null);
+    const until = Math.min(...resets, exhausted.resetsAt ?? nowSeconds + 3600);
+    deps.log("job.waiting", { task: id, until });
+    return {
+      kind: "waiting",
+      until,
+      report: `Every subscription that can run ${describeSelection(spec)} is out of usage. The earliest resets at ${new Date(until * 1000).toISOString()}.${spec.kind === "change" ? ` Work so far is on ${branch}.` : ""}`,
+    };
+  }
   if (result.timedOut) {
     throw new JobFailure(`${spec.harness} timed out after ${minutes(deps.timeoutMs)}`, tail(result));
   }
@@ -255,6 +354,27 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string): Promise<
     body: `${report}\n\n---\nJob #${id} by ${agent.name} on kiln · ${describeSelection(spec)} · ${deps.profile}`,
   });
   return { kind: "completed", result: `Draft PR: ${prUrl}`, report };
+}
+
+/** Writes what Claude Code reported about the subscription to its record, for the agent's next choice. */
+async function recordUsage(
+  deps: JobDeps,
+  subscription: WorkerSubscription,
+  watch: ClaudeWatch,
+  model: string | undefined,
+): Promise<void> {
+  const latest = watch.latest;
+  const exhausted = watch.exhausted;
+  const labels = {
+    ...(latest ? usageLabels(latest, model) : {}),
+    ...(exhausted ? usageLabels(exhausted, model) : {}),
+  };
+  if (!subscription.record || Object.keys(labels).length === 0) return;
+  try {
+    await deps.board.label(subscription.record, { set: labels });
+  } catch (error) {
+    deps.log("job.usage_record_failed", { subscription: subscription.id, error: String(error) });
+  }
 }
 
 /**
@@ -369,6 +489,13 @@ async function settle(deps: JobDeps, outcome: Outcome, artifacts: readonly Artif
       if (outcome.why === SHUTDOWN) await claim.release();
       return;
     }
+    if (outcome.kind === "waiting") {
+      // Back to the queue: the agent starts it again, on the same model, when a subscription resets.
+      await board.reply(id, `**Waiting for usage.** ${outcome.report}`);
+      await board.label(id, { set: { [WAITING_LABEL]: String(outcome.until) }, unset: [ACCOUNT_LABEL] });
+      await claim.release();
+      return;
+    }
     const attachments = [];
     for (const artifact of artifacts) {
       try {
@@ -388,7 +515,7 @@ async function settle(deps: JobDeps, outcome: Outcome, artifacts: readonly Artif
   }
 }
 
-function replyText(outcome: Exclude<Outcome, { kind: "abandoned" }>): string {
+function replyText(outcome: Exclude<Outcome, { kind: "abandoned" | "waiting" }>): string {
   switch (outcome.kind) {
     case "completed": {
       // An investigation's result is its report's first line; don't say it twice.

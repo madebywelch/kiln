@@ -83,11 +83,13 @@ export const defaultModels: Readonly<Record<Harness, string | undefined>> = {
 };
 
 /**
- * How many jobs may run at once on each harness, each on its own boat machine. One per Claude
- * subscription keeps a subscription's usage limits predictable. Codex needs a long-lived machine
- * for its login, so per-job machines can't run it.
+ * Jobs that may run at once on one subscription. Each Claude subscription runs this many; a job that
+ * exhausts its subscription moves to another one with the same model, never to another model.
  */
-export const machineLimits: Readonly<Record<Harness, number>> = { claude: 1, codex: 0, opencode: 3 };
+export const jobsPerSubscription = 2;
+
+/** Jobs that may run at once on a harness billed per token, each on its own boat machine. */
+export const machineLimits: Readonly<Partial<Record<Harness, number>>> = { opencode: 3 };
 
 /** boat machine size for jobs. A Next.js dev build of a large app needs more than small's 4 GB. */
 export const machineType = "default" as const;

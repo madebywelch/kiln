@@ -2,6 +2,7 @@
 // and how its final message is read.
 
 import { readFile } from "node:fs/promises";
+import type { RateLimitInfo } from "../lib/accounts.ts";
 import type { Effort, Harness, McpServer, Selection } from "../lib/config.ts";
 
 export interface HarnessInvocation {
@@ -83,12 +84,23 @@ export function harnessInvocation(
   reportFile: string,
   mcp: Readonly<Record<string, ResolvedMcp>> = {},
   bins: HarnessBins = defaultBins,
+  /** A Claude session to continue, after the job moved to another subscription. */
+  resume?: string,
 ): HarnessInvocation {
   const servers = Object.entries(mcp);
   switch (selection.harness) {
     case "claude": {
-      // The machine is the sandbox: there is no person to answer a permission prompt.
-      const args = ["-p", "--output-format", "json", "--permission-mode", "bypassPermissions"];
+      // The machine is the sandbox: there is no person to answer a permission prompt. stream-json carries
+      // the session ID and Claude Code's usage reports as they happen, so the worker can act on a limit.
+      const args = [
+        "-p",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--permission-mode",
+        "bypassPermissions",
+      ];
+      if (resume) args.push("--resume", resume);
       args.push("--effort", selection.effort);
       if (selection.model) args.push("--model", selection.model);
       if (servers.length > 0) {
@@ -171,16 +183,15 @@ export function harnessInvocation(
   }
 }
 
-/** `claude -p --output-format json` prints one JSON object whose `result` is the final message. */
+/** `claude -p --output-format stream-json` prints one event per line; the last `result` holds the final message. */
 export function claudeReport(stdout: string): string {
-  const line = stdout.trim().split("\n").at(-1) ?? "";
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(line);
-  } catch {
-    throw new Error(`claude printed no JSON result: ${line.slice(0, 200)}`);
+  let parsed: { result?: unknown; is_error?: unknown } | undefined;
+  for (const line of stdout.split("\n")) {
+    const event = parseLine(line);
+    if (event?.type === "result" || (event && "is_error" in event)) parsed = event;
   }
-  const { result, is_error } = parsed as { result?: unknown; is_error?: unknown };
+  if (!parsed) throw new Error(`claude printed no JSON result: ${stdout.trim().slice(-200)}`);
+  const { result, is_error } = parsed;
   if (is_error === true) throw new Error(`claude reported an error: ${String(result).slice(0, 500)}`);
   if (typeof result !== "string") throw new Error("claude's JSON result has no text");
   return result.trim();
@@ -210,4 +221,65 @@ export function opencodeReport(stdout: string): string {
   const report = last ? (texts.get(last) ?? []).join("").trim() : "";
   if (!report) throw new Error("opencode printed no final message");
   return report;
+}
+
+function parseLine(line: string): Record<string, unknown> | undefined {
+  if (!line.trim().startsWith("{")) return undefined;
+  try {
+    return JSON.parse(line) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Claude Code's message when a subscription is out of usage, e.g. "You've hit your session limit · resets 3:45pm". */
+const USAGE_LIMIT_TEXT = /hit your .*limit/i;
+
+/**
+ * Follows Claude Code's stream-json output as it arrives: the session to resume, every usage report,
+ * and whether the subscription ran out. Chunks may split lines; it buffers them.
+ */
+export class ClaudeWatch {
+  sessionId: string | undefined;
+  /** Every usage report, in order. */
+  readonly limits: RateLimitInfo[] = [];
+  #buffer = "";
+  #limitText = false;
+
+  feed(chunk: string): void {
+    this.#buffer += chunk;
+    const lines = this.#buffer.split("\n");
+    this.#buffer = lines.pop() ?? "";
+    for (const line of lines) this.#line(line);
+  }
+
+  #line(line: string): void {
+    const event = parseLine(line);
+    if (!event) return;
+    if (typeof event.session_id === "string") this.sessionId = event.session_id;
+    if (
+      event.type === "rate_limit_event" &&
+      event.rate_limit_info &&
+      typeof event.rate_limit_info === "object"
+    ) {
+      this.limits.push(event.rate_limit_info as RateLimitInfo);
+    }
+    if (event.type === "result" && event.is_error === true && USAGE_LIMIT_TEXT.test(String(event.result))) {
+      this.#limitText = true;
+    }
+  }
+
+  /** The report that said the subscription is out, or one made up from the limit message. */
+  get exhausted(): RateLimitInfo | undefined {
+    const rejected = this.limits.findLast((info) => info.status === "rejected");
+    if (rejected) return rejected;
+    if (!this.#limitText) return undefined;
+    const last = this.limits.at(-1);
+    return { ...(last ?? {}), status: "rejected" };
+  }
+
+  /** The latest report, which carries the use of every window. */
+  get latest(): RateLimitInfo | undefined {
+    return this.limits.at(-1);
+  }
 }

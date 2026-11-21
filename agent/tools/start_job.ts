@@ -75,7 +75,7 @@ export default defineTool({
       brief: input.brief,
       origin: here?.threadTs ? { channelId: here.channelId, threadTs: here.threadTs } : undefined,
     });
-    await launchNow(job.message);
+    await launchNow();
     return {
       id: job.id,
       state: job.state,
