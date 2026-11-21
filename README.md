@@ -80,7 +80,8 @@ Third-party skills are vendored unmodified under their own licenses; [skills/ven
 | Agent setting | Default | |
 |---|---|---|
 | `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET` | required | The Slack app's credentials, or `SLACK_CONNECTOR` for a Vercel Connect connector. |
-| `KILN_MODEL` | `anthropic/claude-opus-5.5` | The agent's own model, an AI Gateway ID. No key is needed on Vercel. |
+| `KILN_MODEL` | `anthropic/claude-fable-5.2` | The agent's own model, an AI Gateway ID. No key is needed on Vercel. |
+| `KILN_REASONING` | `high` | Its reasoning level: `low`, `medium`, `high`, or `xhigh`. |
 | `KILN_MODEL_URL`, `KILN_MODEL_KEY` | unset | Any OpenAI-compatible endpoint instead of AI Gateway, such as OpenRouter. |
 | `BOAT_API_KEY` | required for jobs | Launches and deletes job machines and writes repo secrets. |
 | `WORKER_*` | required for jobs | The workers' credentials, passed to each machine without the prefix. See [docs/workers.md](docs/workers.md). |
