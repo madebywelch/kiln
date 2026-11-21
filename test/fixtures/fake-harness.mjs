@@ -3,7 +3,7 @@
 // what it does; FAKE_RECORD names a file where it writes its argv and stdin.
 
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const args = process.argv.slice(2);
@@ -56,6 +56,12 @@ switch (mode) {
     execFileSync("git", ["add", "-A"], { cwd });
     execFileSync("git", ["commit", "-q", "-m", "Add snow"], { cwd });
     finish("Committed the snow.");
+    break;
+  case "artifact":
+    writeFileSync(join(cwd, "theme.css"), "body { background: snow; }\n");
+    mkdirSync(join(cwd, ".robdog", "artifacts"), { recursive: true });
+    writeFileSync(join(cwd, ".robdog", "artifacts", "home.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    finish("Added snow. Screenshot attached.");
     break;
   case "nothing":
     finish("Nothing needed changing.");

@@ -134,3 +134,31 @@ export function slackHere(ctx: {
     teamId: metadata.teamId ?? undefined,
   };
 }
+
+/** Uploads a file into a channel or thread: ask Slack for an upload URL, send the bytes, then share the file. */
+export async function uploadToSlack(input: {
+  readonly channel: string;
+  readonly threadTs?: string | undefined;
+  readonly filename: string;
+  readonly bytes: Uint8Array<ArrayBuffer>;
+  readonly comment?: string | undefined;
+  readonly teamId?: string | undefined;
+}): Promise<void> {
+  const ticket = await slackApi(
+    "files.getUploadURLExternal",
+    { filename: input.filename, length: input.bytes.byteLength },
+    input.teamId,
+  );
+  const upload = await fetch(String(ticket.upload_url), { method: "POST", body: input.bytes });
+  if (!upload.ok) throw new Error(`Slack refused the file upload: HTTP ${upload.status}`);
+  await slackApi(
+    "files.completeUploadExternal",
+    {
+      files: JSON.stringify([{ id: ticket.file_id, title: input.filename }]),
+      channel_id: input.channel,
+      ...(input.threadTs ? { thread_ts: input.threadTs } : {}),
+      ...(input.comment ? { initial_comment: input.comment } : {}),
+    },
+    input.teamId,
+  );
+}

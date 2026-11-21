@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Board, board, type ClaimedTask } from "@vercel/board";
@@ -13,6 +13,7 @@ import { claudeReport, harnessInvocation, opencodeReport, resolveMcp, topEffort 
 import {
   buildPrompt,
   CLAIM_LOST,
+  collectArtifacts,
   firstLine,
   harnessEnv,
   type OpenPullRequest,
@@ -318,6 +319,37 @@ describe("result lines", () => {
     expect(firstLine("\n## Christmas prep status\n\nbody")).toBe("Christmas prep status");
     expect(firstLine("**Found three issues**\nmore")).toBe("Found three issues");
     expect(firstLine("")).toBe("Done.");
+  });
+});
+
+describe("artifacts", () => {
+  it("attaches the files the CLI left to share, and never commits them", async () => {
+    const job = await postJob(team, spec);
+    const { outcome } = await work({ mode: "artifact" });
+    expect(outcome).toMatchObject({
+      kind: "completed",
+      result: "Draft PR: https://github.com/acme/web/pull/7",
+    });
+    const files = remoteFiles(jobBranch(job.id, spec.title));
+    expect(files).toContain("theme.css");
+    expect(files.some((file) => file.startsWith(".robdog"))).toBe(false);
+    const { replies } = await team.thread(job.id, { limit: 10 });
+    const report = replies.at(-1);
+    expect(report?.attachments.map((attachment) => attachment.name)).toEqual(["home.png"]);
+    const bytes = new Uint8Array(await (await team.download(report!.attachments[0]!.id)).arrayBuffer());
+    expect([...bytes]).toEqual([0x89, 0x50, 0x4e, 0x47]);
+  });
+
+  it("takes at most ten files, and nothing from a missing folder", async () => {
+    const dir = join(root, "artifacts");
+    await mkdir(dir);
+    for (let index = 0; index < 12; index++)
+      await writeFile(join(dir, `f${String(index).padStart(2, "0")}.txt`), "x");
+    const artifacts = await collectArtifacts(dir);
+    expect(artifacts.map((artifact) => artifact.name)).toEqual(
+      Array.from({ length: 10 }, (_, index) => `f${String(index).padStart(2, "0")}.txt`),
+    );
+    expect(await collectArtifacts(join(root, "nowhere"))).toEqual([]);
   });
 });
 

@@ -1,6 +1,6 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
-import { slackApi, slackHere } from "../lib/slack.ts";
+import { slackHere, uploadToSlack } from "../lib/slack.ts";
 
 const MAX_BYTES = 50 * 1024 * 1024;
 
@@ -45,23 +45,14 @@ export default defineTool({
     if (bytes.byteLength === 0) throw new Error("the file is empty");
     if (bytes.byteLength > MAX_BYTES) throw new Error(`the file is over ${MAX_BYTES / 1024 / 1024} MB`);
 
-    const ticket = await slackApi(
-      "files.getUploadURLExternal",
-      { filename, length: bytes.byteLength },
-      here?.teamId,
-    );
-    const upload = await fetch(String(ticket.upload_url), { method: "POST", body: new Uint8Array(bytes) });
-    if (!upload.ok) throw new Error(`Slack refused the file upload: HTTP ${upload.status}`);
-    await slackApi(
-      "files.completeUploadExternal",
-      {
-        files: JSON.stringify([{ id: ticket.file_id, title: filename }]),
-        channel_id: channel,
-        ...(thread ? { thread_ts: thread } : {}),
-        ...(comment ? { initial_comment: comment } : {}),
-      },
-      here?.teamId,
-    );
+    await uploadToSlack({
+      channel,
+      threadTs: thread,
+      filename,
+      bytes: new Uint8Array(bytes),
+      comment,
+      teamId: here?.teamId,
+    });
     return { uploaded: filename, bytes: bytes.byteLength, channel, ...(thread ? { thread_ts: thread } : {}) };
   },
 });

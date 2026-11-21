@@ -1,7 +1,7 @@
 // One job, from a held claim to a settled task: clone, branch, run the
 // harness, push and open a draft PR (for changes), report, settle.
 
-import { appendFile, mkdir, readFile, rm } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Board, ClaimedTask } from "@vercel/board";
 import { type McpServer, mcpServers, type RepoConfig, repos } from "../lib/config.ts";
@@ -88,6 +88,37 @@ const MAX_REPLY_CHARS = 9_500; // a message holds 10,000
 const LOG_TAIL_CHARS = 3_000;
 const QUESTION = /^QUESTION:\s*/i;
 
+/** Where the CLI puts files to share, relative to the clone. */
+export const ARTIFACTS_DIR = ".robdog/artifacts";
+const MAX_ARTIFACTS = 10;
+const MAX_ARTIFACT_MB = 20;
+
+export interface Artifact {
+  readonly name: string;
+  readonly bytes: Uint8Array<ArrayBuffer>;
+}
+
+/** The files the CLI left to share: top-level files only, the first ten by name, none over the size cap. */
+export async function collectArtifacts(dir: string): Promise<Artifact[]> {
+  let names: string[];
+  try {
+    const entries = await readdir(dir, { withFileTypes: true });
+    names = entries
+      .filter((entry) => entry.isFile())
+      .map((entry) => entry.name)
+      .sort();
+  } catch {
+    return [];
+  }
+  const artifacts: Artifact[] = [];
+  for (const name of names.slice(0, MAX_ARTIFACTS)) {
+    const path = join(dir, name);
+    if ((await stat(path)).size > MAX_ARTIFACT_MB * 1024 * 1024) continue;
+    artifacts.push({ name, bytes: new Uint8Array(await readFile(path)) });
+  }
+  return artifacts;
+}
+
 function clip(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
@@ -126,8 +157,9 @@ export async function runJob(deps: JobDeps): Promise<Outcome> {
     }
   }
 
-  log("job.outcome", { task: id, outcome: outcome.kind });
-  await settle(deps, outcome);
+  const artifacts = outcome.kind === "abandoned" ? [] : await collectArtifacts(join(jobDir, ARTIFACTS_DIR));
+  log("job.outcome", { task: id, outcome: outcome.kind, artifacts: artifacts.length });
+  await settle(deps, outcome, artifacts);
   await rm(jobDir, { recursive: true, force: true });
   return outcome;
 }
@@ -163,6 +195,8 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string): Promise<
   };
   await git(["config", "user.name", identity.name]);
   await git(["config", "user.email", identity.email]);
+  // Files the CLI shares go in .robdog/artifacts; they are attached to the report, never committed.
+  await appendFile(join(jobDir, ".git", "info", "exclude"), `\n${ARTIFACTS_DIR.split("/")[0]}/\n`);
 
   // A job that blocked for an answer pushed its work; the next run continues from it.
   const resumed =
@@ -296,6 +330,7 @@ export function buildPrompt(
   }
   lines.push(
     "- Run the checks that cover what you touched, when the repo has them.",
+    `- To share files with the people who asked, such as screenshots, logs, or generated reports, save them in \`${ARTIFACTS_DIR}/\` at the repo root. They are attached to your report in Slack and never committed. Up to ${MAX_ARTIFACTS} files, ${MAX_ARTIFACT_MB} MB each.`,
     "- If you cannot go on without an answer from a person, stop and make your final message `QUESTION: ` followed by the question.",
     "- Otherwise your final message is the report people read in Slack: what you did or found, how you verified it, and what is left open. Under 400 words.",
   );
@@ -326,7 +361,7 @@ async function logTail(logFile: string): Promise<string> {
   }
 }
 
-async function settle(deps: JobDeps, outcome: Outcome): Promise<void> {
+async function settle(deps: JobDeps, outcome: Outcome, artifacts: readonly Artifact[] = []): Promise<void> {
   const { board, claim, log } = deps;
   const id = claim.task.id;
   try {
@@ -334,7 +369,15 @@ async function settle(deps: JobDeps, outcome: Outcome): Promise<void> {
       if (outcome.why === SHUTDOWN) await claim.release();
       return;
     }
-    await board.reply(id, replyText(outcome));
+    const attachments = [];
+    for (const artifact of artifacts) {
+      try {
+        attachments.push(await board.upload({ data: artifact.bytes, name: artifact.name }));
+      } catch (error) {
+        log("job.artifact_failed", { task: id, file: artifact.name, error: String(error) });
+      }
+    }
+    await board.reply(id, { text: replyText(outcome), ...(attachments.length ? { attachments } : {}) });
     await board.label(id, { set: { [REPORT_LABEL]: REPORT_PENDING } });
     if (outcome.kind === "completed") await claim.complete(clip(outcome.result, MAX_SETTLE_CHARS));
     else if (outcome.kind === "failed") await claim.fail(clip(outcome.reason, MAX_SETTLE_CHARS));

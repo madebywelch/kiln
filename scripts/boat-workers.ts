@@ -14,7 +14,6 @@ import type { Harness } from "../lib/config.ts";
 
 const API = "https://boat.dev/api/v1";
 const NAME_PREFIX = "robdog-";
-const MACHINE_TYPE = "small";
 const HOME = "/home/user";
 const DEPLOY_PATHS = ["package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "lib", "worker", "skills"];
 const AGENT_BROWSER_VERSION = "0.43.0";
@@ -25,6 +24,8 @@ export interface PoolWorker {
   readonly harness: Harness;
   /** The .env variable holding this worker's model credential. The worker is skipped while it is unset. */
   readonly secret: string;
+  /** boat machine size. A Next.js dev build of a large app needs more than small's 4 GB. */
+  readonly type: "small" | "default" | "large";
 }
 
 /**
@@ -32,10 +33,10 @@ export interface PoolWorker {
  * machine itself (`boat ssh robdog-codex-1 -- codex login --device-auth`).
  */
 export const POOL: readonly PoolWorker[] = [
-  { profile: "claude-1", harness: "claude", secret: "CLAUDE_TOKEN_1" },
-  { profile: "claude-2", harness: "claude", secret: "CLAUDE_TOKEN_2" },
-  { profile: "claude-3", harness: "claude", secret: "CLAUDE_TOKEN_3" },
-  { profile: "opencode-1", harness: "opencode", secret: "AI_GATEWAY_API_KEY" },
+  { profile: "claude-1", harness: "claude", secret: "CLAUDE_TOKEN_1", type: "default" },
+  { profile: "claude-2", harness: "claude", secret: "CLAUDE_TOKEN_2", type: "default" },
+  { profile: "claude-3", harness: "claude", secret: "CLAUDE_TOKEN_3", type: "default" },
+  { profile: "opencode-1", harness: "opencode", secret: "AI_GATEWAY_API_KEY", type: "default" },
 ];
 
 /** What every worker needs, from .env. */
@@ -123,6 +124,7 @@ interface Sandbox {
   readonly id: string;
   readonly name?: string;
   readonly state: string;
+  readonly type?: string;
 }
 
 class Boat {
@@ -160,9 +162,9 @@ class Boat {
     return (await this.call<{ sandbox: Sandbox }>("GET", `/sandboxes/${id}`)).sandbox;
   }
 
-  async create(name: string): Promise<Sandbox> {
+  async create(name: string, type: string): Promise<Sandbox> {
     // No auto-stop: the worker is a service. noEnv: the machine carries only the credentials this script writes.
-    const body = { type: MACHINE_TYPE, name, ttlSeconds: null, noEnv: true };
+    const body = { type, name, ttlSeconds: null, noEnv: true };
     return (
       await this.call<{ sandbox: Sandbox }>("POST", "/sandboxes", body, {
         "idempotency-key": `create-${name}`,
@@ -174,14 +176,19 @@ class Boat {
   async waitUntilState(id: string, wanted: string): Promise<void> {
     for (let attempt = 0; attempt < 100; attempt++) {
       const { state } = await this.get(id);
-      if (state === wanted || ["ready", "idle", "running"].includes(state)) return;
+      if (state === wanted) return;
+      if (state === "error") throw new Error(`machine ${id} is in state error`);
       await new Promise((resolve) => setTimeout(resolve, 3_000));
     }
     throw new Error(`machine ${id} never reached ${wanted}`);
   }
 
-  async resume(id: string): Promise<void> {
-    await this.call("POST", `/sandboxes/${id}/resume`, { ttlSeconds: null });
+  async resume(id: string, type?: string): Promise<void> {
+    await this.call("POST", `/sandboxes/${id}/resume`, { ttlSeconds: null, ...(type ? { type } : {}) });
+  }
+
+  async stop(id: string): Promise<void> {
+    await this.call("POST", `/sandboxes/${id}/stop`, {});
   }
 
   async waitUntilUp(id: string): Promise<void> {
@@ -222,19 +229,26 @@ class Boat {
 
 const shellQuote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
 
-async function machineFor(boat: Boat, profile: string, existing: Sandbox[]): Promise<Sandbox> {
+async function machineFor(boat: Boat, worker: PoolWorker, existing: Sandbox[]): Promise<Sandbox> {
+  const profile = worker.profile;
   const name = `${NAME_PREFIX}${profile}`;
   const found = existing.find((sandbox) => sandbox.name === name);
   if (!found) {
-    log(profile, "creating machine");
-    const created = await boat.create(name);
+    log(profile, `creating a ${worker.type} machine`);
+    const created = await boat.create(name, worker.type);
     await boat.waitUntilUp(created.id);
     return created;
   }
-  if (["archiving", "archived"].includes(found.state)) {
-    log(profile, `resuming ${found.id}`);
+  const resize = found.type !== undefined && found.type !== worker.type;
+  if (resize && !["archiving", "archived"].includes(found.state)) {
+    // boat changes a machine's size only while it is stopped. The worker hands back any job it holds.
+    log(profile, `stopping ${found.id} to resize it from ${found.type} to ${worker.type}`);
+    await boat.stop(found.id);
+  }
+  if (resize || ["archiving", "archived"].includes(found.state)) {
+    log(profile, `resuming ${found.id}${resize ? ` as ${worker.type}` : ""}`);
     await boat.waitUntilState(found.id, "archived");
-    await boat.resume(found.id);
+    await boat.resume(found.id, resize ? worker.type : undefined);
   }
   await boat.waitUntilUp(found.id);
   return found;
@@ -272,7 +286,7 @@ async function up(boat: Boat, env: Record<string, string | undefined>): Promise<
     workers.map(async (worker) => {
       const p = worker.profile;
       const envFile = renderEnvFile(workerEnv(worker, env, mcpSecrets, version));
-      const machine = await machineFor(boat, p, existing);
+      const machine = await machineFor(boat, worker, existing);
       log(p, `deploying ${version} to ${machine.id}`);
       await boat.upload(machine.id, "robdog.tgz", archive);
       await boat.run(

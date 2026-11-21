@@ -134,6 +134,25 @@ describe("sweepReports", () => {
     expect(sent).toHaveLength(1);
   });
 
+  it("posts the worker's files to the thread before robdog's message, and names them", async () => {
+    const job = await postJob(team, spec);
+    const claim = await claimAs(worker);
+    const shot = await worker.upload({ data: new Uint8Array([1, 2, 3]), name: "home.png" });
+    await worker.reply(job.id, { text: "**Done.** Screenshot attached.", attachments: [shot] });
+    await worker.label(job.id, { set: { [REPORT_LABEL]: REPORT_PENDING } });
+    await claim.complete("Screenshot attached.");
+
+    const events: string[] = [];
+    await sweepReports(
+      team,
+      async (_origin, message) => events.push(`message: ${message}`),
+      async (origin, file) =>
+        events.push(`file ${file.name} [${[...file.bytes].join(",")}] to ${origin.threadTs}`),
+    );
+    expect(events[0]).toBe(`file home.png [1,2,3] to ${spec.origin?.threadTs}`);
+    expect(events[1]).toContain("already posted in this thread: home.png");
+  });
+
   it("keeps the label when delivery fails, so the next sweep retries", async () => {
     const job = await postJob(team, spec);
     const claim = await claimAs(worker);

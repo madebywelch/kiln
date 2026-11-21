@@ -48,6 +48,12 @@ describe("workerEnv", () => {
   });
 });
 
+describe("POOL", () => {
+  it("gives every worker a machine big enough for a dev build", () => {
+    expect(POOL.every((worker) => worker.type !== "small")).toBe(true);
+  });
+});
+
 describe("rendering", () => {
   it("quotes environment values for systemd and refuses newlines", () => {
     expect(renderEnvFile({ A: 'say "hi"', B: "back\\slash" })).toBe('A="say \\"hi\\""\nB="back\\\\slash"\n');

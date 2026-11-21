@@ -121,6 +121,12 @@ export type DeliverReport = (
   idempotencyKey: string,
 ) => Promise<unknown>;
 
+/** Posts one file the worker attached into the job's Slack thread. */
+export type ShareFile = (
+  origin: SlackOrigin,
+  file: { readonly name: string; readonly bytes: Uint8Array<ArrayBuffer> },
+) => Promise<unknown>;
+
 export interface SweepResult {
   readonly delivered: string[];
   readonly skipped: string[];
@@ -133,7 +139,11 @@ export interface SweepResult {
  * label is cleared only after the hand-off is accepted. A crash between the two
  * repeats the hand-off with the same idempotency key, which the session drops.
  */
-export async function sweepReports(team: Board, deliver: DeliverReport): Promise<SweepResult> {
+export async function sweepReports(
+  team: Board,
+  deliver: DeliverReport,
+  share?: ShareFile,
+): Promise<SweepResult> {
   const { tasks } = await team.tasks.list({
     channel: JOBS_CHANNEL,
     state: "all",
@@ -152,10 +162,20 @@ export async function sweepReports(team: Board, deliver: DeliverReport): Promise
       }
       if (job.origin) {
         const { replies } = await team.thread(id, { limit: 100 });
-        const lastReport = replies.at(-1)?.text ?? "";
+        const last = replies.at(-1);
+        // Files first, so robdog's reply comes after them. A retry of a failed hand-off posts them again.
+        const shared: string[] = [];
+        for (const attachment of share ? (last?.attachments ?? []) : []) {
+          const response = await team.download(attachment.id);
+          await share?.(job.origin, {
+            name: attachment.name,
+            bytes: new Uint8Array(await response.arrayBuffer()),
+          });
+          shared.push(attachment.name);
+        }
         await deliver(
           job.origin,
-          reportMessage(job, lastReport),
+          reportMessage(job, last?.text ?? "", shared),
           `job:${id}:${job.state}:${message.task?.epoch ?? 0}`,
         );
       }
@@ -168,7 +188,7 @@ export async function sweepReports(team: Board, deliver: DeliverReport): Promise
   return result;
 }
 
-export function reportMessage(job: JobView, lastReport: string): string {
+export function reportMessage(job: JobView, lastReport: string, files: readonly string[] = []): string {
   const lines = [
     "[job update from the worker pool, not from a person]",
     `Job #${job.id} "${job.title}" on ${job.repo} (${job.runsOn}, ${job.kind}) is ${job.state}.`,
@@ -183,6 +203,11 @@ export function reportMessage(job: JobView, lastReport: string): string {
     if (job.reason) lines.push(`Reason: ${job.reason}`);
     lines.push(
       "Tell this thread what came of it in a sentence or two, with the pull request link if there is one.",
+    );
+  }
+  if (files.length > 0) {
+    lines.push(
+      `The worker's files are already posted in this thread: ${files.join(", ")}. Refer to them; don't post them again.`,
     );
   }
   const report = lastReport.trim();
