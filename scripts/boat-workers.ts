@@ -15,6 +15,8 @@ import type { Harness } from "../lib/config.ts";
 const API = "https://boat.dev/api/v1";
 const NAME_PREFIX = "robdog-";
 const HOME = "/home/user";
+const UP_STATES = ["ready", "idle", "running"];
+const RUN_ID = Date.now().toString(36);
 const DEPLOY_PATHS = ["package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "lib", "worker", "skills"];
 const AGENT_BROWSER_VERSION = "0.43.0";
 const PNPM = "pnpm@12.11.2";
@@ -167,7 +169,8 @@ class Boat {
     const body = { type, name, ttlSeconds: null, noEnv: true };
     return (
       await this.call<{ sandbox: Sandbox }>("POST", "/sandboxes", body, {
-        "idempotency-key": `create-${name}`,
+        // One key per run of this script: a retried request within the run creates once.
+        "idempotency-key": `create-${name}-${RUN_ID}`,
       })
     ).sandbox;
   }
@@ -183,18 +186,18 @@ class Boat {
     throw new Error(`machine ${id} never reached ${wanted}`);
   }
 
-  async resume(id: string, type?: string): Promise<void> {
-    await this.call("POST", `/sandboxes/${id}/resume`, { ttlSeconds: null, ...(type ? { type } : {}) });
+  async resume(id: string): Promise<void> {
+    await this.call("POST", `/sandboxes/${id}/resume`, { ttlSeconds: null });
   }
 
-  async stop(id: string): Promise<void> {
-    await this.call("POST", `/sandboxes/${id}/stop`, {});
+  async delete(id: string): Promise<void> {
+    await this.call("DELETE", `/sandboxes/${id}`, undefined, { "x-ascii-confirm-delete": id });
   }
 
   async waitUntilUp(id: string): Promise<void> {
     for (let attempt = 0; attempt < 100; attempt++) {
       const { state } = await this.get(id);
-      if (["ready", "idle", "running"].includes(state)) return;
+      if (UP_STATES.includes(state)) return;
       if (state === "error") throw new Error(`machine ${id} is in state error`);
       await new Promise((resolve) => setTimeout(resolve, 3_000));
     }
@@ -239,16 +242,22 @@ async function machineFor(boat: Boat, worker: PoolWorker, existing: Sandbox[]): 
     await boat.waitUntilUp(created.id);
     return created;
   }
-  const resize = found.type !== undefined && found.type !== worker.type;
-  if (resize && !["archiving", "archived"].includes(found.state)) {
-    // boat changes a machine's size only while it is stopped. The worker hands back any job it holds.
-    log(profile, `stopping ${found.id} to resize it from ${found.type} to ${worker.type}`);
-    await boat.stop(found.id);
+  if (found.type !== undefined && found.type !== worker.type) {
+    // Machines hold nothing the pool can't rebuild, so a new size is a new machine. Stopping and resuming
+    // would also work, but with boat's delete-on-stop retention a stopped machine is simply gone.
+    log(profile, `replacing ${found.id}: ${found.type} -> ${worker.type}`);
+    if (UP_STATES.includes(found.state)) {
+      await boat.run(found.id, "sudo systemctl stop robdog-worker || true").catch(() => undefined);
+    }
+    await boat.delete(found.id);
+    const created = await boat.create(name, worker.type);
+    await boat.waitUntilUp(created.id);
+    return created;
   }
-  if (resize || ["archiving", "archived"].includes(found.state)) {
-    log(profile, `resuming ${found.id}${resize ? ` as ${worker.type}` : ""}`);
+  if (["archiving", "archived"].includes(found.state)) {
+    log(profile, `resuming ${found.id}`);
     await boat.waitUntilState(found.id, "archived");
-    await boat.resume(found.id, resize ? worker.type : undefined);
+    await boat.resume(found.id);
   }
   await boat.waitUntilUp(found.id);
   return found;
