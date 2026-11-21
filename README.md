@@ -23,7 +23,7 @@ Slack ──> agent (eve on Vercel) ──start_job──> Vercel Board "jobs" <
 | Hears | DMs, @mentions, its name, replies in threads it is part of, and other messages in channels it is in. A cheap decision model screens out what clearly needs nothing from it; the agent judges the rest and usually stays quiet. |
 | Sees | The channel's recent messages when a new thread starts, each thread's earlier replies, sender names, attached files, and its memory. |
 | Says | Thread replies, top-level posts, new threads, Block Kit, emoji reactions, and files. Approvals and questions appear as buttons. |
-| Does | Starts, lists, inspects, cancels, and answers jobs. Asks for repo secrets with a button and a private form. Searches the web. Runs code in its own sandbox. Explains how kiln works, from its `kiln` skill. |
+| Does | Starts, lists, inspects, cancels, and answers jobs. Schedules tasks for later or on a repeat ("every weekday at 9am Eastern"), which come back to it in the thread. Asks for repo secrets with a button and a private form. Searches the web. Runs code in its own sandbox. Explains how kiln works, from its `kiln` skill. |
 
 ## Jobs and models
 
