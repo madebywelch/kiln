@@ -28,23 +28,41 @@ export interface RouteInput {
   readonly clearlyNotForAgent: (history: readonly SessionHistoryMessage[]) => Promise<boolean>;
 }
 
-export async function route(input: RouteInput): Promise<SlackMentionResult | null> {
+/** Why a message did or did not reach the agent, for the log. */
+export type RouteReason =
+  | "bot"
+  | "edit"
+  | "addressed"
+  | "followed-thread"
+  | "unfollowed-thread"
+  | "screened-out"
+  | "ambient";
+
+export interface RouteDecision {
+  readonly result: SlackMentionResult | null;
+  readonly reason: RouteReason;
+}
+
+export async function route(input: RouteInput): Promise<RouteDecision> {
   const { auth } = input;
   // Other bots, including the agent's own workers' notices, never start turns: two bots answering each other loop.
-  if (input.fromBot) return null;
+  if (input.fromBot) return { result: null, reason: "bot" };
   // Edits only reach threads that already have a session.
-  if (input.edit) return { auth, status: "deferred", guidance: THREAD_GUIDANCE };
+  if (input.edit) return { result: { auth, status: "deferred", guidance: THREAD_GUIDANCE }, reason: "edit" };
 
   if (input.mentioned || input.directMessage) {
     // A top-level message starts a new thread, so bring the conversation that led to it.
-    return input.topLevel ? { auth, history: await input.history() } : { auth };
+    const result = input.topLevel ? { auth, history: await input.history() } : { auth };
+    return { result, reason: "addressed" };
   }
 
   if (!input.topLevel) {
-    return (await input.isSubscribed()) ? { auth, status: "deferred", guidance: THREAD_GUIDANCE } : null;
+    return (await input.isSubscribed())
+      ? { result: { auth, status: "deferred", guidance: THREAD_GUIDANCE }, reason: "followed-thread" }
+      : { result: null, reason: "unfollowed-thread" };
   }
 
   const history = await input.history();
-  if (await input.clearlyNotForAgent(history)) return null;
-  return { auth, status: "deferred", guidance: CHANNEL_GUIDANCE, history };
+  if (await input.clearlyNotForAgent(history)) return { result: null, reason: "screened-out" };
+  return { result: { auth, status: "deferred", guidance: CHANNEL_GUIDANCE, history }, reason: "ambient" };
 }

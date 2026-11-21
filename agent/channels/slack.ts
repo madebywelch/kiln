@@ -10,10 +10,11 @@ export default slackChannel({
   // Each thread's earlier replies, attributed. Within a session only what's new since the agent last spoke.
   threadContext: { since: "last-agent-reply" },
   messageContext: { users: {} },
-  onMessage: (ctx, message) =>
-    route({
+  async onMessage(ctx, message) {
+    const topLevel = message.threadTs === message.ts;
+    const { result, reason } = await route({
       fromBot: message.author?.isBot !== false,
-      topLevel: message.threadTs === message.ts,
+      topLevel,
       directMessage: message.raw.channel_type === "im",
       mentioned: ctx.isBotMentioned(),
       edit: ctx.edit !== undefined,
@@ -21,5 +22,18 @@ export default slackChannel({
       isSubscribed: () => ctx.isSubscribed(),
       history: () => channelHistory(ctx.slack, message),
       clearlyNotForAgent: (history) => clearlyNotForAgent(message, history),
-    }),
+    });
+    // One line per message, never its text: why it did or did not reach the agent.
+    console.info(
+      JSON.stringify({
+        event: "slack.route",
+        channel: message.channelId,
+        ts: message.ts,
+        thread: topLevel ? null : message.threadTs,
+        reason,
+        delivered: result !== null,
+      }),
+    );
+    return result;
+  },
 });

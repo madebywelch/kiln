@@ -15,7 +15,8 @@ export default defineTool({
       .optional()
       .describe("Post into this thread. Omit to post top-level in the channel."),
     blocks: z
-      .array(z.record(z.string(), z.unknown()))
+      // An open object, not a record: OpenAI models reject the propertyNames a record becomes.
+      .array(z.looseObject({ type: z.string() }))
       .max(50)
       .optional()
       .describe("Slack Block Kit blocks, for tables, sections, fields, buttons, and other rich layouts."),
