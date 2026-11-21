@@ -7,6 +7,7 @@ import {
   defaultSelection,
   EFFORTS,
   type Effort,
+  enabledHarnesses,
   HARNESSES,
   type Harness,
   type JobKind,
@@ -86,6 +87,7 @@ export function resolveSelection(
   kind: JobKind,
   request: SelectionRequest,
   registry: Readonly<Record<string, RepoConfig>>,
+  enabled: readonly Harness[] = enabledHarnesses,
 ): Selection {
   const repo = registry[repoKey];
   if (!repo) {
@@ -123,6 +125,11 @@ export function resolveSelection(
       model: request.harness ? defaultModelFor(harness) : (repoDefaults.model ?? defaultModelFor(harness)),
       effort,
     };
+  }
+  if (!enabled.includes(selection.harness)) {
+    throw new JobError(
+      `${selection.harness}${selection.model ? ` (${selection.model})` : ""} is off: workers run on subscriptions only (${enabled.join(", ")}); enabledHarnesses in lib/config.ts`,
+    );
   }
   checkModel(selection.harness, selection.model);
   return selection;

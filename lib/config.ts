@@ -32,10 +32,17 @@ export interface Selection {
   readonly effort: Effort;
 }
 
-/** The default when neither the request nor the repo says otherwise: a cheap model reads, a heavy one writes. */
+/**
+ * The harnesses workers may run. Subscriptions only: Claude Code on the deployment's Claude subscriptions.
+ * opencode runs AI Gateway models billed per token, so it is off; add it here to allow that. Codex joins
+ * once its login can be lent to per-job machines.
+ */
+export const enabledHarnesses: readonly Harness[] = ["claude"];
+
+/** The default when neither the request nor the repo says otherwise: a fast model researches, a heavy one implements. */
 export const defaultSelection: Readonly<Record<JobKind, Selection>> = {
   change: { harness: "claude", model: "opus", effort: "high" },
-  investigate: { harness: "opencode", model: "openai/gpt-6-luna-fast", effort: "medium" },
+  investigate: { harness: "claude", model: "sonnet", effort: "high" },
 };
 
 /** The model a harness runs when only the harness is named. Undefined: the CLI's configured default. */

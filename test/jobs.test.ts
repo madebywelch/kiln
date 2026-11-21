@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { HARNESSES } from "../lib/config.ts";
 import type { RepoConfig } from "../lib/deployment.ts";
 import {
   decodeJob,
@@ -21,7 +22,7 @@ const registry: Record<string, RepoConfig> = {
   docs: {
     github: "acme/docs",
     description: "docs",
-    defaults: { change: { effort: "low" }, investigate: { model: "deepseek/deepseek-v4.1-flash" } },
+    defaults: { change: { effort: "low" }, investigate: { model: "haiku" } },
   },
 };
 
@@ -38,89 +39,110 @@ const spec: JobSpec = {
 
 describe("resolveSelection", () => {
   it("rejects a repo outside the registry", () => {
-    expect(() => resolveSelection("nope", "change", {}, registry)).toThrow(/unknown repo "nope"/);
+    expect(() => resolveSelection("nope", "change", {}, registry, HARNESSES)).toThrow(/unknown repo "nope"/);
   });
 
   it("rejects a model that belongs to another harness", () => {
-    expect(() => resolveSelection("web", "change", { harness: "codex", model: "opus" }, registry)).toThrow(
-      /runs on claude, not codex/,
-    );
+    expect(() =>
+      resolveSelection("web", "change", { harness: "codex", model: "opus" }, registry, HARNESSES),
+    ).toThrow(/runs on claude, not codex/);
   });
 
   it("rejects a model whose harness it cannot tell", () => {
-    expect(() => resolveSelection("web", "change", { model: "mystery-1" }, registry)).toThrow(JobError);
+    expect(() => resolveSelection("web", "change", { model: "mystery-1" }, registry, HARNESSES)).toThrow(
+      JobError,
+    );
   });
 
   it("rejects a bare model name for opencode, which needs an AI Gateway ID", () => {
-    expect(() => resolveSelection("web", "change", { model: "deepseek-v4.1-flash" }, registry)).toThrow(
-      /AI Gateway model ID/,
-    );
-    expect(() => resolveSelection("web", "change", { harness: "opencode", model: "luna" }, registry)).toThrow(
-      /AI Gateway model ID/,
-    );
+    expect(() =>
+      resolveSelection("web", "change", { model: "deepseek-v4.1-flash" }, registry, HARNESSES),
+    ).toThrow(/AI Gateway model ID/);
+    expect(() =>
+      resolveSelection("web", "change", { harness: "opencode", model: "luna" }, registry, HARNESSES),
+    ).toThrow(/AI Gateway model ID/);
   });
 
   it("accepts an unknown model when the harness is named", () => {
-    expect(resolveSelection("web", "change", { harness: "codex", model: "mystery-1" }, registry)).toEqual({
+    expect(
+      resolveSelection("web", "change", { harness: "codex", model: "mystery-1" }, registry, HARNESSES),
+    ).toEqual({
       harness: "codex",
       model: "mystery-1",
       effort: "high",
     });
   });
 
-  it("reads with a cheap model and writes with a heavy one by default", () => {
-    expect(resolveSelection("web", "change", {}, registry)).toEqual({
+  it("runs workers on subscriptions only by default, refusing per-token models with the reason", () => {
+    expect(() =>
+      resolveSelection("web", "investigate", { model: "deepseek/deepseek-v4.1-flash" }, registry),
+    ).toThrow(
+      /opencode \(deepseek\/deepseek-v4.1-flash\) is off: workers run on subscriptions only \(claude\)/,
+    );
+    expect(() => resolveSelection("web", "change", { harness: "codex" }, registry)).toThrow(/codex is off/);
+    expect(() => resolveSelection("api", "change", {}, registry)).toThrow(/codex .* is off/);
+    expect(resolveSelection("web", "investigate", {}, registry)).toEqual({
+      harness: "claude",
+      model: "sonnet",
+      effort: "high",
+    });
+  });
+
+  it("researches with a fast model and implements with a heavy one by default", () => {
+    expect(resolveSelection("web", "change", {}, registry, HARNESSES)).toEqual({
       harness: "claude",
       model: "opus",
       effort: "high",
     });
-    expect(resolveSelection("web", "investigate", {}, registry)).toEqual({
-      harness: "opencode",
-      model: "openai/gpt-6-luna-fast",
-      effort: "medium",
+    expect(resolveSelection("web", "investigate", {}, registry, HARNESSES)).toEqual({
+      harness: "claude",
+      model: "sonnet",
+      effort: "high",
     });
   });
 
   it("uses the repo's defaults for that kind of job over the global ones", () => {
-    expect(resolveSelection("api", "change", {}, registry)).toEqual({
+    expect(resolveSelection("api", "change", {}, registry, HARNESSES)).toEqual({
       harness: "codex",
       model: "gpt-5.5",
       effort: "xhigh",
     });
-    expect(resolveSelection("api", "investigate", {}, registry)).toEqual({
-      harness: "opencode",
-      model: "openai/gpt-6-luna-fast",
-      effort: "medium",
+    expect(resolveSelection("api", "investigate", {}, registry, HARNESSES)).toEqual({
+      harness: "claude",
+      model: "sonnet",
+      effort: "high",
     });
-    expect(resolveSelection("docs", "change", {}, registry)).toEqual({
+    expect(resolveSelection("docs", "change", {}, registry, HARNESSES)).toEqual({
       harness: "claude",
       model: "opus",
       effort: "low",
     });
-    expect(resolveSelection("docs", "investigate", {}, registry)).toEqual({
-      harness: "opencode",
-      model: "deepseek/deepseek-v4.1-flash",
-      effort: "medium",
+    expect(resolveSelection("docs", "investigate", {}, registry, HARNESSES)).toEqual({
+      harness: "claude",
+      model: "haiku",
+      effort: "high",
     });
   });
 
   it("puts what was asked for over every default, field by field", () => {
-    expect(resolveSelection("api", "change", { effort: "low" }, registry)).toEqual({
+    expect(resolveSelection("api", "change", { effort: "low" }, registry, HARNESSES)).toEqual({
       harness: "codex",
       model: "gpt-5.5",
       effort: "low",
     });
-    expect(resolveSelection("api", "change", { model: "sonnet" }, registry)).toEqual({
+    expect(resolveSelection("api", "change", { model: "sonnet" }, registry, HARNESSES)).toEqual({
       harness: "claude",
       model: "sonnet",
       effort: "xhigh",
     });
-    expect(resolveSelection("web", "investigate", { model: "opus" }, registry)).toEqual({
+    expect(resolveSelection("web", "investigate", { model: "opus" }, registry, HARNESSES)).toEqual({
       harness: "claude",
       model: "opus",
-      effort: "medium",
+      effort: "high",
     });
-    expect(resolveSelection("web", "change", { model: "deepseek/deepseek-v4.1-flash" }, registry)).toEqual({
+    expect(
+      resolveSelection("web", "change", { model: "deepseek/deepseek-v4.1-flash" }, registry, HARNESSES),
+    ).toEqual({
       harness: "opencode",
       model: "deepseek/deepseek-v4.1-flash",
       effort: "high",
@@ -128,17 +150,21 @@ describe("resolveSelection", () => {
   });
 
   it("gives a named harness its own default model", () => {
-    expect(resolveSelection("web", "change", { harness: "codex" }, registry)).toEqual({
+    expect(resolveSelection("web", "change", { harness: "codex" }, registry, HARNESSES)).toEqual({
       harness: "codex",
       model: undefined,
       effort: "high",
     });
-    expect(resolveSelection("web", "change", { harness: "opencode" }, registry).model).toBe(
+    expect(resolveSelection("web", "change", { harness: "opencode" }, registry, HARNESSES).model).toBe(
       "openai/gpt-6-luna-fast",
     );
-    expect(resolveSelection("web", "investigate", { harness: "claude" }, registry).model).toBe("opus");
-    expect(resolveSelection("api", "change", { harness: "claude" }, registry).model).toBe("opus");
-    expect(resolveSelection("api", "change", { harness: "codex" }, registry).model).toBe("gpt-5.5");
+    expect(resolveSelection("web", "investigate", { harness: "claude" }, registry, HARNESSES).model).toBe(
+      "sonnet",
+    );
+    expect(resolveSelection("api", "change", { harness: "claude" }, registry, HARNESSES).model).toBe("opus");
+    expect(resolveSelection("api", "change", { harness: "codex" }, registry, HARNESSES).model).toBe(
+      "gpt-5.5",
+    );
   });
 });
 

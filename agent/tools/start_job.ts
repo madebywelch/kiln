@@ -1,7 +1,7 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { postJob } from "../../lib/board-jobs.ts";
-import { defaultSelection, EFFORTS, HARNESSES } from "../../lib/config.ts";
+import { defaultSelection, EFFORTS, enabledHarnesses, type Harness } from "../../lib/config.ts";
 import { configuredRepos } from "../../lib/deployment.ts";
 import {
   describeSelection,
@@ -29,6 +29,12 @@ export default defineDynamic(() => {
       .join(", ");
     return `- ${key}: ${repo.description}${own ? ` (defaults: ${own})` : ""}`;
   });
+  const HARNESS_LINES: Readonly<Record<Harness, string>> = {
+    claude: "claude (Claude Code: opus, sonnet, haiku)",
+    codex: "codex (Codex: gpt-5.5 and other OpenAI names)",
+    opencode: "opencode (any AI Gateway model ID, billed per token)",
+  };
+  const harnessLines = enabledHarnesses.map((harness) => HARNESS_LINES[harness]);
 
   return defineTool({
     description: [
@@ -39,13 +45,12 @@ export default defineDynamic(() => {
       "Repos:",
       ...repoLines,
       "",
-      "Harnesses: claude (Claude Code on a subscription: opus, sonnet, haiku), codex (Codex on a subscription:",
-      "gpt-5.5 and other OpenAI names), opencode (any AI Gateway model ID, billed per token: openai/gpt-6-luna-fast,",
-      "deepseek/deepseek-v4.1-flash, google/gemini-3-flash, anthropic/claude-opus-5.5).",
+      `Workers run on subscriptions only: ${harnessLines.join("; ")}.`,
+      "Models billed per token (AI Gateway IDs such as deepseek/..., or another vendor's models) are off. If someone",
+      "asks for one, say so and offer a subscription model instead; don't start the job on something else.",
       "",
-      `Unless the user names them: change jobs run on ${describeSelection(defaultSelection.change)}, investigate jobs on ${describeSelection(defaultSelection.investigate)}.`,
-      'Pass harness, model, or effort only when the user asked for them ("use codex", "opus at max effort", "deepseek for this").',
-      "For opencode, pass the full AI Gateway ID. Naming only a harness gets its default model.",
+      `Unless the user names them: change jobs run on ${describeSelection(defaultSelection.change)} (the implementer), investigate jobs on ${describeSelection(defaultSelection.investigate)} (the researcher, fast).`,
+      'Pass harness, model, or effort only when the user asked for them ("opus at max effort", "sonnet, low effort").',
     ].join("\n"),
     inputSchema: z.object({
       repo: z.enum(repoKeys),
@@ -61,7 +66,7 @@ export default defineDynamic(() => {
           "Everything the worker needs, because it sees nothing else: the goal, the context and decisions from this " +
             "conversation, constraints, and how to tell it is done.",
         ),
-      harness: z.enum(HARNESSES).optional(),
+      harness: z.enum(enabledHarnesses as [Harness, ...Harness[]]).optional(),
       model: z
         .string()
         .optional()

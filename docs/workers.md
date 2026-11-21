@@ -2,6 +2,8 @@
 
 Every job runs on its own fresh boat.dev machine. The agent launches the machine when it starts the job and deletes it once the job settles. With no jobs, there are no machines and nothing to pay for.
 
+Workers run on subscriptions only. `enabledHarnesses` in `lib/config.ts` lists the coding CLIs they may use; out of the box that is Claude Code. OpenCode, for AI Gateway models billed per token, is built in and switched off, and Codex waits on lending its login to per-job machines. A job for a harness that is off fails at once with that reason.
+
 ## A machine's life
 
 1. **Launch.** `start_job` posts the job and asks boat for a machine right away. A schedule on the agent checks every minute as well, so a launch that failed is retried. The machine starts in the repo's own boat environment, so it gets that repo's secrets and no other's.
@@ -21,7 +23,7 @@ The minute's check also does the following:
 
 | It finds | It does |
 |---|---|
-| A ready job with no machine | Launches one. A Claude job goes on the first subscription with room (`jobsPerSubscription`, 2) that can run its model; opencode jobs are capped at `machineLimits` (3). Jobs over a limit wait their turn, oldest first. |
+| A ready job with no machine | Launches one. A Claude job goes on the first subscription with room (`jobsPerSubscription`, 2) that can run its model. If OpenCode is enabled, its jobs are capped at `machineLimits` (3). Jobs over a limit wait their turn, oldest first. |
 | A ready Claude job whose every subscription is out of usage for its model | Labels it `waiting` with the earliest reset, tells its thread once, and launches it when that subscription resets. |
 | A machine whose setup failed, or whose job is still unclaimed after 10 minutes | Deletes it and launches another. After 3 launches the job fails, with the reason in its thread. |
 | A job for a harness that can't run | Fails it at once, with the reason in its thread: Codex, or a harness without its credential. |
@@ -39,7 +41,7 @@ Everything lives in the agent's Vercel project; nothing runs on your computer.
    | `WORKER_VERCEL_ORG_ID` | The team that owns the agent's project: `orgId` in `.vercel/project.json`. |
    | `WORKER_GH_TOKEN` | A GitHub token with Contents and Pull requests read/write on the repos in `kiln.config.yaml`. |
    | `WORKER_CLAUDE_CODE_OAUTH_TOKEN`, `WORKER_CLAUDE_CODE_OAUTH_TOKEN_<NAME>` | One per Claude subscription, from `claude setup-token` signed in to it. The bare one is subscription `main`; the others are named by their suffix (`_2` is `2`, `_VERIFIED` is `verified`). Only Claude machines get them; see Subscriptions below. |
-   | `WORKER_AI_GATEWAY_API_KEY` | An AI Gateway key for opencode jobs, from the Vercel dashboard (AI Gateway, API keys). Only opencode machines get it. |
+   | `WORKER_AI_GATEWAY_API_KEY` | Only if you enable OpenCode (`enabledHarnesses`): an AI Gateway key for its per-token models. Only OpenCode machines get it. |
    | `WORKER_HARNESS_GH_TOKEN` | Optional. A read-only GitHub token for the coding CLI; see below. |
    | `WORKER_KILN_GIT_NAME`, `WORKER_KILN_GIT_EMAIL` | Optional commit identity. Default: `<agent name> (<harness>)`. |
    | `WORKER_JOB_TIMEOUT_MINUTES` | Optional. Default 180. |

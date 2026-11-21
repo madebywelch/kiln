@@ -13,7 +13,7 @@ repos:
     description: The marketing site and the customer dashboard.  # how the agent recognizes it in conversation
     baseBranch: main                     # optional, default main
     defaults:                            # optional, per kind of job; see lib/config.ts for the global ones
-      investigate: { harness: opencode, model: openai/gpt-6-luna-fast, effort: medium }
+      investigate: { model: haiku, effort: medium }
     mcp: [linear]                        # servers below that this repo's jobs get
 
 mcpServers:

@@ -38,6 +38,8 @@ const env = {
   }),
 };
 const config = launchConfig(env) as LaunchConfig;
+// Most tests here cover the per-token harness too, so they run with every harness on.
+const everyHarness: LaunchConfig = { ...config, enabled: ["claude", "codex", "opencode"] };
 
 const spec: JobSpec = {
   repo: "web",
@@ -65,7 +67,7 @@ beforeEach(() => {
   deps = {
     team,
     boat: new Boat("key", fake.fetch),
-    config,
+    config: everyHarness,
     log: (event, fields) => events.push({ event, ...(fields ? { fields } : {}) }),
     now: () => now,
   };
@@ -151,8 +153,12 @@ describe("workerSettings", () => {
   });
 
   it("says why a harness can't run", () => {
-    expect(harnessIssue("codex", config)).toMatch(/can't run codex jobs/);
-    const noGateway = launchConfig({ ...env, WORKER_AI_GATEWAY_API_KEY: "" }) as LaunchConfig;
+    expect(harnessIssue("opencode", config)).toMatch(/opencode is off: workers run on subscriptions only/);
+    expect(harnessIssue("codex", everyHarness)).toMatch(/can't run codex jobs/);
+    const noGateway = {
+      ...(launchConfig({ ...env, WORKER_AI_GATEWAY_API_KEY: "" }) as LaunchConfig),
+      enabled: everyHarness.enabled,
+    };
     expect(harnessIssue("opencode", noGateway)).toMatch(/WORKER_AI_GATEWAY_API_KEY/);
     expect(harnessIssue("claude", config)).toBeNull();
     const noClaude = launchConfig({ ...env, WORKER_CLAUDE_CODE_OAUTH_TOKEN: "" }) as LaunchConfig;

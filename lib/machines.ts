@@ -15,7 +15,7 @@ import {
   type WorkerSubscription,
 } from "./accounts.ts";
 import { type Boat, BoatError, type Machine } from "./boat.ts";
-import { type Harness, jobsPerSubscription, machineLimits, machineType } from "./config.ts";
+import { enabledHarnesses, type Harness, jobsPerSubscription, machineLimits, machineType } from "./config.ts";
 import { type Deployment, parseDeployment, serversFor } from "./deployment.ts";
 import { decodeJob, JOBS_CHANNEL, type JobSpec, REPORT_LABEL, REPORT_PENDING } from "./jobs.ts";
 import { environmentName, repoEnvironment } from "./secrets.ts";
@@ -52,6 +52,8 @@ export interface LaunchConfig {
   readonly code: string;
   /** The worker's credentials and settings, by the names the worker reads. */
   readonly settings: Readonly<Record<string, string>>;
+  /** The harnesses workers may run (enabledHarnesses in lib/config.ts). */
+  readonly enabled: readonly Harness[];
   /** This deployment's repos and their MCP servers, from KILN_CONFIG. */
   readonly deployment: Deployment;
   /** The subscriptions each subscription harness's jobs run on, in fill order. */
@@ -79,6 +81,7 @@ export function launchConfig(env: Readonly<Record<string, string | undefined>>):
   const deployment = parseDeployment(env.KILN_CONFIG);
   if (typeof deployment === "string") return deployment;
   return {
+    enabled: enabledHarnesses,
     deployment,
     code: env.KILN_WORKER_CODE as string,
     settings,
@@ -89,6 +92,9 @@ export function launchConfig(env: Readonly<Record<string, string | undefined>>):
 
 /** Why a harness can't run jobs at all, or null when it can. */
 export function harnessIssue(harness: Harness, config: LaunchConfig): string | null {
+  if (!config.enabled.includes(harness)) {
+    return `${harness} is off: workers run on subscriptions only (enabledHarnesses in lib/config.ts)`;
+  }
   if (harness === "claude") {
     return (config.subscriptions.claude ?? []).length > 0
       ? null

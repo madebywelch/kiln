@@ -4,7 +4,7 @@ kiln runs an AI teammate in Slack. It thinks through ideas with you, keeps one m
 
 ```
 Slack ──> agent (eve on Vercel) ──start_job──> Vercel Board "jobs" <──claim── one boat.dev machine per job
-  ^          memory, skills, tools  │                 │                         Claude Code or OpenCode
+  ^          memory, skills, tools  │                 │                         Claude Code on your subscriptions
   │                                 └─ launches ──────┼───────────────────────> the repo's secrets only
   │                                                   │ report=pending          clone, run, push, draft PR, files
   └───── job-reports schedule, every minute ──────────┘                         deleted when the job settles
@@ -37,15 +37,16 @@ Say the model in Slack, or don't:
 
 | You say | The job runs on |
 |---|---|
-| "add a christmas theme to the website" | a change: the repo's default, else `claude opus/high` |
-| "figure out why CI is slow" | an investigation: the repo's default, else `opencode openai/gpt-6-luna-fast/medium` |
-| "sonnet, low effort" | `claude sonnet/low` |
-| "deepseek v4.1 flash" | `opencode deepseek/deepseek-v4.1-flash`: any AI Gateway model runs on OpenCode |
-| "use codex" | `codex` with its CLI's default model |
+| "add a christmas theme to the website" | a change: the repo's default, else `claude opus/high`, the implementer |
+| "figure out why CI is slow" | an investigation: the repo's default, else `claude sonnet/high`, the researcher |
+| "opus at max effort" | `claude opus/max` |
+| "deepseek v4.1 flash" | nothing: the agent says per-token models are off and offers a subscription model |
+
+**Workers run on subscriptions only.** `enabledHarnesses` in [lib/config.ts](lib/config.ts) lists the coding CLIs workers may use, and out of the box that is Claude Code alone. OpenCode, which runs AI Gateway models billed per token, is built in but switched off. Codex joins once its ChatGPT login can be lent to per-job machines. The agent itself runs on AI Gateway (`KILN_MODEL`), which is the only per-token spend.
 
 What you ask for wins over the repo's defaults for that kind of job, which win over the global ones. Once a job starts, its harness and model are fixed.
 
-**Subscriptions.** Give kiln several Claude subscriptions and it routes between them. A job sticks to one subscription, keeping its prompt cache warm, until that subscription runs out of usage. Then the worker resumes the same session on the next subscription that can run the job's model. kiln learns each subscription's limits from what Claude Code reports, including 5-hour windows, weekly windows, and per-model weekly windows. When every subscription that can run the model is out, the job waits for the earliest reset, and the agent tells the thread so you can wait or restart it on another model. A Claude name runs on Claude Code, an OpenAI name on Codex, and an AI Gateway ID (`provider/model`) or another vendor's model on OpenCode.
+**Subscriptions.** Give kiln several Claude subscriptions and it routes between them. A job sticks to one subscription, keeping its prompt cache warm, until that subscription runs out of usage. Then the worker resumes the same session on the next subscription that can run the job's model. kiln learns each subscription's limits from what Claude Code reports, including 5-hour windows, weekly windows, and per-model weekly windows. When every subscription that can run the model is out, the job waits for the earliest reset, and the agent tells the thread so you can wait or restart it on another model.
 
 ## Configure it
 
@@ -131,7 +132,7 @@ pnpm eval         # the agent's real model on scripted conversations; spends tok
 - Board is experimental; its API and limits may change.
 - A job's result reaches Slack within a minute of settling.
 - A job waits about 20 seconds for its machine before it starts.
-- Each Claude subscription runs two jobs at a time (`jobsPerSubscription`), opencode three in all (`machineLimits`). Codex can't run on per-job machines yet.
+- Each Claude subscription runs two jobs at a time (`jobsPerSubscription`). Codex and OpenCode are off (`enabledHarnesses`).
 - A job whose every subscription is out of usage for its model waits for the earliest reset; it never moves to another model on its own.
 - Reactions on the agent's messages don't reach it.
 - One repo per job.
