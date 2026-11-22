@@ -2,6 +2,7 @@
 # Stands in for the GitHub CLI in the worker process test.
 case "$1 $2" in
   "auth setup-git") exit 0 ;;
+  "api user") echo '{"login":"octo","id":42}' ;;
   "pr view") exit 1 ;;
   "pr create")
     cat >/dev/null

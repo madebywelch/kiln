@@ -162,6 +162,10 @@ it("claims its job, opens a PR, settles it for the agent's report, and exits", a
 
   const seen = JSON.parse(await readFile(record, "utf8")).env;
   expect(seen.GH_TOKEN).toBeNull(); // the worker held GH_TOKEN=test; the coding CLI must not
+  // The token's owner authored the work, not the agent.
+  expect(git(["--git-dir", remote, "log", "-1", "--format=%an <%ae>", jobBranch(job.id, spec.title)])).toBe(
+    "octo <42+octo@users.noreply.github.com>",
+  );
 
   const keys: string[] = [];
   await sweepReports(team, async (origin, _message, key) => {

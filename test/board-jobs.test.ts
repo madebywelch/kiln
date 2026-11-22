@@ -8,6 +8,7 @@ import {
   postJob,
   readJob,
   reportMessage,
+  resolveJobId,
   resumeAfterSecrets,
   sweepReports,
 } from "../lib/board-jobs.ts";
@@ -290,6 +291,7 @@ describe("resumeAfterSecrets", () => {
 describe("reportMessage", () => {
   const job = {
     id: "7",
+    ref: "7",
     state: "blocked",
     title: "t",
     repo: "r",
@@ -313,7 +315,7 @@ describe("reportMessage", () => {
   it("tells the agent to ask for each missing secret with the job, and that saving resumes it", () => {
     const message = reportMessage({ ...job, secretsNeeded: ["LINEAR_API_KEY"] }, "");
     expect(message).toContain("paused until r has these secrets: LINEAR_API_KEY");
-    expect(message).toContain('request_secret for each one with job "7"');
+    expect(message).toContain('request_secret for each one with job "#7"');
     expect(message).not.toContain("answer_job");
   });
 
@@ -321,5 +323,16 @@ describe("reportMessage", () => {
     const message = reportMessage({ ...job, state: "completed", question: null }, "x".repeat(10_000));
     expect(message).toContain("[report clipped]");
     expect(message.length).toBeLessThan(7_000);
+  });
+});
+
+describe("resolveJobId", () => {
+  it("finds a job by its short reference, with or without #, and passes a full ID through", async () => {
+    const job = await postJob(team, spec);
+    expect(job.ref).toMatch(/^[0-9a-f]{8}$|^\d+$/);
+    expect(await resolveJobId(team, `#${job.ref}`)).toBe(job.id);
+    expect(await resolveJobId(team, job.ref)).toBe(job.id);
+    expect(await resolveJobId(team, "msg_whatever_1")).toBe("msg_whatever_1");
+    await expect(resolveJobId(team, "#deadbeef")).rejects.toThrow(/no job #deadbeef/);
   });
 });

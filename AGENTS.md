@@ -16,7 +16,7 @@ kiln runs an AI teammate in Slack (the agent) and the coding workers it hands re
 | kiln | The platform: everything in this repo. Platform identifiers say kiln. |
 | agent | The Slack-facing eve agent kiln runs. Its name is the deployment's (`name` in `kiln.config.yaml`, default `eve`; `agentName()` in `lib/deployment.ts`). Never write a name into code, docs, or tests: each deployment calls its agent something else. |
 | project | Repos cloned side by side for every job on it (`projects` in `kiln.config.yaml`; `projectsOf` in `lib/deployment.ts`). A repo in no project is a project of its own. Jobs, defaults, MCP servers, and secrets are keyed by project; the job's `repo` label holds the project's key. |
-| job | A Vercel Board task in the `jobs` channel, labeled `kiln=job`. The brief is its text; repo, kind, harness, model, effort, and Slack origin are labels. |
+| job | A Vercel Board task in the `jobs` channel, labeled `kiln=job`; people and the agent call it by its short reference, `#b799fe5c` (`jobRef`). The brief is its text; repo, kind, harness, model, effort, and Slack origin are labels. |
 | kind | `change` (branch `kiln/<id>-<title>` and a draft PR) or `investigate` (a report, no changes). |
 | harness | The coding CLI a job runs on: `claude`, `codex`, or `opencode`. Workers may use only those in `enabledHarnesses` (`lib/config.ts`): `claude` today, on the inference endpoint. |
 | selection | A job's harness, model, and effort, resolved by `resolveSelection`: request, then repo default for the kind, then global default. Fixed for the job's life. |

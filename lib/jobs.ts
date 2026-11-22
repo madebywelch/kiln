@@ -222,6 +222,11 @@ export function describeSelection(selection: Selection): string {
   return `${selection.harness} ${selection.model ?? "default"}/${selection.effort}`;
 }
 
+/** A job's short reference for people and the model, as in #b799fe5c: the first block of its board ID. */
+export function jobRef(id: string): string {
+  return /^msg_([0-9a-f]{8})-/.exec(id)?.[1] ?? id;
+}
+
 /** A branch name that is unique per job and readable in a PR list. */
 export function jobBranch(taskId: string, title: string): string {
   const slug = title

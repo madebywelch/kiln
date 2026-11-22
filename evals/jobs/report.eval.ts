@@ -4,7 +4,8 @@ import { stubs } from "../stubs.ts";
 
 const update = reportMessage(
   {
-    id: "812",
+    id: "msg_b799f812-a9d4-40f2-983a-6d9a6ad3dbd1_1",
+    ref: "b799f812",
     state: "completed",
     title: "Add a christmas theme",
     repo: "web",

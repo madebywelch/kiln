@@ -188,10 +188,7 @@ async function work(config: Config, team: Board, shutdown: AbortSignal, guidance
       ...(config.KILN_REPO
         ? { registry: { [config.KILN_REPO.key]: { repos: config.KILN_REPO.repos } } }
         : {}),
-      gitIdentity:
-        config.KILN_GIT_NAME && config.KILN_GIT_EMAIL
-          ? { name: config.KILN_GIT_NAME, email: config.KILN_GIT_EMAIL }
-          : undefined,
+      gitIdentity: await commitIdentity(config),
     });
   } finally {
     stop();
@@ -214,6 +211,34 @@ export function loadSettingsFile(path: string, env: NodeJS.ProcessEnv): boolean 
 /** Reads the worker's settings. An empty value means unset, as an env file writes an unset optional one. */
 export function parseConfig(env: NodeJS.ProcessEnv) {
   return Config.safeParse(Object.fromEntries(Object.entries(env).filter(([, value]) => value !== "")));
+}
+
+/**
+ * Who the job's commits are by: KILN_GIT_NAME and KILN_GIT_EMAIL when both are set, else the owner
+ * of GH_TOKEN (their login, and GitHub's noreply address that links to their account), since that
+ * token pushes the commits. Undefined only when GitHub can't say, and the job falls back to the agent.
+ */
+export async function commitIdentity(config: {
+  readonly KILN_GIT_NAME?: string | undefined;
+  readonly KILN_GIT_EMAIL?: string | undefined;
+}): Promise<{ name: string; email: string } | undefined> {
+  if (config.KILN_GIT_NAME && config.KILN_GIT_EMAIL) {
+    log("git.identity", { source: "settings" });
+    return { name: config.KILN_GIT_NAME, email: config.KILN_GIT_EMAIL };
+  }
+  try {
+    const user = JSON.parse(await run(exec, "gh", ["api", "user", "--jq", "{login, id}"])) as {
+      login?: string;
+      id?: number;
+    };
+    if (user.login && user.id) {
+      log("git.identity", { source: "token owner", login: user.login });
+      return { name: user.login, email: `${user.id}+${user.login}@users.noreply.github.com` };
+    }
+  } catch (error) {
+    log("git.identity_unknown", { error: String(error) });
+  }
+  return undefined;
 }
 
 async function main(): Promise<void> {

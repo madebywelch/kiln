@@ -695,6 +695,15 @@ describe("harness adapters", () => {
     expect(() => resolveMcp({}, ["ghost"], {})).toThrow(/not defined/);
   });
 
+  it("turns off Claude Code's co-author trailer and PR attribution on every run", () => {
+    const where = harnessInvocation(spec, "p", "/tmp/x", "/tmp/r");
+    const settings = where.args[where.args.indexOf("--settings") + 1];
+    expect(JSON.parse(settings ?? "{}")).toEqual({
+      attribution: { commit: "", pr: "" },
+      includeCoAuthoredBy: false,
+    });
+  });
+
   it("writes a prompt that says how to finish for each kind", () => {
     const where = { id: "1", github: "acme/web", branch: "kiln/1", resumed: false };
     expect(buildPrompt(spec, where, [])).toContain("The worker pushes and opens a draft pull request");

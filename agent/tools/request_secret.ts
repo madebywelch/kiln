@@ -1,7 +1,9 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
+import { resolveJobId } from "../../lib/board-jobs.ts";
 import { configuredProjects } from "../../lib/deployment.ts";
 import { secretNameIssue } from "../../lib/secrets.ts";
+import { team } from "../lib/board.ts";
 import { requestBlocks } from "../lib/secret-prompt.ts";
 import { slackApi, slackHere } from "../lib/slack.ts";
 
@@ -25,7 +27,7 @@ export default defineDynamic(() => {
       job: z
         .string()
         .optional()
-        .describe("The job paused for this secret. Saving the last one it needs resumes it."),
+        .describe("The job paused for this secret, e.g. #b799fe5c. Saving the last one it needs resumes it."),
     }),
     label: { start: ({ repo, name }) => `Ask for ${name} on ${repo}` },
     async execute({ repo, name, why, job }, ctx) {
@@ -33,13 +35,14 @@ export default defineDynamic(() => {
       if (issue) throw new Error(issue);
       const here = slackHere(ctx);
       if (!here) throw new Error("not in Slack: a secret can only be asked for in a Slack conversation");
+      const jobId = job ? await resolveJobId(team, job) : undefined;
       await slackApi(
         "chat.postMessage",
         {
           channel: here.channelId,
           ...(here.threadTs ? { thread_ts: here.threadTs } : {}),
           text: `${repo} needs ${name}`,
-          blocks: requestBlocks({ repo, name, ...(job ? { job } : {}) }, why),
+          blocks: requestBlocks({ repo, name, ...(jobId ? { job: jobId } : {}) }, why),
         },
         here.teamId,
       );

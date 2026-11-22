@@ -10,6 +10,7 @@ import {
   JOBS_CHANNEL,
   JobError,
   type JobSpec,
+  jobRef,
   NEEDS_SECRETS_LABEL,
   REPORT_LABEL,
   REPORT_PENDING,
@@ -17,7 +18,10 @@ import {
 } from "./jobs.ts";
 
 export interface JobView {
+  /** The board's ID, for board operations. Show people `ref`. */
   readonly id: string;
+  /** The short reference people and the model use: #b799fe5c. */
+  readonly ref: string;
   readonly state: string;
   readonly title: string;
   readonly repo: string;
@@ -38,6 +42,7 @@ export function viewJob(root: MessageView): JobView {
   const task = root.task;
   return {
     id: root.id,
+    ref: jobRef(root.id),
     state: task?.state ?? "unknown",
     title: spec.title,
     repo: spec.repo,
@@ -101,6 +106,25 @@ export interface JobLogEntry {
   readonly text: string;
 }
 
+/**
+ * The board ID for a job someone named: its short reference (b799fe5c or #b799fe5c), or its full ID.
+ * Models mangle long IDs when they copy them; an eight-character reference survives.
+ */
+export async function resolveJobId(team: Board, named: string): Promise<string> {
+  const ref = named.trim().replace(/^#/, "");
+  if (ref.startsWith("msg_")) return ref;
+  const { tasks } = await team.tasks.list({
+    channel: JOBS_CHANNEL,
+    state: "all",
+    label: { kiln: "job" },
+    limit: 200,
+  });
+  const matches = tasks.map(({ message }) => message.id).filter((id) => jobRef(id) === ref.toLowerCase());
+  if (matches.length === 0) throw new JobError(`no job #${ref}; list_jobs shows the recent ones`);
+  if (matches.length > 1) throw new JobError(`#${ref} matches ${matches.length} jobs; name it in full`);
+  return matches[0] as string;
+}
+
 export async function readJob(team: Board, id: string): Promise<{ job: JobView; log: JobLogEntry[] }> {
   const thread = await team.thread(id, { limit: 100 });
   const job = viewJob(thread.message);
@@ -147,7 +171,7 @@ export type DeliverReport = (
 export type KeepFile = (job: JobView, file: JobFile) => Promise<unknown>;
 
 /** Where a job's returned files are saved in the agent's drive. */
-export const jobFilesFolder = (id: string) => `jobs/${id}/`;
+export const jobFilesFolder = (id: string) => `jobs/${jobRef(id)}/`;
 
 export interface SweepResult {
   readonly delivered: string[];
@@ -225,13 +249,13 @@ export async function sweepReports(
 export function reportMessage(job: JobView, lastReport: string, files: readonly string[] = []): string {
   const lines = [
     "[job update from the worker pool, not from a person]",
-    `Job #${job.id} "${job.title}" on ${job.repo} (${job.runsOn}, ${job.kind}) is ${job.state}.`,
+    `Job #${job.ref} "${job.title}" on ${job.repo} (${job.runsOn}, ${job.kind}) is ${job.state}.`,
   ];
   if (job.state === "blocked" && job.secretsNeeded?.length) {
     lines.push(`It is paused until ${job.repo} has these secrets: ${job.secretsNeeded.join(", ")}.`);
     if (job.question) lines.push(`The worker says: ${job.question}`);
     lines.push(
-      `Call request_secret for each one with job "${job.id}". Saving the last one resumes the job on its own; nobody needs to say retry. Never ask for a value in the thread.`,
+      `Call request_secret for each one with job "#${job.ref}". Saving the last one resumes the job on its own; nobody needs to say retry. Never ask for a value in the thread.`,
     );
   } else if (job.state === "blocked") {
     lines.push(`The worker asks: ${job.question ?? "(no question given)"}`);

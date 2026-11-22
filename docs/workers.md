@@ -42,7 +42,7 @@ Everything lives in the agent's Vercel project; nothing runs on your computer.
    | `INFERENCE_BASE_URL`, `INFERENCE_API_KEY` | Not `WORKER_`-prefixed: the agent's model uses them too. The Anthropic-compatible endpoint Claude jobs run on; only Claude machines get them. See Inference below. |
    | `WORKER_AI_GATEWAY_API_KEY` | Only if you enable OpenCode (`enabledHarnesses`): an AI Gateway key for its per-token models. Only OpenCode machines get it. |
    | `WORKER_HARNESS_GH_TOKEN` | Optional. A read-only GitHub token for the coding CLI; see below. |
-   | `WORKER_KILN_GIT_NAME`, `WORKER_KILN_GIT_EMAIL` | Optional commit identity. Default: `<agent name> (<harness>)`. |
+   | `WORKER_KILN_GIT_NAME`, `WORKER_KILN_GIT_EMAIL` | Optional commit identity. Default: the owner of `WORKER_GH_TOKEN`, as their login and GitHub noreply address, since that token pushes the commits. Claude Code adds no co-author trailer or "Generated with" line (`CLAUDE_SETTINGS` in `worker/harness.ts`). |
    | `WORKER_JOB_TIMEOUT_MINUTES` | Optional. Default 180. |
 
 3. **Deploy** with `pnpm run deploy`. It refuses a dirty tree or an unpushed commit, writes the commit's tarball URL to the project as `KILN_WORKER_CODE`, sends `kiln.config.yaml`, and runs `eve deploy`. Machines run the commit the agent was built from: Vercel's `VERCEL_GIT_COMMIT_SHA` when the project is connected to its GitHub repo, so a push to `main` that Vercel deploys on its own keeps agent and workers on the same commit, else `KILN_WORKER_CODE`. Changes to `kiln.config.yaml` still need `pnpm run deploy`.

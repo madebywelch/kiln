@@ -83,6 +83,9 @@ const tomlTable = (record: Readonly<Record<string, string>>) =>
     .map(([key, value]) => `${toml(key)} = ${toml(value)}`)
     .join(", ")} }`;
 
+/** Claude Code settings for every job: `attribution` for current versions, `includeCoAuthoredBy` for older ones. */
+export const CLAUDE_SETTINGS = { attribution: { commit: "", pr: "" }, includeCoAuthoredBy: false } as const;
+
 export function harnessInvocation(
   selection: Selection,
   prompt: string,
@@ -104,6 +107,8 @@ export function harnessInvocation(
         "--permission-mode",
         "bypassPermissions",
       ];
+      // Commits and PRs are the token owner's work: no Co-Authored-By trailer, no "Generated with" line.
+      args.push("--settings", JSON.stringify(CLAUDE_SETTINGS));
       args.push("--effort", selection.effort);
       if (selection.model) args.push("--model", selection.model);
       if (servers.length > 0) {
