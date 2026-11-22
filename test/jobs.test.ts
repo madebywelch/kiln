@@ -4,6 +4,7 @@ import type { RepoConfig } from "../lib/deployment.ts";
 import {
   askerAuth,
   askerOf,
+  askerOfSession,
   decodeJob,
   describeSelection,
   encodeJob,
@@ -277,6 +278,13 @@ describe("the asker", () => {
     ).toBeUndefined();
     expect(askerOf({ authenticator: "none", principalId: "x", principalType: "anonymous" })).toBeUndefined();
     expect(askerOf(null)).toBeUndefined();
+  });
+
+  it("falls back to the person who started the session when the turn runs as the app", () => {
+    const app = { authenticator: "app", principalId: "eve:app", principalType: "runtime" };
+    expect(askerOfSession({ current: app, initiator: slackUser })).toEqual(asker);
+    expect(askerOfSession({ current: slackUser, initiator: null })).toEqual(asker);
+    expect(askerOfSession({ current: app, initiator: app })).toBeUndefined();
   });
 
   it("rides on the job and comes back, so its report can run as them", () => {

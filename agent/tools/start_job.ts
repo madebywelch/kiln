@@ -6,7 +6,7 @@ import { configuredProjects } from "../../lib/deployment.ts";
 import { drivePath } from "../../lib/drive.ts";
 import { collectJobFiles } from "../../lib/job-files.ts";
 import {
-  askerOf,
+  askerOfSession,
   describeSelection,
   KINDS,
   MAX_BRIEF_CHARS,
@@ -99,7 +99,7 @@ export default defineDynamic(() => {
     async execute(input, ctx) {
       const selection = resolveSelection(input.repo, input.kind, input, repos);
       const here = slackHere(ctx);
-      const asker = askerOf(ctx.session.auth.current);
+      const asker = askerOfSession(ctx.session.auth);
       const files = await collectJobFiles(input.files ?? [], {
         sandbox: async (path) => (await ctx.getSandbox()).readBinaryFile({ path }),
         drive: async (path) => (await (await drive()).read(drivePath(path)))?.bytes ?? null,

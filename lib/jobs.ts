@@ -45,7 +45,8 @@ export interface SlackOrigin {
 }
 
 /**
- * The identity of the person whose turn started a job: no credentials, and of Slack's attributes only the
+ * The identity of the person behind the turn that started a job (or, when that turn runs as the app, the
+ * person who started its session): no credentials, and of Slack's attributes only the
  * user ID. The job's report runs as them, because eve lets only a person, not the app, set a schedule,
  * and a report is where the agent most often needs one ("merge it once CI is green").
  */
@@ -82,6 +83,18 @@ export function askerOf(
     ...(auth.subject ? { subject: auth.subject } : {}),
     ...(typeof userId === "string" && userId ? { userId } : {}),
   };
+}
+
+/**
+ * The asker for a job started in a session: the person behind the current turn, or, when it runs as the app
+ * (a job update, a scheduled turn), the person who started the session. Without the fallback, a job started
+ * from a report on a job with no person would have none either, and so would every job after it.
+ */
+export function askerOfSession(auth: {
+  readonly current: Parameters<typeof askerOf>[0];
+  readonly initiator: Parameters<typeof askerOf>[0];
+}): Asker | undefined {
+  return askerOf(auth.current) ?? askerOf(auth.initiator);
 }
 
 /** The auth a report runs as: the asker's identity, with their Slack user ID as its one attribute. */
