@@ -40,6 +40,70 @@ export const MAX_JOB_FILE_BYTES = 25 * 1024 * 1024;
 export interface SlackOrigin {
   readonly channelId: string;
   readonly threadTs: string;
+  /** Who asked, so the job's report reaches the thread as them; see Asker. */
+  readonly asker?: Asker;
+}
+
+/**
+ * The identity of the person whose turn started a job: no credentials, and of Slack's attributes only the
+ * user ID. The job's report runs as them, because eve lets only a person, not the app, set a schedule,
+ * and a report is where the agent most often needs one ("merge it once CI is green").
+ */
+export interface Asker {
+  readonly authenticator: string;
+  readonly principalType: string;
+  readonly principalId: string;
+  readonly issuer?: string;
+  readonly subject?: string;
+  readonly userId?: string;
+}
+
+/** The asker behind a turn's auth, or undefined when the turn runs as the app or as no one. */
+export function askerOf(
+  auth:
+    | {
+        readonly authenticator: string;
+        readonly principalType: string;
+        readonly principalId: string;
+        readonly issuer?: string;
+        readonly subject?: string;
+        readonly attributes?: Readonly<Record<string, unknown>>;
+      }
+    | null
+    | undefined,
+): Asker | undefined {
+  if (!auth || auth.principalType === "runtime" || auth.principalType === "anonymous") return undefined;
+  const userId = auth.attributes?.user_id;
+  return {
+    authenticator: auth.authenticator,
+    principalType: auth.principalType,
+    principalId: auth.principalId,
+    ...(auth.issuer ? { issuer: auth.issuer } : {}),
+    ...(auth.subject ? { subject: auth.subject } : {}),
+    ...(typeof userId === "string" && userId ? { userId } : {}),
+  };
+}
+
+/** The auth a report runs as: the asker's identity, with their Slack user ID as its one attribute. */
+export function askerAuth(
+  asker: Asker,
+): Omit<Asker, "userId"> & { readonly attributes: Record<string, string> } {
+  const { userId, ...identity } = asker;
+  const attributes: Record<string, string> = userId ? { user_id: userId } : {};
+  return { ...identity, attributes };
+}
+
+function decodeAsker(value: string | undefined): Asker | undefined {
+  if (!value) return undefined;
+  try {
+    const parsed = JSON.parse(value) as Partial<Asker>;
+    if (typeof parsed.authenticator !== "string" || typeof parsed.principalType !== "string")
+      return undefined;
+    if (typeof parsed.principalId !== "string") return undefined;
+    return parsed as Asker;
+  } catch {
+    return undefined; // a bad asker costs the report its person, not the report
+  }
 }
 
 export interface JobSpec extends Selection {
@@ -174,6 +238,7 @@ export function encodeJob(spec: JobSpec): EncodedJob {
   if (spec.model !== undefined) labels.model = labelValue("model", spec.model);
   if (spec.origin)
     labels.slack = labelValue("slack origin", `${spec.origin.channelId}/${spec.origin.threadTs}`);
+  if (spec.origin?.asker) labels.asker = labelValue("asker", JSON.stringify(spec.origin.asker));
   return { text: `## ${title}\n\n${brief}`, labels };
 }
 
@@ -199,7 +264,8 @@ export function decodeJob(root: {
     const [channelId, threadTs, ...rest] = labels.slack.split("/");
     if (!channelId || !threadTs || rest.length > 0)
       throw new JobError(`label slack=${labels.slack} is malformed`);
-    origin = { channelId, threadTs };
+    const asker = decodeAsker(labels.asker);
+    origin = { channelId, threadTs, ...(asker ? { asker } : {}) };
   }
 
   const heading = `## ${title}\n\n`;

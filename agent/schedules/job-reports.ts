@@ -8,6 +8,7 @@
 import { defineSchedule } from "eve/schedules";
 import { jobFilesFolder, sweepReports } from "../../lib/board-jobs.ts";
 import { driveName, writeFile } from "../../lib/drive.ts";
+import { askerAuth } from "../../lib/jobs.ts";
 import slack from "../channels/slack.ts";
 import { team } from "../lib/board.ts";
 import { drive } from "../lib/drive.ts";
@@ -19,8 +20,10 @@ export default defineSchedule({
       sweepReports(
         team,
         (origin, message, idempotencyKey) =>
+          // As the person who asked, when there was one: eve lets a person, not the app, set the
+          // check-back a report so often calls for.
           to(slack, { channelId: origin.channelId, threadTs: origin.threadTs }).send(message, {
-            auth: appAuth,
+            auth: origin.asker ? askerAuth(origin.asker) : appAuth,
             idempotencyKey,
           }),
         async (job, file) => {

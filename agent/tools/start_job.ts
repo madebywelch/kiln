@@ -6,6 +6,7 @@ import { configuredProjects } from "../../lib/deployment.ts";
 import { drivePath } from "../../lib/drive.ts";
 import { collectJobFiles } from "../../lib/job-files.ts";
 import {
+  askerOf,
   describeSelection,
   KINDS,
   MAX_BRIEF_CHARS,
@@ -98,6 +99,7 @@ export default defineDynamic(() => {
     async execute(input, ctx) {
       const selection = resolveSelection(input.repo, input.kind, input, repos);
       const here = slackHere(ctx);
+      const asker = askerOf(ctx.session.auth.current);
       const files = await collectJobFiles(input.files ?? [], {
         sandbox: async (path) => (await ctx.getSandbox()).readBinaryFile({ path }),
         drive: async (path) => (await (await drive()).read(drivePath(path)))?.bytes ?? null,
@@ -110,7 +112,9 @@ export default defineDynamic(() => {
           kind: input.kind,
           title: input.title,
           brief: input.brief,
-          origin: here?.threadTs ? { channelId: here.channelId, threadTs: here.threadTs } : undefined,
+          origin: here?.threadTs
+            ? { channelId: here.channelId, threadTs: here.threadTs, ...(asker ? { asker } : {}) }
+            : undefined,
         },
         files,
       );

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { HARNESSES } from "../lib/config.ts";
 import type { RepoConfig } from "../lib/deployment.ts";
 import {
+  askerAuth,
+  askerOf,
   decodeJob,
   describeSelection,
   encodeJob,
@@ -246,5 +248,55 @@ describe("jobRef", () => {
   it("shortens a board ID to its first block, which survives being copied by a model", () => {
     expect(jobRef("msg_b799fe5c-a9d4-40f2-983a-6d9a6ad32dbd_1")).toBe("b799fe5c");
     expect(jobRef("812")).toBe("812");
+  });
+});
+
+describe("the asker", () => {
+  const slackUser = {
+    authenticator: "slack-webhook",
+    issuer: "slack:T0001",
+    principalId: "slack:T0001:U0001",
+    principalType: "user",
+    attributes: { user_id: "U0001", channel_id: "C0123", email: "someone@example.com", action_token: "xyz" },
+  };
+  const asker = {
+    authenticator: "slack-webhook",
+    issuer: "slack:T0001",
+    principalId: "slack:T0001:U0001",
+    principalType: "user",
+    userId: "U0001",
+  };
+
+  it("keeps a person's identity and Slack user ID, and nothing else from the turn's auth", () => {
+    expect(askerOf(slackUser)).toEqual(asker);
+  });
+
+  it("is no one when the turn runs as the app or as nobody", () => {
+    expect(
+      askerOf({ authenticator: "app", principalId: "eve:app", principalType: "runtime" }),
+    ).toBeUndefined();
+    expect(askerOf({ authenticator: "none", principalId: "x", principalType: "anonymous" })).toBeUndefined();
+    expect(askerOf(null)).toBeUndefined();
+  });
+
+  it("rides on the job and comes back, so its report can run as them", () => {
+    const withAsker = { ...spec, origin: { ...(spec.origin as NonNullable<JobSpec["origin"]>), asker } };
+    const encoded = encodeJob(withAsker);
+    expect(JSON.parse(encoded.labels.asker ?? "")).toEqual(asker);
+    expect(decodeJob(encoded)).toEqual(withAsker);
+    expect(askerAuth(asker)).toEqual({
+      authenticator: "slack-webhook",
+      issuer: "slack:T0001",
+      principalId: "slack:T0001:U0001",
+      principalType: "user",
+      attributes: { user_id: "U0001" },
+    });
+  });
+
+  it("drops a malformed asker without losing the job or its thread", () => {
+    const { text, labels } = encodeJob(spec);
+    for (const bad of ["{", '{"principalType":"user"}', "[]"]) {
+      expect(decodeJob({ text, labels: { ...labels, asker: bad } }).origin).toEqual(spec.origin);
+    }
   });
 });
