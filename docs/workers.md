@@ -46,7 +46,7 @@ Everything lives in the agent's Vercel project; nothing runs on your computer.
    | `WORKER_KILN_GIT_NAME`, `WORKER_KILN_GIT_EMAIL` | Optional commit identity. Default: `<agent name> (<harness>)`. |
    | `WORKER_JOB_TIMEOUT_MINUTES` | Optional. Default 180. |
 
-3. **Deploy** with `pnpm run deploy`. It refuses a dirty tree or an unpushed commit, writes the commit's tarball URL to the project as `KILN_WORKER_CODE`, and runs `eve deploy`. Machines run exactly that commit, so a change to `lib/`, `worker/`, or `skills/` reaches workers with the next deploy.
+3. **Deploy** with `pnpm run deploy`. It refuses a dirty tree or an unpushed commit, writes the commit's tarball URL to the project as `KILN_WORKER_CODE`, sends `kiln.config.yaml`, and runs `eve deploy`. Machines run the commit the agent was built from: Vercel's `VERCEL_GIT_COMMIT_SHA` when the project is connected to its GitHub repo, so a push to `main` that Vercel deploys on its own keeps agent and workers on the same commit, else `KILN_WORKER_CODE`. Changes to `kiln.config.yaml` still need `pnpm run deploy`.
 
 ```sh
 pnpm workers:status              # every job machine: harness, state, setup, age, job
