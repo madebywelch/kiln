@@ -1,0 +1,19 @@
+{
+  "repos": {
+    "web": {
+      "github": "acme/web",
+      "description": "The marketing site and the customer dashboard.",
+      "mcp": ["linear"]
+    },
+    "api": {
+      "github": "acme/api",
+      "description": "The backend API and its workers."
+    }
+  },
+  "mcpServers": {
+    "linear": {
+      "url": "https://mcp.linear.app/mcp",
+      "headers": { "Authorization": "Bearer ${LINEAR_API_KEY}" }
+    }
+  }
+}

@@ -1,134 +1,99 @@
 # Slack
 
-Kiln connects to Slack over Socket Mode: one outbound WebSocket. Kiln needs no public URL and nothing in Slack points at your machine.
+The agent receives Slack's Events API at `https://<deployment>/eve/v1/slack` and interactivity (buttons and forms) at `https://<deployment>/slack/interactivity`. The interactivity route handles kiln's repo-secret form itself, because eve ignores forms it didn't create, and forwards every other payload unchanged to `/eve/v1/slack`. Slack signs each request; both routes verify it with the signing secret.
 
-## What it does
+## Create the app
 
-| | |
-|---|---|
-| Hears | Direct messages. @mentions. Everything else said in channels it has been invited to, as ambient messages it may or may not answer. Emoji reactions on its own messages. Clicks on buttons and menus in its messages. |
-| Sees | The recent messages of the channel, thread, or DM each event came from, read from Slack at the start of the run, with speakers named. Its own latest exchanges from everywhere else it is present. |
-| Says | Messages in Markdown. Replies in the thread a message is in, or in a new thread under a top-level message. Emoji reactions. Block Kit layouts. Approval prompts with Approve and Decline buttons. |
-| Ignores | Other bots. Edits, deletions, and join notices. Members excluded by `KILN_SLACK_USERS`, if you set it. |
-
-## Set it up
-
-1. Go to <https://api.slack.com/apps>, choose **Create New App**, then **From a manifest**. Pick your workspace and paste this:
+1. Deploy the agent once (`pnpm run deploy`) and note its production URL.
+2. At <https://api.slack.com/apps>, choose **Create New App**, then **From a manifest**. Paste this, with your URL in both places:
 
    ```yaml
    display_information:
-     name: Kiln
-     description: Always-on agent
+     name: robdog
+     description: AI teammate
    features:
      app_home:
        home_tab_enabled: false
        messages_tab_enabled: true
        messages_tab_read_only_enabled: false
      bot_user:
-       display_name: kiln
+       display_name: robdog
        always_online: true
    oauth_config:
      scopes:
        bot:
          - app_mentions:read
          - channels:history
+         - channels:read
          - chat:write
+         - files:read
+         - files:write
          - groups:history
+         - groups:read
          - im:history
+         - im:read
+         - im:write
          - mpim:history
+         - mpim:read
          - reactions:read
          - reactions:write
          - users:read
    settings:
      event_subscriptions:
+       request_url: https://YOUR-ROBDOG.vercel.app/eve/v1/slack
        bot_events:
          - app_mention
          - message.channels
          - message.groups
          - message.im
          - message.mpim
-         - reaction_added
      interactivity:
        is_enabled: true
+       request_url: https://YOUR-ROBDOG.vercel.app/slack/interactivity
      org_deploy_enabled: false
-     socket_mode_enabled: true
+     socket_mode_enabled: false
      token_rotation_enabled: false
    ```
 
-2. **Install App** to the workspace. Copy the **Bot User OAuth Token** (`xoxb-...`) from **OAuth & Permissions**.
-3. Under **Basic Information**, **App-Level Tokens**, generate a token with the scope `connections:write`. Copy it (`xapp-...`).
-4. Set two variables and start kiln:
+3. **Install App** to the workspace. Copy the **Bot User OAuth Token** (`xoxb-...`) and, from **Basic Information**, the **Signing Secret**.
+4. Set both on the project and redeploy:
 
    ```sh
-   KILN_SLACK_BOT_TOKEN=xoxb-...
-   KILN_SLACK_APP_TOKEN=xapp-...
+   vercel env add SLACK_BOT_TOKEN production
+   vercel env add SLACK_SIGNING_SECRET production
+   pnpm run deploy
    ```
 
-5. DM the bot. The log shows `slack connected`, then `event accepted`, then `delivered`.
+5. DM robdog. Invite it to channels with `/invite @robdog`.
 
-To use it in a channel, invite it (`/invite @kiln`).
+An app made before the secret form existed has its interactivity at `/eve/v1/slack`. Change it under **Interactivity & Shortcuts**, **Request URL**, to `https://<deployment>/slack/interactivity`.
 
-After changing the manifest of an existing app (new scopes or events), reinstall it from **Install App**. Until then Slack keeps the old permissions; kiln logs which scope is missing and carries on without that context.
+To let Vercel Connect hold the token instead, create a Slack connector with triggers at `/eve/v1/slack`, give it the scopes and events above, and set `SLACK_CONNECTOR` to its UID in place of the two variables. The secret form still needs `SLACK_SIGNING_SECRET` to verify its requests; without it, the interactivity route forwards everything to eve and the form doesn't open.
 
-## Who it listens to
+After changing scopes or events, reinstall the app from **Install App**.
 
-By default, everyone in the workspace, and they share one agent: one memory, one set of timers, one stream of context. The kiln user is named `slack`. This suits a private workspace. Anyone who can message the bot can instruct it and approve its calls.
+## How robdog decides to speak
 
-`KILN_SLACK_USERS` changes that. It is optional.
-
-| Value | Effect |
+| Message | robdog |
 |---|---|
-| unset | Everyone is heard. All share the kiln user `slack`. |
-| `*:team` | Everyone is heard. All share the kiln user `team`. |
-| `U0123ABCD:robert` | Only that member is heard. Everyone else is ignored, and logged once. |
-| `U0123ABCD:robert,*:team` | That member has their own agent. Everyone else shares another. |
+| A DM, an @mention | Always answers. A top-level one starts a thread, and robdog gets the channel's last 15 messages as context. |
+| A reply in a thread robdog is part of | Sees it, answers only if it is meant for it, else stays silent. |
+| A reply in a thread robdog is not part of | Doesn't see it, unless mentioned. `slack_history` can read the thread later. |
+| A top-level message in a channel robdog is in | A decision model screens it (fails open). If it passes, robdog sees it with the channel's recent messages and takes part only if it has something useful to add. Its name in the text skips the screen. |
+| A message from a bot | Ignored. |
 
-Two kiln users are two separate agents: separate memory, timers, approvals, and context. Isolation is something you opt into.
+A silent turn leaves no trace in Slack: no status, no reply. Screening decisions are logged as `ambient.screen` with the probability and outcome, never the text.
 
-## When it speaks
+Every top-level message in a busy channel costs one screening call, and the ones that pass cost a turn. Remove robdog from channels where that isn't worth it.
 
-- A DM or an @mention is addressed to it. It answers.
-- Anything else said in a channel it is in reaches it as an ambient message, with the recent conversation attached. It answers when it is spoken to by name or the message continues an exchange it is part of, and when it holds something the conversation plainly needs. Otherwise it stays silent.
-- Every ambient message, or burst of them, costs one model call to make that judgment. In a busy channel that adds up. To stop it for one channel, remove the bot from it. To stop it everywhere, remove `message.channels`, `message.groups`, and `message.mpim` from the manifest; the bot then hears only DMs and @mentions.
-- A "yes" said in a channel without addressing the bot never answers an approval.
+## Where replies go
 
-## Threads
+- A reply goes in the thread of the message it answers.
+- `slack_post` posts top-level in the channel, in another thread, or in another channel, with Markdown or Block Kit.
+- Long replies (over 12,000 characters) are uploaded as a snippet.
+- `slack_upload` shares a file: text robdog writes, or a file from its sandbox.
+- `slack_react` adds an emoji reaction.
 
-The agent replies where the conversation is.
+## Files
 
-- A message in a thread is answered in that thread.
-- A top-level message is answered beside it. The agent can open a thread under it instead (`start_thread`), which it should do for long or secondary answers.
-- The agent can return to an earlier message's thread in a later run, for example when a timer fires for something asked there.
-- A timer's result returns to the conversation the timer was set in.
-- A message that answers nothing and belongs to no conversation goes to your DM with the bot, if `KILN_SLACK_USERS` maps you to your own kiln user. A shared agent has no single DM; such a message falls through to the webhook or stdout.
-
-## Emoji
-
-- The agent can react to your messages. It uses this to acknowledge without sending a message.
-- A reaction you put on one of the agent's messages reaches it as feedback, with the text of the message you reacted to. It never counts as an instruction or an approval.
-- Emoji in message text work as anywhere in Slack.
-
-Reactions are delivered when the run ends, together with any reply.
-
-## Block Kit
-
-- Ordinary messages are sent as a `markdown` block, so standard Markdown renders as written: bold, lists, code blocks, tables, links.
-- The agent can send its own [Block Kit](https://docs.slack.dev/block-kit) blocks when a layout calls for it. The message text stays as the notification fallback. If Slack refuses the blocks, the text is sent alone.
-- A click on a button or a choice in a menu comes back to the agent as an event from you, for example `Clicked "Snooze 1h" (value: 1h)`.
-- Approval prompts show the exact call as plain text, never reformatted, with Approve and Decline buttons. After a click the buttons are replaced by the outcome.
-
-## Trust
-
-- By default the workspace is the boundary: its members can instruct the agent. Set `KILN_SLACK_USERS` without a `*` entry to restrict it to named members.
-- An approval button works only for members of the kiln user the prompt is for, and only for that prompt.
-- What other people say in a channel reaches the model as conversation context. The prompt tells it to treat context as information, not instructions; that is a soft boundary, not a hard one.
-- While an approval is open, any other message or click from you declines it. That is the same rule as everywhere else in kiln.
-- The bot token can post as the bot anywhere it has been invited. Keep both tokens out of the repository; `.env` is ignored by git.
-
-## Limits
-
-- One connection. Slack allows ten per app; kiln opens one.
-- Messages over 11,000 characters are sent as plain text, which Slack may split.
-- Files are named in the event (`[attached file: q3.pdf]`) but not read.
-- Context is the last 20 messages of the conversation. A thread longer than 200 messages loses its newest end.
-- Slack redelivers events it believes were lost. Kiln records each once.
+Files attached to a message reach robdog; a mention without files also gets files posted in the thread since its last mention. They land in robdog's sandbox under `/workspace/.eve/attachments`, so it can read, convert, or analyze them. Files are not passed on to jobs; describe what a worker needs in the brief, or commit the file.

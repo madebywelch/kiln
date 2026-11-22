@@ -1,0 +1,88 @@
+{
+  "note": "Third-party skills, vendored unmodified. To update one: npx skills add <source> --skill <name> --copy in a scratch directory, review the diff, then copy it over each path. Each keeps its upstream license; texts are in skills/LICENSES/.",
+  "skills": {
+    "grilling": {
+      "paths": [
+        "agent/skills/grilling"
+      ],
+      "source": "mattpocock/skills",
+      "commit": "abeeaf95660ba9e8b7c753eb38f441ca707a8823",
+      "skillPath": "skills/productivity/grilling/SKILL.md",
+      "sha256": "485451958784497cd4c4dbea13cb5bbb579da58fac0d0e45f3bcb310fab68ac7",
+      "fetched": "2026-11-21",
+      "license": "MIT",
+      "licenseText": "skills/LICENSES/mattpocock_skills.txt"
+    },
+    "domain-modeling": {
+      "paths": [
+        "agent/skills/domain-modeling",
+        "skills/workers/domain-modeling"
+      ],
+      "source": "mattpocock/skills",
+      "commit": "abeeaf95660ba9e8b7c753eb38f441ca707a8823",
+      "skillPath": "skills/engineering/domain-modeling/SKILL.md",
+      "sha256": "b78689833404148c769077355e12dbe5ad996a158a1e21e58ddf169e439d9d8c",
+      "fetched": "2026-11-21",
+      "license": "MIT",
+      "licenseText": "skills/LICENSES/mattpocock_skills.txt"
+    },
+    "teach": {
+      "paths": [
+        "agent/skills/teach"
+      ],
+      "source": "mattpocock/skills",
+      "commit": "abeeaf95660ba9e8b7c753eb38f441ca707a8823",
+      "skillPath": "skills/productivity/teach/SKILL.md",
+      "sha256": "31bb3eed09dd2787e290e933def99fbf7d65044a29119c224af47c01404ab228",
+      "fetched": "2026-11-21",
+      "license": "MIT",
+      "licenseText": "skills/LICENSES/mattpocock_skills.txt"
+    },
+    "find-skills": {
+      "paths": [
+        "agent/skills/find-skills"
+      ],
+      "source": "vercel-labs/skills",
+      "commit": "57217cf86ba38148a57af9e90d14a4c049558330",
+      "skillPath": "skills/find-skills/SKILL.md",
+      "sha256": "7bc223e2aafbdbf6e50ea243ba6ef67fe432bb069ab439fea0390795dac0bf7f",
+      "fetched": "2026-11-21",
+      "license": "MIT",
+      "licenseText": "skills/LICENSES/vercel-labs_skills.txt"
+    },
+    "agent-browser": {
+      "paths": [
+        "skills/workers/agent-browser"
+      ],
+      "source": "vercel-labs/agent-browser",
+      "commit": "5aad200e67ee7c4ca170c97907d7a2ab4d199eb4",
+      "skillPath": "skills/agent-browser/SKILL.md",
+      "sha256": "a0dfac7503f69bcf529b2660fc79964064c4f179eb65695904ddc45fc0d99d20",
+      "fetched": "2026-11-21",
+      "license": "Apache-2.0",
+      "licenseText": "skills/LICENSES/vercel-labs_agent-browser.txt"
+    },
+    "ui-taste": {
+      "paths": [
+        "skills/workers/ui-taste"
+      ],
+      "source": "https://uizze.sh",
+      "sha256": "85da37a788dc4b5b63411e5681403d930b1077604a20497739fa05c8d21f01fc",
+      "fetched": "2026-11-21",
+      "license": "Apache-2.0",
+      "licenseText": "skills/workers/ui-taste/LICENSE (and NOTICE)"
+    },
+    "vercel-react-best-practices": {
+      "paths": [
+        "skills/workers/vercel-react-best-practices"
+      ],
+      "source": "vercel-labs/agent-skills",
+      "commit": "5a37a6329fbad3666c3207392a6a7c0110e92efb",
+      "skillPath": "skills/react-best-practices/SKILL.md",
+      "sha256": "7991ed4fbecdac23f47c1a40c243e00a212a9e7f3604db93959b3ae11dffe299",
+      "fetched": "2026-11-21",
+      "license": "MIT",
+      "licenseText": "declared in its SKILL.md frontmatter; the upstream repo has no license file"
+    }
+  }
+}
