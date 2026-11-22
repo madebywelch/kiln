@@ -35,7 +35,7 @@ The drive is the agent's only memory: a folder of files it organizes however it 
 
 ## Jobs and models
 
-- **change** jobs commit to `kiln/<id>-<title>`, push it, and open a draft PR. Workers never merge.
+- **change** jobs commit to `kiln/<id>-<title>`, push it, and open a draft PR. Workers never merge; the agent can, with `gh`, when you ask it to.
 - **investigate** jobs report findings and change nothing.
 - **Files go both ways.** Drop a file in Slack and the agent keeps it in its drive, works on it in its sandbox (ImageMagick, zip, Python), or hands it to a job: the worker finds it in `.kiln/inputs/`, and it lands in the repo only where the brief says. Files a job's CLI saves in `.kiln/artifacts/`, such as screenshots, come back posted in the Slack thread and saved in the drive under `jobs/<id>/`. They ride on the job's Board task as attachments, never signed URLs, and workers never get drive access. Up to 10 files of 25 MB each way.
 - **Questions:** a CLI that needs a person ends with `QUESTION: ...`. The worker pushes its work and blocks the job; the agent asks in the thread, passes the answer back, and the next run resumes from the branch.
@@ -92,6 +92,7 @@ Third-party skills are vendored unmodified under their own licenses; [skills/ven
 | `KILN_MODEL` | `anthropic/claude-fable-5.2` | The agent's own model, an AI Gateway ID. No key is needed on Vercel. |
 | `KILN_REASONING` | `high` | Its reasoning level: `low`, `medium`, `high`, or `xhigh`. |
 | `KILN_MODEL_URL`, `KILN_MODEL_KEY` | unset | Any OpenAI-compatible endpoint instead of AI Gateway, such as OpenRouter. |
+| `KILN_GH_TOKEN` | `WORKER_GH_TOKEN` | The agent's GitHub token, for `gh` in its sandbox: PRs, CI, merging. Added at the sandbox firewall; it never enters the sandbox. |
 | `KILN_TRANSCRIPTION_MODEL` | `openai/gpt-4o-mini-transcribe` | The AI Gateway model that transcribes voice notes. Always AI Gateway, even with `KILN_MODEL_URL`. |
 | `BOAT_API_KEY` | required for jobs | Launches and deletes job machines and writes repo secrets. |
 | `WORKER_*` | required for jobs | The workers' credentials, passed to each machine without the prefix. See [docs/workers.md](docs/workers.md). |

@@ -95,6 +95,8 @@ Codex signs in with a ChatGPT login whose refresh token changes each time it is 
 
 ## GitHub credentials
 
+The agent has GitHub too: `gh` and `git` in its sandbox, for checking PRs and CI and for merging when you ask. Its token is `KILN_GH_TOKEN` on the Vercel project, or `WORKER_GH_TOKEN` when that is unset. The token never enters the sandbox: on Vercel, the sandbox firewall adds it to requests to `api.github.com` and `github.com` (`agent/sandbox/sandbox.ts`), and the sandbox's own `GH_TOKEN` is a placeholder. Merging needs Contents and Pull requests write; reading CI needs Actions and Checks read. A session's sandbox keeps the token it was created with, so a new token reaches new threads.
+
 The coding CLI runs with permission prompts off, so it gets none of the worker's credentials. Its environment has no `GH_TOKEN` and no `BOARD_TOKEN`, and the settings file is deleted before it starts. Only the worker pushes and opens pull requests. Set `WORKER_HARNESS_GH_TOKEN` to a read-only token (Actions, Contents, Pull requests, Issues: read) if jobs should read CI runs and issues with `gh`. The CLI sees it as its `GH_TOKEN`.
 
 The worker's credentials stay off boat's per-machine environment variables, because boat puts those into every login shell, which is where the CLI runs its commands.
