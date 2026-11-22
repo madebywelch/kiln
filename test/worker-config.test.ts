@@ -48,6 +48,13 @@ describe("parseConfig", () => {
     expect(parseConfig({ ...noToken, BOARD_PROFILE: "codex-1", WORKER_HARNESS: "codex" }).success).toBe(true);
   });
 
+  it("starts a claude worker on the inference endpoint with no subscription token, and only with both halves", () => {
+    const { CLAUDE_CODE_OAUTH_TOKEN: _token, ...noToken } = base;
+    const endpoint = { INFERENCE_BASE_URL: "https://llm.example.com", INFERENCE_API_KEY: "sk-endpoint" };
+    expect(parseConfig({ ...noToken, ...endpoint }).success).toBe(true);
+    expect(parseConfig({ ...noToken, INFERENCE_BASE_URL: endpoint.INFERENCE_BASE_URL }).success).toBe(false);
+  });
+
   it("refuses a harness the worker cannot run", () => {
     expect(parseConfig({ ...base, WORKER_HARNESS: "antigravity" }).success).toBe(false);
   });

@@ -96,10 +96,17 @@ const Config = z
     /** OpenCode's AI Gateway key, from the Vercel dashboard (AI Gateway, API keys). */
     AI_GATEWAY_API_KEY: z.string().optional(),
   })
-  .refine((config) => config.WORKER_HARNESS !== "claude" || config.CLAUDE_CODE_OAUTH_TOKEN, {
-    path: ["CLAUDE_CODE_OAUTH_TOKEN"],
-    message: "a claude worker needs CLAUDE_CODE_OAUTH_TOKEN: run `claude setup-token` with its subscription",
-  })
+  .refine(
+    (config) =>
+      config.WORKER_HARNESS !== "claude" ||
+      config.CLAUDE_CODE_OAUTH_TOKEN ||
+      (config.INFERENCE_BASE_URL && config.INFERENCE_API_KEY),
+    {
+      path: ["CLAUDE_CODE_OAUTH_TOKEN"],
+      message:
+        "a claude worker needs CLAUDE_CODE_OAUTH_TOKEN (run `claude setup-token` with its subscription), or INFERENCE_BASE_URL and INFERENCE_API_KEY for the deployment's endpoint",
+    },
+  )
   .refine((config) => config.WORKER_HARNESS !== "opencode" || config.AI_GATEWAY_API_KEY, {
     path: ["AI_GATEWAY_API_KEY"],
     message: "an opencode worker needs AI_GATEWAY_API_KEY: create one under AI Gateway, API keys, in Vercel",

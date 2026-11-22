@@ -91,27 +91,31 @@ function startWorker(
   jobId: string,
   mode: string,
   record?: string,
+  login: Record<string, string> = { CLAUDE_CODE_OAUTH_TOKEN: "test" },
 ): { child: ChildProcess; logs: () => string } {
   let output = "";
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    PATH: `${join(root, "bin")}:${process.env.PATH}`,
+    BOARD_URL: boardUrl,
+    BOARD_PROFILE: "claude",
+    WORKER_HARNESS: "claude",
+    KILN_JOB_ID: jobId,
+    KILN_REPO: JSON.stringify({ key: "web", repos: [{ key: "web", github: "acme/web" }] }),
+    GH_TOKEN: "test",
+    ...login,
+    WORK_DIR: join(root, "work"),
+    FAKE_MODE: mode,
+    ...(record ? { FAKE_RECORD: record } : {}),
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: `url.${remote}.insteadOf`,
+    GIT_CONFIG_VALUE_0: "https://github.com/acme/web.git",
+  };
+  // Unset, not empty, as on a machine the agent launched on the endpoint.
+  if (!login.CLAUDE_CODE_OAUTH_TOKEN) delete env.CLAUDE_CODE_OAUTH_TOKEN;
   const child = spawn(process.execPath, [join(repoRoot, "worker", "main.ts")], {
     cwd: repoRoot,
-    env: {
-      ...process.env,
-      PATH: `${join(root, "bin")}:${process.env.PATH}`,
-      BOARD_URL: boardUrl,
-      BOARD_PROFILE: "claude",
-      WORKER_HARNESS: "claude",
-      KILN_JOB_ID: jobId,
-      KILN_REPO: JSON.stringify({ key: "web", repos: [{ key: "web", github: "acme/web" }] }),
-      GH_TOKEN: "test",
-      CLAUDE_CODE_OAUTH_TOKEN: "test",
-      WORK_DIR: join(root, "work"),
-      FAKE_MODE: mode,
-      ...(record ? { FAKE_RECORD: record } : {}),
-      GIT_CONFIG_COUNT: "1",
-      GIT_CONFIG_KEY_0: `url.${remote}.insteadOf`,
-      GIT_CONFIG_VALUE_0: "https://github.com/acme/web.git",
-    },
+    env,
     stdio: ["ignore", "pipe", "pipe"],
   });
   child.stdout?.on("data", (chunk) => {
@@ -167,6 +171,29 @@ it("claims its job, opens a PR, settles it for the agent's report, and exits", a
 
   expect(await exited(worker.child)).toBe(0);
   expect(worker.logs()).toContain('"event":"worker.done"');
+}, 60_000);
+
+it("runs a Claude job on the inference endpoint with no subscription token, as the agent launches it", async () => {
+  const job = await postJob(team, { ...spec, title: "Snow on the endpoint" });
+  const record = join(root, "record-endpoint.json");
+  const worker = startWorker(job.id, "change", record, {
+    INFERENCE_BASE_URL: "https://llm.example.com/v1",
+    INFERENCE_API_KEY: "sk-endpoint",
+  });
+  const settled = await until("the job to complete", async () => {
+    const { message } = await team.thread(job.id, { limit: 1 });
+    return message.task?.state === "completed" ? message : undefined;
+  });
+  expect(settled.task?.result).toMatch(/^Draft PR: /);
+  const seen = JSON.parse(await readFile(record, "utf8")).env;
+  expect(seen).toMatchObject({
+    ANTHROPIC_BASE_URL: "https://llm.example.com",
+    ANTHROPIC_API_KEY: "sk-endpoint",
+    CLAUDE_CODE_OAUTH_TOKEN: null,
+    INFERENCE_API_KEY: null,
+  });
+  expect(await exited(worker.child)).toBe(0);
+  expect(worker.logs()).not.toContain("config.invalid");
 }, 60_000);
 
 it("exits without touching a job another machine already holds", async () => {
