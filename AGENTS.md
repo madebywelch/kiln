@@ -38,6 +38,6 @@ kiln runs an AI teammate in Slack (the agent) and the coding workers it hands re
 - The coding CLI never gets worker credentials (`GH_TOKEN`, `BOARD_TOKEN`); see `harnessEnv` in `worker/job.ts`. They reach a machine in a settings file the worker deletes, never in boat's per-machine `env`, which boat exports into every login shell.
 - Secret values never pass through the model, logs, or the board. Tools return secret names only.
 - kiln ships as a clean slate: the public code names no repos and no servers. A deployment's repos and MCP servers are in `kiln.config.yaml` (gitignored; `kiln.config.example.yaml` shows the shape), which `pnpm run deploy` checks and sends as `KILN_CONFIG`. The agent's repo-aware tools are `defineDynamic` and read it per call; a job's machine gets its own repo (`KILN_REPO`) and servers (`KILN_MCP_SERVERS`) only.
-- Deploy with `pnpm run deploy`, never bare `eve deploy`: machines download the deployed commit from GitHub, so it must be committed and pushed.
+- A push to `main` deploys the agent through Vercel's Git integration, and job machines run that same commit (`VERCEL_GIT_COMMIT_SHA`). Run `pnpm run deploy` after changing `kiln.config.yaml`, or to deploy without pushing; never bare `eve deploy`, which skips the config.
 - Third-party skills are vendored unmodified, with their licenses recorded in `skills/vendor.json`.
 - Biome does not format Markdown or skill folders; don't change that.

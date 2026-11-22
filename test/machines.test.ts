@@ -21,6 +21,7 @@ import {
   setupScript,
   WAITING_LABEL,
   WORKER_SETTINGS_PATH,
+  workerCode,
   workerSettings,
 } from "../lib/machines.ts";
 import { FakeBoat } from "./fixtures/fake-boat.ts";
@@ -91,6 +92,27 @@ describe("launchConfig", () => {
     });
     expect(config.subscriptions.claude).toEqual([{ id: "main", token: "claude-sub" }]);
     expect(config.jobTimeoutMinutes).toBe(180);
+  });
+});
+
+describe("workerCode", () => {
+  it("runs the commit this deployment was built from when Vercel names it, else the one deploy pinned", () => {
+    const git = {
+      VERCEL_GIT_PROVIDER: "github",
+      VERCEL_GIT_REPO_OWNER: "acme",
+      VERCEL_GIT_REPO_SLUG: "kiln",
+      VERCEL_GIT_COMMIT_SHA: "73f3805",
+    };
+    expect(workerCode({ ...git, KILN_WORKER_CODE: "https://old" })).toBe(
+      "https://codeload.github.com/acme/kiln/tar.gz/73f3805",
+    );
+    expect(workerCode({ ...git, VERCEL_GIT_PROVIDER: "gitlab", KILN_WORKER_CODE: "https://pinned" })).toBe(
+      "https://pinned",
+    );
+    expect(workerCode({})).toBeUndefined();
+    expect((launchConfig({ ...env, KILN_WORKER_CODE: "", ...git }) as LaunchConfig).code).toContain(
+      "73f3805",
+    );
   });
 });
 

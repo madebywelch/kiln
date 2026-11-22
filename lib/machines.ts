@@ -63,9 +63,27 @@ export interface LaunchConfig {
 }
 
 /**
- * Reads the launch configuration from the agent's environment: `KILN_WORKER_CODE`, written by
- * `pnpm run deploy`, every `WORKER_<NAME>` variable, passed to workers as `<NAME>`, and the Claude
- * subscriptions, `WORKER_CLAUDE_CODE_OAUTH_TOKEN[_<NAME>]`, which go only to the jobs that use them.
+ * The kiln code job machines run: the commit this deployment was built from, when Vercel says which
+ * (VERCEL_GIT_*: a Git-connected project, whether it deployed from a push or `pnpm run deploy`), else
+ * KILN_WORKER_CODE, which `pnpm run deploy` writes. So agent and workers always run the same commit.
+ */
+export function workerCode(env: Readonly<Record<string, string | undefined>>): string | undefined {
+  const { VERCEL_GIT_PROVIDER, VERCEL_GIT_REPO_OWNER, VERCEL_GIT_REPO_SLUG, VERCEL_GIT_COMMIT_SHA } = env;
+  if (
+    VERCEL_GIT_PROVIDER === "github" &&
+    VERCEL_GIT_REPO_OWNER &&
+    VERCEL_GIT_REPO_SLUG &&
+    VERCEL_GIT_COMMIT_SHA
+  ) {
+    return `https://codeload.github.com/${VERCEL_GIT_REPO_OWNER}/${VERCEL_GIT_REPO_SLUG}/tar.gz/${VERCEL_GIT_COMMIT_SHA}`;
+  }
+  return env.KILN_WORKER_CODE || undefined;
+}
+
+/**
+ * Reads the launch configuration from the agent's environment: the worker code (see workerCode),
+ * every `WORKER_<NAME>` variable, passed to workers as `<NAME>`, and the Claude subscriptions,
+ * `WORKER_CLAUDE_CODE_OAUTH_TOKEN[_<NAME>]`, which go only to the jobs that use them.
  */
 export function launchConfig(env: Readonly<Record<string, string | undefined>>): LaunchConfig | string {
   const settings: Record<string, string> = {};
@@ -73,8 +91,9 @@ export function launchConfig(env: Readonly<Record<string, string | undefined>>):
     if (key.startsWith(`${ENV_PREFIX}CLAUDE_CODE_OAUTH_TOKEN`)) continue;
     if (key.startsWith(ENV_PREFIX) && value) settings[key.slice(ENV_PREFIX.length)] = value;
   }
+  const code = workerCode(env);
   const missing = [
-    ...(env.KILN_WORKER_CODE ? [] : ["KILN_WORKER_CODE (deploy with pnpm run deploy)"]),
+    ...(code ? [] : ["KILN_WORKER_CODE (deploy with pnpm run deploy)"]),
     ...REQUIRED.filter((name) => !settings[name]).map((name) => `${ENV_PREFIX}${name}`),
   ];
   if (missing.length > 0) return `set ${missing.join(", ")} on the agent's Vercel project`;
@@ -83,7 +102,7 @@ export function launchConfig(env: Readonly<Record<string, string | undefined>>):
   return {
     enabled: enabledHarnesses,
     deployment,
-    code: env.KILN_WORKER_CODE as string,
+    code: code as string,
     settings,
     subscriptions: { claude: claudeSubscriptions(env) },
     jobTimeoutMinutes: Number(settings.JOB_TIMEOUT_MINUTES) || 180,
