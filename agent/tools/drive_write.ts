@@ -6,8 +6,8 @@ import { drive } from "../lib/drive.ts";
 export default defineTool({
   description: [
     "Create or replace a file in your drive. Write text with content, or save a file from your sandbox (a Slack attachment",
-    "under /workspace/.eve/attachments, a chart you made) with sandbox_path. Keep INDEX.md current when you add or move things.",
-    "Replacing a file replaces all of it: read it first and write the whole updated text.",
+    "under /workspace/.eve/attachments, a chart you made) with sandbox_path.",
+    "Replacing a file replaces all of it; to change part of a text file, such as a line in AGENTS.md, use drive_edit.",
   ].join(" "),
   inputSchema: z
     .object({

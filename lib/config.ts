@@ -5,7 +5,7 @@
 
 /**
  * The agent kiln runs: the name it goes by in Slack, answers to without an @mention, and signs its
- * commits and pull requests with. Its persona is agent/instructions.md; its Slack app has the same name.
+ * commits and pull requests with. Its identity and rules are its drive's AGENTS.md; its Slack app has the same name.
  */
 export const agent = { name: "robdog" } as const;
 

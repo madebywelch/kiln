@@ -39,6 +39,7 @@ export const stubsFor = (runsOn: string): ToolStub[] => [
     outcome: { response: { path: "x", contentType: "text/markdown", size: 0, text: "" } },
   },
   { id: "drive-write", tool: "drive_write", outcome: { response: { saved: "x", bytes: 1 } } },
+  { id: "drive-edit", tool: "drive_edit", outcome: { response: { path: "AGENTS.md", size: 1 } } },
   { id: "drive-move", tool: "drive_move", outcome: { response: { removed: "x" } } },
   { id: "drive-search", tool: "drive_search", outcome: { response: { hits: [] } } },
   { id: "drive-share", tool: "drive_share", outcome: { response: { shared: "x", bytes: 1 } } },

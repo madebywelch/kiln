@@ -1,9 +1,10 @@
-// The agent's drive: a folder of files it organizes however it likes. Two
-// files are there from the start and can't be deleted, moved, or renamed:
-// AGENTS.md, its conventions for itself, which it sees every turn, and
-// INDEX.md, its map of the drive, which it reads when it needs to. It writes
-// both; everything else is an empty canvas. Only AGENTS.md is shown each turn
-// because it changes rarely, so it doesn't break the prompt cache.
+// The agent's drive: a folder of files it organizes however it likes, and its
+// only memory. One file is there from the start and can't be deleted, moved, or
+// renamed: AGENTS.md, the agent's whole standing prompt (who it is, its rules,
+// the people it works with), shown every turn. Every change to it keeps the
+// previous version under .history/. Everything else it reads when it looks.
+
+import { STARTER_AGENTS_MD } from "./agents-starter.ts";
 
 export interface DriveEntry {
   readonly path: string;
@@ -24,16 +25,14 @@ export class DriveError extends Error {
 }
 
 /** The files every drive has, with what they start as. The agent edits them; nobody removes them. */
-export const DEFAULT_FILES: Readonly<Record<string, string>> = {
-  "AGENTS.md":
-    "# How I work\n\nConventions I keep for this drive and for the people I work with. Add to it when someone tells me how they want things done.\n\n- INDEX.md is my map of this drive: what is where, one line per file or folder. I read it when I need to find something and update it when I add, move, or remove things.\n",
-  "INDEX.md": "# Index\n\nWhat is in this drive and where, one line per file or folder.\n",
-};
+export const DEFAULT_FILES: Readonly<Record<string, string>> = { "AGENTS.md": STARTER_AGENTS_MD };
 /** The default file the agent sees every turn. */
 export const TURN_FILE = "AGENTS.md";
 const isDefault = (path: string) => path in DEFAULT_FILES;
-/** How much of AGENTS.md the agent sees every turn. */
-const MAX_TURN_CHARS = 6_000;
+/** How much of AGENTS.md the agent sees every turn: room for its rules, its people, and its decisions. */
+const MAX_TURN_CHARS = 24_000;
+/** Where earlier versions of AGENTS.md are kept. */
+export const HISTORY_FOLDER = ".history/";
 export const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_TEXT_READ = 100_000;
 const MAX_SEARCH_FILES = 500;
@@ -101,11 +100,58 @@ function checkSize(bytes: Uint8Array): void {
 const permanent = (path: string) =>
   new DriveError(`${path} is one of the drive's permanent files; edit it instead`);
 
+/**
+ * Writes a file. Before AGENTS.md changes, its current version is copied to .history/, so a bad
+ * edit of the agent's prompt can be undone.
+ */
+async function save(store: DriveStore, path: string, bytes: Uint8Array): Promise<void> {
+  if (path === TURN_FILE) {
+    const current = await store.read(path);
+    if (current) {
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      await store.write(`${HISTORY_FOLDER}AGENTS-${stamp}.md`, current.bytes, contentTypeOf(path));
+    }
+  }
+  await store.write(path, bytes, contentTypeOf(path));
+}
+
 export async function writeFile(store: DriveStore, raw: string, bytes: Uint8Array): Promise<string> {
   const path = drivePath(raw);
   checkSize(bytes);
-  await store.write(path, bytes, contentTypeOf(path));
+  await save(store, path, bytes);
   return path;
+}
+
+/**
+ * Changes part of a text file: replaces `find`, which must occur exactly once, with `replace`, or
+ * appends `replace` as a new line when `find` is omitted. Creates the file on an append.
+ */
+export async function editFile(
+  store: DriveStore,
+  raw: string,
+  replace: string,
+  find?: string,
+): Promise<{ path: string; size: number }> {
+  const path = drivePath(raw);
+  if (!isText(path)) throw new DriveError(`${path} is not a text file; use drive_write`);
+  const file = await store.read(path);
+  const text = file ? new TextDecoder().decode(file.bytes) : "";
+  let next: string;
+  if (find === undefined || find === "") {
+    next = text === "" || text.endsWith("\n") ? `${text}${replace}\n` : `${text}\n${replace}\n`;
+  } else {
+    if (!file) throw new DriveError(`no file at ${path}`);
+    const count = text.split(find).length - 1;
+    if (count === 0)
+      throw new DriveError(`the text to replace is not in ${path}; read it and copy it exactly`);
+    if (count > 1)
+      throw new DriveError(`the text to replace occurs ${count} times in ${path}; include more of it`);
+    next = text.replace(find, () => replace);
+  }
+  const bytes = new TextEncoder().encode(next);
+  checkSize(bytes);
+  await save(store, path, bytes);
+  return { path, size: bytes.byteLength };
 }
 
 export async function readText(
@@ -146,15 +192,13 @@ export async function removeFile(store: DriveStore, raw: string): Promise<string
   return path;
 }
 
-/** What the agent sees of its drive every turn: AGENTS.md. */
+/** The agent's prompt: AGENTS.md, cut at MAX_TURN_CHARS. Empty when the file is missing or blank. */
 export async function turnContext(store: DriveStore): Promise<string> {
   const file = await store.read(TURN_FILE);
   const text = file ? new TextDecoder().decode(file.bytes).trim() : "";
-  const shown =
-    text.length > MAX_TURN_CHARS
-      ? `${text.slice(0, MAX_TURN_CHARS)}\n[cut: ${TURN_FILE} is too long; tighten it]`
-      : text;
-  return `[your drive's ${TURN_FILE}, from kiln]\n${shown}`;
+  return text.length > MAX_TURN_CHARS
+    ? `${text.slice(0, MAX_TURN_CHARS)}\n[cut: ${TURN_FILE} is too long; tighten it]`
+    : text;
 }
 
 export interface SearchHit {

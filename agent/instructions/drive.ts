@@ -1,20 +1,27 @@
-// Before each turn, the agent sees its drive's AGENTS.md: its conventions,
-// which point to INDEX.md, its map of the drive. A user-role instruction joins
-// the conversation only when AGENTS.md changes, which is rare, so the prompt
-// cache holds. INDEX.md changes often, so the agent reads it when it needs to.
+// The agent's whole standing prompt is its drive's AGENTS.md: who it is, its
+// rules, and the people it works with, editable by the agent and by people.
+// kiln keeps no other prompt in code. It is read fresh each turn and sent as
+// the system prompt, so the agent always sees one current version.
+//
+// If the drive can't be read, or AGENTS.md is blank, the agent runs on the starter AGENTS.md rather
+// than on no prompt at all, and the failure is logged.
 
 import { defineDynamic, defineInstructions } from "eve/instructions";
+import { STARTER_AGENTS_MD } from "../../lib/agents-starter.ts";
 import { turnContext } from "../../lib/drive.ts";
 import { drive } from "../lib/drive.ts";
 
 export default defineDynamic(async (ctx) => {
-  const content = await ctx.memo(`drive-index:${ctx.session.id}:${ctx.turn?.id ?? "start"}`, async () => {
+  const content = await ctx.memo(`drive-prompt:${ctx.session.id}:${ctx.turn?.id ?? "start"}`, async () => {
     try {
-      return await turnContext(await drive());
+      const prompt = await turnContext(await drive());
+      if (prompt) return prompt;
+      console.error(JSON.stringify({ event: "drive.prompt_empty", using: "starter" }));
+      return STARTER_AGENTS_MD;
     } catch (error) {
-      console.error(JSON.stringify({ event: "drive.index_failed", error: String(error) }));
-      return "";
+      console.error(JSON.stringify({ event: "drive.prompt_failed", using: "starter", error: String(error) }));
+      return STARTER_AGENTS_MD;
     }
   });
-  return content ? defineInstructions({ content, role: "user" }) : null;
+  return defineInstructions({ content });
 });

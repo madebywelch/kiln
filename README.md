@@ -1,10 +1,10 @@
 # kiln
 
-kiln runs an AI teammate in Slack. It thinks through ideas with you, keeps one memory across every channel and DM, and hands work on your repos to coding agents running on your own subscriptions and keys. Mine is called robdog.
+kiln runs an AI teammate in Slack. It thinks through ideas with you, keeps one drive of notes and files across every channel and DM, and hands work on your repos to coding agents running on your own subscriptions and keys. Mine is called robdog.
 
 ```
 Slack ──> agent (eve on Vercel) ──start_job──> Vercel Board "jobs" <──claim── one boat.dev machine per job
-  ^          memory, skills, tools  │                 │                         Claude Code on your subscriptions
+  ^          drive, skills, tools   │                 │                         Claude Code on your subscriptions
   │                                 └─ launches ──────┼───────────────────────> the repo's secrets only
   │                                                   │ report=pending          clone, run, push, draft PR, files
   └───── job-reports schedule, every minute ──────────┘                         deleted when the job settles
@@ -21,14 +21,16 @@ Slack ──> agent (eve on Vercel) ──start_job──> Vercel Board "jobs" <
 | | |
 |---|---|
 | Hears | DMs, @mentions, its name, replies in threads it is part of, and other messages in channels it is in. A cheap decision model screens out what clearly needs nothing from it; the agent judges the rest and usually stays quiet. |
-| Sees | The channel's recent messages when a new thread starts, each thread's earlier replies, sender names, attached files, its memory, and its drive's `AGENTS.md`. |
+| Sees | The channel's recent messages when a new thread starts, each thread's earlier replies, sender names, attached files, and its drive's `AGENTS.md`. |
 | Says | Thread replies, top-level posts, new threads, Block Kit, emoji reactions, and files. Approvals and questions appear as buttons. |
 | Does | Starts, lists, inspects, cancels, and answers jobs. Schedules tasks for later or on a repeat ("every weekday at 9am Eastern"), which come back to it in the thread. Asks for repo secrets with a button and a private form. Searches the web. Runs code in its own sandbox. Explains how kiln works, from its `kiln` skill. |
 
-## Memory and the drive
+## The drive
 
-- **Memory** is one short document (8,000 characters) loaded into every conversation: people's preferences, timezones, how they work. It is the same everywhere the agent is.
-- **The drive** is a folder of files the agent organizes however it likes, in the same private Vercel Blob store. There is no required structure. Two files are always there and can't be removed, moved, or renamed: `INDEX.md`, the agent's map of the drive, and `AGENTS.md`, its conventions for the drive and the people it works with. It edits both. It sees `AGENTS.md` every turn and reads `INDEX.md` when it needs to; `INDEX.md` changes often, so showing it every turn would break the prompt cache.
+The drive is the agent's only memory: a folder of files it organizes however it likes, in a private Vercel Blob store under `kiln/drive/`. It is kiln's own, not eve's, so it survives a move off eve.
+
+- **`AGENTS.md`** is the agent's whole standing prompt, sent as its system prompt every turn (up to 24,000 characters): who it is, how it talks and when it speaks, how it runs jobs, what it can do, the people it works with, and standing decisions. kiln keeps no other prompt in code. It is always there and can't be removed, moved, or renamed. The agent edits it a line at a time with `drive_edit`, and changes its rules only when someone asks it to; you can edit it too, in the Blob store. Every change keeps the previous version in `.history/`. kiln writes the starter version ([lib/agents-starter.ts](lib/agents-starter.ts)) only when the drive has none, and falls back to it if the drive can't be read (`drive.prompt_failed` in the logs).
+- **Everything else** the agent reads when it looks, with `drive_list`, `drive_search`, and `drive_read`. There is no required structure.
 - It reads what it keeps on a topic before working on it, and writes what is worth keeping before it ends a turn. It can search the drive, save Slack attachments into it, and post files from it.
 
 ## Jobs and models
@@ -58,12 +60,12 @@ What you ask for wins over the repo's defaults for that kind of job, which win o
 
 | To change | Edit | Then |
 |---|---|---|
-| The agent's name | `agent.name` in [lib/config.ts](lib/config.ts), its persona, and its Slack app | redeploy; a new name starts a fresh memory |
+| The agent's name | `agent.name` in [lib/config.ts](lib/config.ts), its Slack app, and the first line of its `AGENTS.md` | redeploy, then update `AGENTS.md`; the drive keeps its files |
 | Repos, their default models, and their MCP servers | `kiln.config.yaml`, gitignored; copy [kiln.config.example.yaml](kiln.config.example.yaml) | `pnpm run deploy` |
 | Global default models | `defaultSelection` in [lib/config.ts](lib/config.ts) | `pnpm run deploy` |
 | How many jobs run at once per subscription or harness, and machine size | `jobsPerSubscription`, `machineLimits`, and `machineType` in [lib/config.ts](lib/config.ts) | `pnpm run deploy` |
 | Claude subscriptions | `WORKER_CLAUDE_CODE_OAUTH_TOKEN` and `WORKER_CLAUDE_CODE_OAUTH_TOKEN_<NAME>` on the Vercel project | `pnpm run deploy` |
-| The agent's persona and rules | [agent/instructions.md](agent/instructions.md) | `pnpm run deploy` |
+| The agent's identity, rules, and what it knows about people | `AGENTS.md` in its drive (Blob, `kiln/drive/`); the starter for a new drive is [lib/agents-starter.ts](lib/agents-starter.ts) | nothing: read fresh every turn |
 | The agent's skills | [agent/skills/](agent/skills) | `pnpm run deploy` |
 | The workers' house rules | [worker/instructions.md](worker/instructions.md) | `pnpm run deploy` |
 | The workers' skills | [skills/workers/](skills/workers) | `pnpm run deploy` |
@@ -77,7 +79,7 @@ Third-party skills are vendored unmodified under their own licenses; [skills/ven
 ## Set it up
 
 1. **Agent.** `pnpm install`, then `pnpm exec eve link`. Use Vercel Pro: the report schedule runs every minute, and Hobby allows one run per 15 minutes.
-2. **Memory.** `pnpm exec eve integration setup file-memory`.
+2. **Storage.** `pnpm exec eve integration setup file-memory`. It provisions the private Blob store the drive lives in (`EVE_MEMORY_BLOB_STORE_ID`); kiln uses the store, not eve's memory.
 3. **Board.** A team's default grants let every project read, post, and label. If yours were narrowed: `pnpm exec vb grants create --project <project> --environment production --can 'jobs=read,post,label'`.
 4. **Slack.** Create the app from the manifest in [docs/slack.md](docs/slack.md), then set `SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET` on the Vercel project.
 5. **Repos.** `cp kiln.config.example.yaml kiln.config.yaml` and list your repos. kiln ships naming none, and the file is gitignored.
@@ -108,7 +110,7 @@ pnpm exec vb inspect             # the board's UI, served from your machine
 
 ## Trust
 
-- Anyone in the Slack workspace can talk to the agent and start jobs, and it has one memory for everyone. Restrict senders in `agent/channels/slack.ts` and scope `agent/memory.ts` if the workspace stops being private.
+- Anyone in the Slack workspace can talk to the agent and start jobs, and it has one drive for everyone. Restrict senders in `agent/channels/slack.ts` if the workspace stops being private.
 - Other people's messages reach the model as conversation, and its instructions say so. That is a soft boundary.
 - Coding CLIs run with permission prompts off, alone on their job's machine, without the worker's GitHub or Board credentials. Protect each repo's default branch: workers push only `kiln/*` branches.
 - A job's machine has its own repo's secrets and none of another repo's, and none of your boat, GitHub, or agent logins. The coding CLI can read its repo's secrets; that is what they are for.
@@ -125,7 +127,7 @@ pnpm eval         # the agent's real model on scripted conversations; spends tok
 
 | Path | What it is |
 |---|---|
-| `agent/` | The eve agent: instructions, Slack channel, tools, skills, memory, the report schedule |
+| `agent/` | The eve agent: instructions, Slack channel, tools, skills, the report schedule |
 | `lib/` | Shared by agent and workers: config, the job contract, Board operations |
 | `worker/` | The worker: claim loop, one job's run, harness adapters, skill sync, house rules |
 | `skills/workers/` | Skills installed into every worker's coding CLIs |

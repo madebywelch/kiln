@@ -4,7 +4,7 @@ kiln runs an AI teammate in Slack (the agent) and the coding workers it hands re
 
 ## Shape
 
-- `agent/`: an eve agent deployed to Vercel. Slack in, tools, skills, memory, and two per-minute schedules: reports and machines. `channels/slack-interactivity.ts` serves Slack's buttons and forms.
+- `agent/`: an eve agent deployed to Vercel. Slack in, tools, skills, and two per-minute schedules: reports and machines. `channels/slack-interactivity.ts` serves Slack's buttons and forms.
 - `worker/`: the process on a job's boat.dev machine. Claims its one job from Vercel Board, runs a coding CLI headless, pushes, opens a draft PR, settles, exits.
 - `lib/`: what both sides share. `config.ts` (defaults, machine limits, the agent's name: the same for everyone), `deployment.ts` (the schema for a deployment's repos and MCP servers, which live in the gitignored `kiln.config.yaml`), `jobs.ts` (the job contract), `board-jobs.ts` (Board operations), `boat.ts` (the boat API), `machines.ts` (launching and reconciling job machines), `secrets.ts` (repo secrets in boat environments).
 - `scripts/deploy.ts`: deploys the agent and pins the machines' code to the commit. `scripts/boat-workers.ts`: shows machines and their logs.
@@ -25,7 +25,8 @@ kiln runs an AI teammate in Slack (the agent) and the coding workers it hands re
 | worker | The process on a machine: claims its job by ID, runs it, exits. |
 | repo secrets | A repo's environment variables, in boat environment `kiln-<repo>`, which passes secrets and nothing else. Set through a Slack form, never through the model. |
 | report | A settled job's result. The worker labels it `report=pending`; the agent's schedule delivers it to the Slack origin and clears the label. |
-| drive | The agent's files in Vercel Blob (`kiln/drive/`), organized however it likes. `AGENTS.md` (shown every turn) and `INDEX.md` (read on demand, so it never breaks the prompt cache) are always there, editable but permanent (`lib/drive.ts`). |
+| drive | The agent's only memory: its files in Vercel Blob (`kiln/drive/`), organized however it likes (`lib/drive.ts`). kiln's own, not eve's memory. |
+| `AGENTS.md` (drive) | The agent's whole standing prompt, in its drive, sent as the system prompt every turn: identity, rules, capabilities, people, decisions. Deployment data, edited by the agent and people; previous versions in `.history/`. The code has no other agent prompt: `lib/agents-starter.ts` seeds a new drive once and is the fallback. Not this repo's own `AGENTS.md`, which is for coding agents. |
 | artifacts | Files a CLI saves in `.kiln/artifacts/`; attached to the report and posted to Slack, never committed. |
 | house rules | `worker/instructions.md`, added to every job's prompt. |
 
@@ -33,7 +34,7 @@ kiln runs an AI teammate in Slack (the agent) and the coding workers it hands re
 
 - Keep the docs current in the same change as the code: `README.md`, `docs/`, this file, and the agent's own `agent/skills/kiln/SKILL.md`, which is how the agent explains kiln to people. A change that makes any of them wrong is not done.
 - `pnpm check` must pass: biome, tsc, vitest. Tests need no network or keys; keep it that way.
-- Run `pnpm eval` on at least two vendors after changing the agent's instructions or tool descriptions.
+- Run `pnpm eval` on at least two vendors after changing the starter prompt (`lib/agents-starter.ts`) or tool descriptions. Evals run on the starter, not on a deployment's drive.
 - The repo is public. Never commit secrets, account IDs, or private repo details; secrets live in `.env` (ignored) and the Vercel project.
 - The coding CLI never gets worker credentials (`GH_TOKEN`, `BOARD_TOKEN`); see `harnessEnv` in `worker/job.ts`. They reach a machine in a settings file the worker deletes, never in boat's per-machine `env`, which boat exports into every login shell.
 - Secret values never pass through the model, logs, or the board. Tools return secret names only.
