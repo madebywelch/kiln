@@ -102,6 +102,15 @@ switch (mode) {
     writeFileSync(join(cwd, "theme.css"), "body { background: snow; }\n");
     finish("Added snow to the landing page.\n\nVerified with the unit tests.");
     break;
+  case "pr-file":
+    writeFileSync(join(cwd, "theme.css"), "body { background: snow; }\n");
+    mkdirSync(join(cwd, ".kiln"), { recursive: true });
+    writeFileSync(
+      join(cwd, ".kiln", "pr.md"),
+      "## Snow on the landing page\n\nAdds a snow layer. Verified with the unit tests.\n",
+    );
+    finish("Added snow. Screenshots are in .kiln/artifacts/.");
+    break;
   case "commit":
     writeFileSync(join(cwd, "theme.css"), "body { background: snow; }\n");
     execFileSync("git", ["add", "-A"], { cwd });
@@ -131,6 +140,9 @@ switch (mode) {
     for (const name of mode === "project" ? repos : repos.slice(-1)) {
       writeFileSync(join(cwd, name, "theme.css"), "body { background: snow; }\n");
     }
+    mkdirSync(join(cwd, ".kiln"), { recursive: true });
+    writeFileSync(join(cwd, ".kiln", "pr.md"), "Snow across the shop.\n");
+    writeFileSync(join(cwd, ".kiln", `pr-${repos[0]}.md`), `Snow in ${repos[0]}.\n`);
     finish(`Changed ${mode === "project" ? repos.join(" and ") : repos.at(-1)}.`);
     break;
   }

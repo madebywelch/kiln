@@ -29,7 +29,7 @@ kiln runs an AI teammate in Slack (the agent) and the coding workers it hands re
 | report | A settled job's result. The worker labels it `report=pending`; the agent's schedule delivers it to the Slack origin and clears the label. |
 | drive | The agent's only memory: its files in Vercel Blob (`kiln/drive/`), organized however it likes (`lib/drive.ts`). kiln's own, not eve's memory. |
 | `AGENTS.md` (drive) | The agent's whole standing prompt, in its drive, sent as the system prompt every turn: identity, rules, capabilities, people, decisions. Deployment data, edited by the agent and people; previous versions in `.history/`. The code has no other agent prompt: `lib/agents-starter.ts` seeds a new drive once and is the fallback. Not this repo's own `AGENTS.md`, which is for coding agents. |
-| job files | Files travel with a job both ways as Board attachments on its task, 10 files of 25 MB each way (`lib/jobs.ts`). In: `start_job`'s `files` (drive or sandbox paths, `lib/job-files.ts`), downloaded to `.kiln/inputs/` before the CLI starts. Out: artifacts. Never committed from `.kiln/`. |
+| job files | Files travel with a job both ways as Board attachments on its task, 10 files of 25 MB each way (`lib/jobs.ts`). In: `start_job`'s `files` (drive or sandbox paths, `lib/job-files.ts`), downloaded to `.kiln/inputs/` before the CLI starts. Out: artifacts. The CLI writes the PR description to `.kiln/pr.md`, for reviewers and free of kiln; kiln adds no footer. Never committed from `.kiln/`. |
 | artifacts | Files a CLI saves in `.kiln/artifacts/`; attached to the report, posted to Slack, and saved in the drive under `jobs/<id>/`. |
 | house rules | `worker/instructions.md`, added to every job's prompt. |
 

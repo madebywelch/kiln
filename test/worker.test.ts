@@ -349,7 +349,9 @@ describe("project jobs", () => {
       "theme.css",
     );
     expect(pullRequests.map((pr) => pr.github).sort()).toEqual(["acme/cloud", "acme/web"]);
-    expect(pullRequests[0]?.body).toContain("project shop: web, cloud");
+    const bodies = Object.fromEntries(pullRequests.map((pr) => [pr.github, pr.body]));
+    expect(bodies).toEqual({ "acme/cloud": "Snow in cloud.", "acme/web": "Snow across the shop." });
+    expect(record.stdin).toContain("`.kiln/pr-<repo>.md`");
     expect(outcome).toMatchObject({ kind: "completed" });
     expect(outcome.kind === "completed" && outcome.result).toMatch(/^Draft PRs: /);
   });
@@ -368,6 +370,26 @@ describe("project jobs", () => {
     expect(outcome.kind === "completed" && outcome.result).toBe(
       "Draft PR: https://github.com/acme/web/pull/7",
     );
+  });
+});
+
+describe("pull request descriptions", () => {
+  it("uses the description the CLI wrote for reviewers, not its Slack report, and adds nothing about kiln", async () => {
+    await postJob(team, spec);
+    const { record } = await work({ mode: "pr-file" });
+    expect(record.stdin).toContain("Write the pull request's description to `.kiln/pr.md`");
+    expect(record.stdin).toContain("leave out kiln, this job, its files, and `.kiln/`");
+    expect(pullRequests).toHaveLength(1);
+    expect(pullRequests[0]?.body).toBe(
+      "## Snow on the landing page\n\nAdds a snow layer. Verified with the unit tests.",
+    );
+  });
+
+  it("falls back to the report when the CLI wrote no description, still with no kiln footer", async () => {
+    await postJob(team, spec);
+    await work({ mode: "change" });
+    expect(pullRequests[0]?.body).toBe("Added snow to the landing page.\n\nVerified with the unit tests.");
+    expect(pullRequests[0]?.body).not.toMatch(/kiln|Job #/);
   });
 });
 

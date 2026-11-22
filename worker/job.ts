@@ -149,6 +149,25 @@ const SECRET = /^SECRET:\s*([A-Z][A-Z0-9_]*(?:\s*,\s*[A-Z][A-Z0-9_]*)*)\s*(?:[:\
 export const ARTIFACTS_DIR = ".kiln/artifacts";
 /** Where the files the agent attached to the job are, relative to the clone. */
 export const INPUTS_DIR = ".kiln/inputs";
+/**
+ * Where the CLI writes the pull request's description, for the repo's reviewers. The report is for
+ * Slack and talks about the job; a PR is the repo's, so nothing about kiln goes in it.
+ */
+export const PR_FILE = ".kiln/pr.md";
+/** GitHub's limit on a pull request body. */
+const MAX_PR_BODY = 65_000;
+
+/** The PR description the CLI wrote, for one repo of a project or for all: `.kiln/pr-<key>.md`, else `.kiln/pr.md`. */
+export async function pullRequestBody(workspace: string, repoKey: string): Promise<string | undefined> {
+  for (const file of [`.kiln/pr-${repoKey}.md`, PR_FILE]) {
+    const text = await readFile(join(workspace, file), "utf8").then(
+      (body) => body.trim(),
+      () => "",
+    );
+    if (text) return clip(text, MAX_PR_BODY);
+  }
+  return undefined;
+}
 const MAX_ARTIFACTS = MAX_JOB_FILES;
 const MAX_ARTIFACT_MB = MAX_JOB_FILE_BYTES / 1024 / 1024;
 
@@ -486,9 +505,10 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string): Promise<
   // A repo gets a pull request when this run pushed to it, or an earlier run of the job did.
   const changed = checkouts.filter((checkout) => pushed.includes(checkout) || checkout.resumed);
   if (changed.length === 0) return { kind: "completed", result: "No changes made.", report };
-  const across = single ? "" : ` · project ${spec.repo}: ${repos.map((repo) => repo.key).join(", ")}`;
   const urls: string[] = [];
   for (const checkout of changed) {
+    const written = await pullRequestBody(jobDir, checkout.key);
+    if (!written) deps.log("job.pr_body_missing", { task: id, repo: checkout.key });
     urls.push(
       await deps.openPullRequest({
         cwd: checkout.dir,
@@ -496,7 +516,7 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string): Promise<
         base: checkout.base,
         head: branch,
         title: spec.title,
-        body: `${report}\n\n---\nJob #${id} by ${agentName()} on kiln · ${describeSelection(spec)} · ${deps.profile}${across}`,
+        body: written ?? clip(report, MAX_PR_BODY),
       }),
     );
   }
@@ -620,15 +640,21 @@ export function buildPrompt(
   }
   if (guidance?.trim()) lines.push("# House rules", "", guidance.trim(), "");
   lines.push("# How to work", "");
+  const prFile = project
+    ? `\`${PR_FILE}\` at ${root}, or \`.kiln/pr-<repo>.md\` (such as \`.kiln/pr-${repos[0]?.key}.md\`) for a repo whose pull request needs its own`
+    : `\`${PR_FILE}\` at ${root}`;
+  const prRule = `- Write the pull request's description to ${prFile}: what changed and why, and how you verified it, for the repo's reviewers. It is the repo's, not this job's: leave out kiln, this job, its files, and \`.kiln/\`. It is never committed.`;
   if (spec.kind === "change" && project) {
     lines.push(
       "- Make the change on the job's branch in each repo you touch, and commit it there with clear messages.",
       "- Do not push, open pull requests, or switch branches. The worker pushes each repo you committed to and opens a draft pull request for each after you finish.",
+      prRule,
     );
   } else if (spec.kind === "change") {
     lines.push(
       "- Make the change on this branch and commit it with clear messages.",
       "- Do not push, open a pull request, or switch branches. The worker pushes and opens a draft pull request after you finish.",
+      prRule,
     );
   } else {
     lines.push("- Investigate and report. Do not commit, push, or open pull requests.");
