@@ -2,7 +2,7 @@ import { defaultSlackAuth, slackChannel } from "eve/channels/slack";
 import { agent } from "../../lib/config.ts";
 import { channelHistory, clearlyNotForAgent } from "../lib/ambient.ts";
 import { route } from "../lib/route.ts";
-import { slackCredentials } from "../lib/slack.ts";
+import { conversationContext, slackCredentials } from "../lib/slack.ts";
 
 export default slackChannel({
   credentials: slackCredentials,
@@ -34,6 +34,9 @@ export default slackChannel({
         delivered: result !== null,
       }),
     );
-    return result;
+    if (!result) return null;
+    // Which channel this is, by name: eve passes only its ID, and a channel named after a project says what it's about.
+    const where = await conversationContext(message.channelId, message.teamId);
+    return where ? { ...result, context: [...(result.context ?? []), where] } : result;
   },
 });

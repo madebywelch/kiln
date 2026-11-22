@@ -82,6 +82,8 @@ After changing scopes or events, reinstall the app from **Install App**.
 | A top-level message in a channel robdog is in | A decision model screens it (fails open). If it passes, robdog sees it with the channel's recent messages and takes part only if it has something useful to add. Its name in the text, or an audio attachment, skips the screen. |
 | A message from a bot | Ignored. |
 
+Every message that reaches robdog carries the conversation's name, such as "#guaca" or "a direct message", looked up once per channel with `conversations.info` (`channels:read`, `groups:read`). eve itself passes only the channel's ID, and a channel named after a project tells robdog which project a message is about.
+
 A silent turn leaves no trace in Slack: no status, no reply. Screening decisions are logged as `ambient.screen` with the probability and outcome, never the text.
 
 Every top-level message in a busy channel costs one screening call, and the ones that pass cost a turn. Remove robdog from channels where that isn't worth it.

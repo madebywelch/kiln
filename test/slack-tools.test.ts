@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { conversationContext, conversationLabel } from "../agent/lib/slack.ts";
 import slackHistory from "../agent/tools/slack_history.ts";
 import slackPost from "../agent/tools/slack_post.ts";
 import slackReact from "../agent/tools/slack_react.ts";
@@ -159,5 +160,33 @@ describe("slack_history", () => {
       ["ada <@U1>", "first"],
       ["bob <@U2>", "second"],
     ]);
+  });
+});
+
+describe("conversationContext", () => {
+  it("names a channel once per process, and says a DM is a DM", async () => {
+    replies["conversations.info"] = (body) =>
+      body.channel === "D1"
+        ? { ok: true, channel: { id: "D1", is_im: true } }
+        : { ok: true, channel: { id: body.channel, name: "guaca" } };
+    expect(await conversationContext("C_GUACA", "T1")).toBe(
+      "This conversation is in the Slack channel #guaca.",
+    );
+    expect(await conversationContext("C_GUACA", "T1")).toBe(
+      "This conversation is in the Slack channel #guaca.",
+    );
+    expect(await conversationContext("D1", "T1")).toBe("This conversation is in a direct message.");
+    expect(calls.filter((call) => call.method === "conversations.info")).toHaveLength(2);
+  });
+
+  it("gives no context, rather than failing the message, when Slack refuses or names nothing", async () => {
+    replies["conversations.info"] = () => ({ ok: false, error: "missing_scope" });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(await conversationContext("C_SECRET", "T1")).toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('"error":"missing_scope"'));
+    warn.mockRestore();
+    replies["conversations.info"] = () => ({ ok: true, channel: {} });
+    expect(await conversationContext("C_NAMELESS", "T1")).toBeUndefined();
+    expect(conversationLabel({ is_mpim: true, name: "mpdm-a--b" })).toBe("a group direct message");
   });
 });

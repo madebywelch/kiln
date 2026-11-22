@@ -52,6 +52,45 @@ export function botUserId(teamId?: string): Promise<string | undefined> {
   return selfId;
 }
 
+interface ConversationInfo {
+  readonly name?: string;
+  readonly is_im?: boolean;
+  readonly is_mpim?: boolean;
+}
+
+/** Where a conversation is, in words the model reads: "#guaca", a DM, or a group DM. */
+export function conversationLabel(info: ConversationInfo): string | undefined {
+  if (info.is_im) return "a direct message";
+  if (info.is_mpim) return "a group direct message";
+  return info.name ? `#${info.name}` : undefined;
+}
+
+const conversations = new Map<string, string>();
+
+/**
+ * One line of per-turn context naming the conversation a message is in, such as "This conversation
+ * is in the Slack channel #guaca." eve gives the agent only the channel's ID. Cached for the life of
+ * the process; undefined on any Slack error, so a missing scope costs context, not the message.
+ */
+export async function conversationContext(channelId: string, teamId?: string): Promise<string | undefined> {
+  let label = conversations.get(channelId);
+  if (!label) {
+    try {
+      const response = await slackApi("conversations.info", { channel: channelId }, teamId);
+      label = conversationLabel((response.channel ?? {}) as ConversationInfo);
+    } catch (error) {
+      const code = error instanceof SlackApiError ? error.code : String(error);
+      console.warn(JSON.stringify({ event: "slack.conversation_unnamed", channel: channelId, error: code }));
+      return undefined;
+    }
+    if (!label) return undefined;
+    conversations.set(channelId, label);
+  }
+  return label.startsWith("#")
+    ? `This conversation is in the Slack channel ${label}.`
+    : `This conversation is in ${label}.`;
+}
+
 const names = new Map<string, string>();
 
 /** A person's display name, cached for the life of the process. Falls back to the ID. */
