@@ -50,6 +50,11 @@ export const stubsFor = (runsOn: string): ToolStub[] => [
     },
   },
   {
+    id: "transcribe",
+    tool: "transcribe_audio",
+    outcome: { response: { transcript: "Can you add a dark mode toggle to the website?" } },
+  },
+  {
     id: "list-secrets",
     tool: "list_secrets",
     outcome: { response: { repo: "web", set: [], missingForMcp: [] } },

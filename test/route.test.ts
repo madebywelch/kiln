@@ -98,6 +98,20 @@ describe("route", () => {
   });
 });
 
+describe("clearlyNotForAgent", () => {
+  it("never screens out a voice note, whose words the screen cannot read", async () => {
+    const { clearlyNotForAgent } = await import("../agent/lib/ambient.ts");
+    const voiceNote = {
+      text: "",
+      channelId: "C1",
+      ts: "1",
+      attachments: [{ id: "F1", type: "audio", name: "audio_message.m4a", mimeType: "audio/mp4" }],
+    };
+    // Resolves before any decision-model call: no network, no keys.
+    await expect(clearlyNotForAgent(voiceNote as never, history)).resolves.toBe(false);
+  });
+});
+
 describe("nameMatcher", () => {
   it("finds the agent's name, spaced or not, and nothing else", async () => {
     const { nameMatcher } = await import("../agent/lib/ambient.ts");

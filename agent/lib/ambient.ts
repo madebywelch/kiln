@@ -69,6 +69,8 @@ export async function clearlyNotForAgent(
   history: readonly SessionHistoryMessage[],
 ): Promise<boolean> {
   if (NAME.test(message.text)) return false;
+  // The screen reads text only, and a voice note's words are in its audio: the agent hears it first.
+  if (message.attachments.some((file) => file.type === "audio")) return false;
   const transcript = history
     .slice(-SCREEN_MESSAGES)
     .map((entry) => (entry.role === "assistant" ? `${agent.name}: ${entry.text}` : entry.text).slice(0, 500));

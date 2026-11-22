@@ -90,6 +90,7 @@ Third-party skills are vendored unmodified under their own licenses; [skills/ven
 | `KILN_MODEL` | `anthropic/claude-fable-5.2` | The agent's own model, an AI Gateway ID. No key is needed on Vercel. |
 | `KILN_REASONING` | `high` | Its reasoning level: `low`, `medium`, `high`, or `xhigh`. |
 | `KILN_MODEL_URL`, `KILN_MODEL_KEY` | unset | Any OpenAI-compatible endpoint instead of AI Gateway, such as OpenRouter. |
+| `KILN_TRANSCRIPTION_MODEL` | `openai/gpt-4o-mini-transcribe` | The AI Gateway model that transcribes voice notes. Always AI Gateway, even with `KILN_MODEL_URL`. |
 | `BOAT_API_KEY` | required for jobs | Launches and deletes job machines and writes repo secrets. |
 | `WORKER_*` | required for jobs | The workers' credentials, passed to each machine without the prefix. See [docs/workers.md](docs/workers.md). |
 | `KILN_WORKER_CODE` | written by `pnpm run deploy` | The kiln commit job machines run. |
