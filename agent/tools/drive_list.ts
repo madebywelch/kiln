@@ -4,13 +4,9 @@ import { driveFolder } from "../../lib/drive.ts";
 import { drive } from "../lib/drive.ts";
 
 export default defineTool({
-  description:
-    "List the files in your drive, or in one of its folders (projects/thanksgiving). Your drive is where you keep track of every project: see README.md in it.",
+  description: "List the files in your drive, or in one of its folders.",
   inputSchema: z.object({
-    folder: z
-      .string()
-      .optional()
-      .describe("A folder, such as projects/thanksgiving. Default: the whole drive."),
+    folder: z.string().optional().describe("A folder, such as thanksgiving. Default: the whole drive."),
   }),
   label: false,
   async execute({ folder }) {

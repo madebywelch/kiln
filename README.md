@@ -21,15 +21,15 @@ Slack ──> agent (eve on Vercel) ──start_job──> Vercel Board "jobs" <
 | | |
 |---|---|
 | Hears | DMs, @mentions, its name, replies in threads it is part of, and other messages in channels it is in. A cheap decision model screens out what clearly needs nothing from it; the agent judges the rest and usually stays quiet. |
-| Sees | The channel's recent messages when a new thread starts, each thread's earlier replies, sender names, attached files, its memory, and the index of its drive. |
+| Sees | The channel's recent messages when a new thread starts, each thread's earlier replies, sender names, attached files, its memory, and its drive's `AGENTS.md`. |
 | Says | Thread replies, top-level posts, new threads, Block Kit, emoji reactions, and files. Approvals and questions appear as buttons. |
 | Does | Starts, lists, inspects, cancels, and answers jobs. Schedules tasks for later or on a repeat ("every weekday at 9am Eastern"), which come back to it in the thread. Asks for repo secrets with a button and a private form. Searches the web. Runs code in its own sandbox. Explains how kiln works, from its `kiln` skill. |
 
 ## Memory and the drive
 
 - **Memory** is one short document (8,000 characters) loaded into every conversation: people's preferences, timezones, how they work. It is the same everywhere the agent is.
-- **The drive** is where the agent keeps track of projects: a folder of files in the same private Vercel Blob store. Each project is a folder, `projects/<slug>/`, with a `PROJECT.md` holding its summary, status, goal, people, links to threads, jobs, and PRs, and dated decisions. Everything else in the folder is the agent's to organize: notes, plans, research, screenshots. kiln keeps a `README.md` at the root that explains the drive to the agent, and it checks that every `PROJECT.md` keeps its summary and status.
-- The agent sees the project index every turn, reads a project's `PROJECT.md` before working on it, and writes what is worth keeping before it ends a turn. It can search the drive, save Slack attachments into it, and post files from it.
+- **The drive** is a folder of files the agent organizes however it likes, in the same private Vercel Blob store. There is no required structure. Two files are always there and can't be removed, moved, or renamed: `INDEX.md`, the agent's map of the drive, and `AGENTS.md`, its conventions for the drive and the people it works with. It edits both. It sees `AGENTS.md` every turn and reads `INDEX.md` when it needs to; `INDEX.md` changes often, so showing it every turn would break the prompt cache.
+- It reads what it keeps on a topic before working on it, and writes what is worth keeping before it ends a turn. It can search the drive, save Slack attachments into it, and post files from it.
 
 ## Jobs and models
 

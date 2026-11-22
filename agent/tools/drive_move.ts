@@ -5,7 +5,7 @@ import { drive } from "../lib/drive.ts";
 
 export default defineTool({
   description:
-    "Move or rename a file in your drive, or remove it by leaving out to. Use it to keep the drive tidy: archive what is stale, rename what grew past its name.",
+    "Move or rename a file in your drive, or remove it by leaving out to. INDEX.md and AGENTS.md stay where they are.",
   inputSchema: z.object({
     from: z.string(),
     to: z.string().optional().describe("The new path. Leave it out to remove the file."),

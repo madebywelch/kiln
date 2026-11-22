@@ -1,11 +1,9 @@
-// The agent's drive: a folder of files it organizes itself, so it can keep many
-// initiatives straight. kiln owns two things in it: README.md, which explains
-// the drive to the agent, and the rule that every project folder has a
-// PROJECT.md. Everything else is the agent's to arrange: notes, plans,
-// decisions, research, assets. The agent sees the project index on every turn
-// and opens a project's files when the conversation is about it.
-
-import { agent } from "./config.ts";
+// The agent's drive: a folder of files it organizes however it likes. Two
+// files are there from the start and can't be deleted, moved, or renamed:
+// AGENTS.md, its conventions for itself, which it sees every turn, and
+// INDEX.md, its map of the drive, which it reads when it needs to. It writes
+// both; everything else is an empty canvas. Only AGENTS.md is shown each turn
+// because it changes rarely, so it doesn't break the prompt cache.
 
 export interface DriveEntry {
   readonly path: string;
@@ -25,10 +23,17 @@ export class DriveError extends Error {
   override readonly name = "DriveError";
 }
 
-export const README = "README.md";
-export const PROJECT_FILE = "PROJECT.md";
-export const PROJECTS = "projects";
-export const STATUSES = ["active", "paused", "done"] as const;
+/** The files every drive has, with what they start as. The agent edits them; nobody removes them. */
+export const DEFAULT_FILES: Readonly<Record<string, string>> = {
+  "AGENTS.md":
+    "# How I work\n\nConventions I keep for this drive and for the people I work with. Add to it when someone tells me how they want things done.\n\n- INDEX.md is my map of this drive: what is where, one line per file or folder. I read it when I need to find something and update it when I add, move, or remove things.\n",
+  "INDEX.md": "# Index\n\nWhat is in this drive and where, one line per file or folder.\n",
+};
+/** The default file the agent sees every turn. */
+export const TURN_FILE = "AGENTS.md";
+const isDefault = (path: string) => path in DEFAULT_FILES;
+/** How much of AGENTS.md the agent sees every turn. */
+const MAX_TURN_CHARS = 6_000;
 export const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_TEXT_READ = 100_000;
 const MAX_SEARCH_FILES = 500;
@@ -80,84 +85,25 @@ export function driveFolder(raw: string | undefined): string {
   return `${drivePath(raw)}/`;
 }
 
-export const README_TEXT = `# ${agent.name}'s drive
-
-This drive is yours. Use it to keep track of everything people are working on, so nothing depends on one Slack thread.
-
-## What kiln asks of you
-
-- **One folder per project:** \`projects/<slug>/\`, where a project is an initiative people talk about ("thanksgiving", "analytics"), not necessarily a repo. A project can touch several repos; a repo can serve several projects.
-- **Every project folder has a PROJECT.md**, starting with this frontmatter:
-
-  \`\`\`
-  ---
-  summary: One line on what it is and where it stands.
-  status: active        # active, paused, or done
-  ---
-  \`\`\`
-
-  Below it: the goal, who cares about it, links to its Slack threads, jobs, and pull requests, decisions with dates, and open questions. Keep it current: it is what you read first when the project comes up.
-
-## Everything else is yours to arrange
-
-Notes, plans, research, meeting summaries, specs, checklists, screenshots, and other assets, in whatever folders make sense. Some habits that help:
-
-- Update a file rather than writing a new one that says nearly the same thing.
-- Date what you add, so later you can tell what is current.
-- Link files to each other and to Slack threads, jobs, and PRs instead of copying them.
-- Knowledge that spans projects (people, conventions, a glossary) can live at the root.
-- Move or remove what is stale. A smaller, accurate drive beats a large, stale one.
-
-This README is kiln's; you can't change it.
-`;
-
-/** Writes README.md if it is missing, so the drive explains itself. */
-export async function ensureReadme(store: DriveStore): Promise<void> {
-  if (!(await store.read(README))) {
-    await store.write(README, new TextEncoder().encode(README_TEXT), contentTypeOf(README));
+/** Writes any default file that is missing. */
+export async function ensureDefaults(store: DriveStore): Promise<void> {
+  for (const [path, text] of Object.entries(DEFAULT_FILES)) {
+    if (!(await store.read(path)))
+      await store.write(path, new TextEncoder().encode(text), contentTypeOf(path));
   }
 }
 
-export interface ProjectFront {
-  readonly summary: string;
-  readonly status: (typeof STATUSES)[number];
-}
-
-/** Reads PROJECT.md's frontmatter, or says what is wrong with it. */
-export function projectFront(text: string): ProjectFront | string {
-  const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
-  if (!match?.[1]) return "PROJECT.md starts with frontmatter: --- summary: ... status: active ---";
-  const fields = Object.fromEntries(
-    match[1].split(/\r?\n/).flatMap((line) => {
-      const field = /^([a-zA-Z]+):\s*(.*?)\s*(?:#.*)?$/.exec(line);
-      return field?.[1] ? [[field[1], (field[2] ?? "").replace(/^["']|["']$/g, "")]] : [];
-    }),
-  ) as Record<string, string>;
-  if (!fields.summary) return "PROJECT.md's frontmatter needs a one-line summary";
-  if (!(STATUSES as readonly string[]).includes(fields.status ?? "")) {
-    return `PROJECT.md's frontmatter needs status: ${STATUSES.join(", ")}`;
-  }
-  return { summary: fields.summary, status: fields.status as ProjectFront["status"] };
-}
-
-/** The checks a write must pass: README is kiln's, PROJECT.md keeps its frontmatter, text stays text. */
-export function checkWrite(path: string, bytes: Uint8Array): void {
-  if (path === README) throw new DriveError("README.md is kiln's; write your notes in another file");
+function checkSize(bytes: Uint8Array): void {
   if (bytes.byteLength > MAX_FILE_BYTES)
     throw new DriveError(`files are limited to ${MAX_FILE_BYTES / 1024 / 1024} MB`);
-  const segments = path.split("/");
-  if (segments[0] === PROJECTS && segments.length === 2) {
-    throw new DriveError(`files in a project go inside its folder: ${PROJECTS}/<slug>/...`);
-  }
-  if (segments[0] === PROJECTS && segments.length === 3 && segments[2] === PROJECT_FILE) {
-    const front = projectFront(new TextDecoder().decode(bytes));
-    if (typeof front === "string") throw new DriveError(front);
-  }
 }
+
+const permanent = (path: string) =>
+  new DriveError(`${path} is one of the drive's permanent files; edit it instead`);
 
 export async function writeFile(store: DriveStore, raw: string, bytes: Uint8Array): Promise<string> {
   const path = drivePath(raw);
-  checkWrite(path, bytes);
+  checkSize(bytes);
   await store.write(path, bytes, contentTypeOf(path));
   return path;
 }
@@ -185,10 +131,9 @@ export async function readText(
 export async function moveFile(store: DriveStore, rawFrom: string, rawTo: string): Promise<string> {
   const from = drivePath(rawFrom);
   const to = drivePath(rawTo);
-  if (from === README) throw new DriveError("README.md is kiln's");
+  if (isDefault(from)) throw permanent(from);
   const file = await store.read(from);
   if (!file) throw new DriveError(`no file at ${from}`);
-  checkWrite(to, file.bytes);
   await store.write(to, file.bytes, contentTypeOf(to));
   await store.remove(from);
   return to;
@@ -196,57 +141,20 @@ export async function moveFile(store: DriveStore, rawFrom: string, rawTo: string
 
 export async function removeFile(store: DriveStore, raw: string): Promise<string> {
   const path = drivePath(raw);
-  if (path === README) throw new DriveError("README.md is kiln's");
+  if (isDefault(path)) throw permanent(path);
   await store.remove(path);
   return path;
 }
 
-export interface ProjectSummary extends ProjectFront {
-  readonly slug: string;
-  readonly files: number;
-  readonly updatedAt: string;
-}
-
-/** Every project folder, with its PROJECT.md's summary and status; a folder without one says so. */
-export async function projectIndex(store: DriveStore): Promise<ProjectSummary[]> {
-  const entries = await store.list(`${PROJECTS}/`);
-  const bySlug = new Map<string, DriveEntry[]>();
-  for (const entry of entries) {
-    const slug = entry.path.split("/")[1];
-    if (slug) bySlug.set(slug, [...(bySlug.get(slug) ?? []), entry]);
-  }
-  const projects: ProjectSummary[] = [];
-  for (const [slug, files] of bySlug) {
-    const file = await store.read(`${PROJECTS}/${slug}/${PROJECT_FILE}`);
-    const front = file ? projectFront(new TextDecoder().decode(file.bytes)) : "PROJECT.md is missing";
-    const updatedAt =
-      files
-        .map((f) => f.updatedAt)
-        .sort()
-        .at(-1) ?? "";
-    projects.push(
-      typeof front === "string"
-        ? { slug, summary: `(${front})`, status: "active", files: files.length, updatedAt }
-        : { slug, ...front, files: files.length, updatedAt },
-    );
-  }
-  return projects.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-}
-
-/** What the agent is told about its drive each turn: the projects, newest activity first. */
-export function indexText(projects: readonly ProjectSummary[]): string {
-  const lines = [
-    "[your drive: the project index, kept by kiln]",
-    projects.length === 0
-      ? "No projects yet. When an initiative starts, create projects/<slug>/PROJECT.md (see README.md in your drive)."
-      : "Projects, most recently touched first. Read a project's PROJECT.md before you work on it, and keep it current.",
-  ];
-  for (const p of projects) {
-    lines.push(
-      `- ${p.slug} (${p.status}, ${p.files} files, updated ${p.updatedAt.slice(0, 10)}): ${p.summary}`,
-    );
-  }
-  return lines.join("\n");
+/** What the agent sees of its drive every turn: AGENTS.md. */
+export async function turnContext(store: DriveStore): Promise<string> {
+  const file = await store.read(TURN_FILE);
+  const text = file ? new TextDecoder().decode(file.bytes).trim() : "";
+  const shown =
+    text.length > MAX_TURN_CHARS
+      ? `${text.slice(0, MAX_TURN_CHARS)}\n[cut: ${TURN_FILE} is too long; tighten it]`
+      : text;
+  return `[your drive's ${TURN_FILE}, from kiln]\n${shown}`;
 }
 
 export interface SearchHit {

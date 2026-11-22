@@ -8,7 +8,7 @@ export default defineTool({
     "Search the text files in your drive for a word or phrase (case-insensitive), across everything or within a folder. Use it to find what you already know before asking or starting over.",
   inputSchema: z.object({
     query: z.string().min(1),
-    folder: z.string().optional().describe("Limit the search to a folder, such as projects/analytics."),
+    folder: z.string().optional().describe("Limit the search to a folder."),
   }),
   label: false,
   async execute({ query, folder }) {

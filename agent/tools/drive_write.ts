@@ -6,15 +6,12 @@ import { drive } from "../lib/drive.ts";
 export default defineTool({
   description: [
     "Create or replace a file in your drive. Write text with content, or save a file from your sandbox (a Slack attachment",
-    "under /workspace/.eve/attachments, a chart you made) with sandbox_path. A new project starts with",
-    "projects/<slug>/PROJECT.md, whose frontmatter needs a one-line summary and a status (active, paused, done).",
+    "under /workspace/.eve/attachments, a chart you made) with sandbox_path. Keep INDEX.md current when you add or move things.",
     "Replacing a file replaces all of it: read it first and write the whole updated text.",
   ].join(" "),
   inputSchema: z
     .object({
-      path: z
-        .string()
-        .describe("Such as projects/thanksgiving/plan.md or projects/thanksgiving/assets/hero.png."),
+      path: z.string().describe("Such as thanksgiving/plan.md or thanksgiving/assets/hero.png."),
       content: z.string().optional().describe("The whole text of the file."),
       sandbox_path: z.string().optional().describe("A file in your sandbox to save instead of text."),
     })

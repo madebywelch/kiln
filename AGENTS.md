@@ -25,7 +25,7 @@ kiln runs an AI teammate in Slack (the agent) and the coding workers it hands re
 | worker | The process on a machine: claims its job by ID, runs it, exits. |
 | repo secrets | A repo's environment variables, in boat environment `kiln-<repo>`, which passes secrets and nothing else. Set through a Slack form, never through the model. |
 | report | A settled job's result. The worker labels it `report=pending`; the agent's schedule delivers it to the Slack origin and clears the label. |
-| drive | The agent's files in Vercel Blob (`kiln/drive/`): `projects/<slug>/PROJECT.md` per project, anything else it chooses. kiln owns `README.md` and checks `PROJECT.md` frontmatter (`lib/drive.ts`). |
+| drive | The agent's files in Vercel Blob (`kiln/drive/`), organized however it likes. `AGENTS.md` (shown every turn) and `INDEX.md` (read on demand, so it never breaks the prompt cache) are always there, editable but permanent (`lib/drive.ts`). |
 | artifacts | Files a CLI saves in `.kiln/artifacts/`; attached to the report and posted to Slack, never committed. |
 | house rules | `worker/instructions.md`, added to every job's prompt. |
 

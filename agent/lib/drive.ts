@@ -4,7 +4,7 @@
 // the drive lives in memory for the session.
 
 import { del, get, list, put } from "@vercel/blob";
-import { type DriveStore, ensureReadme, memoryDrive } from "../../lib/drive.ts";
+import { type DriveStore, ensureDefaults, memoryDrive } from "../../lib/drive.ts";
 
 const ROOT = "kiln/drive/";
 
@@ -56,17 +56,17 @@ export function blobDrive(storeId: string): DriveStore {
 }
 
 let local: DriveStore | undefined;
-let readme: Promise<void> | undefined;
+let defaults: Promise<void> | undefined;
 
-/** The drive, with its README in place. */
+/** The drive, with its default files in place. */
 export async function drive(): Promise<DriveStore> {
   const storeId = process.env.EVE_MEMORY_BLOB_STORE_ID;
   if (!storeId) local ??= memoryDrive();
   const store = storeId ? blobDrive(storeId) : (local as DriveStore);
-  readme ??= ensureReadme(store).catch((error: unknown) => {
-    readme = undefined; // try again next time
+  defaults ??= ensureDefaults(store).catch((error: unknown) => {
+    defaults = undefined; // try again next time
     throw error;
   });
-  await readme;
+  await defaults;
   return store;
 }
