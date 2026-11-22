@@ -3,6 +3,7 @@ import { local } from "@vercel/board/backend-local";
 import { beforeEach, describe, expect, it } from "vitest";
 import { postJob } from "../lib/board-jobs.ts";
 import { Boat } from "../lib/boat.ts";
+import { machineLimits } from "../lib/config.ts";
 import { type JobSpec, REPORT_LABEL, REPORT_PENDING } from "../lib/jobs.ts";
 import {
   FAILED_STARTS_LABEL,
@@ -289,25 +290,25 @@ describe("launchMachine", () => {
 
 describe("reconcileMachines", () => {
   it("launches a machine for each ready job, up to each harness's limit", async () => {
-    const first = await postJob(team, spec);
-    const second = await postJob(team, { ...spec, title: "More snow" });
-    const third = await postJob(team, { ...spec, title: "Even more snow" });
-    const fourth = await postJob(team, { ...spec, title: "Snow everywhere" });
+    const limit = machineLimits.claude ?? 0;
+    const claude = [];
+    for (let i = 0; i <= limit; i++) claude.push(await postJob(team, { ...spec, title: `Snow ${i}` }));
     const research = await postJob(team, {
       ...spec,
       kind: "investigate",
       harness: "opencode",
       model: "openai/gpt-6-luna-fast",
     });
+    const over = claude.pop();
     const result = await reconcileMachines(deps);
-    expect(result.launched.sort()).toEqual([first.id, second.id, third.id, research.id].sort());
-    expect(result.waiting).toEqual([fourth.id]); // claude runs three at a time
-    expect(fake.machines).toHaveLength(4);
+    expect(result.launched.sort()).toEqual([...claude, research].map((job) => job.id).sort());
+    expect(result.waiting).toEqual([over?.id]); // claude runs machineLimits.claude at a time
+    expect(fake.machines).toHaveLength(limit + 1);
 
     // Nothing changes on the next pass while those run.
     const again = await reconcileMachines(deps);
     expect(again.launched).toEqual([]);
-    expect(fake.machines).toHaveLength(4);
+    expect(fake.machines).toHaveLength(limit + 1);
   });
 
   it("launches nothing for a job someone other than the agent posted", async () => {
@@ -319,16 +320,17 @@ describe("reconcileMachines", () => {
 
   it("deletes the machine once its job is over, and starts the next job", async () => {
     const first = await postJob(team, spec);
-    await postJob(team, { ...spec, title: "More snow" });
-    await postJob(team, { ...spec, title: "Much snow" });
-    const second = await postJob(team, { ...spec, title: "Most snow" });
+    for (let i = 1; i < (machineLimits.claude ?? 0); i++)
+      await postJob(team, { ...spec, title: `Snow ${i}` });
+    const next = await postJob(team, { ...spec, title: "Most snow" });
     await reconcileMachines(deps);
+    const machine = fake.machines.find((m) => m.labels.job === first.id)?.id;
     const claim = await team.as("claude").tasks.claim(first.id, { lease: 60 });
     await claim.complete("done");
 
     const result = await reconcileMachines(deps);
-    expect(result.deleted).toEqual([{ machine: "bx_2", job: first.id, why: "its job is over" }]);
-    expect(result.launched).toEqual([second.id]);
+    expect(result.deleted).toEqual([{ machine, job: first.id, why: "its job is over" }]);
+    expect(result.launched).toEqual([next.id]);
     expect(fake.machines.map((m) => m.labels.job)).not.toContain(first.id);
   });
 
