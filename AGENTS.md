@@ -4,7 +4,7 @@ kiln runs an AI teammate in Slack (the agent) and the coding workers it hands re
 
 ## Shape
 
-- `agent/`: an eve agent deployed to Vercel. Slack in, tools, skills, and two per-minute schedules: reports and machines. `channels/slack-interactivity.ts` serves Slack's buttons and forms.
+- `agent/`: an eve agent deployed to Vercel. Slack in, tools, skills, two per-minute schedules (reports and machines), and `tasks`, eve's dynamic schedules the agent sets for itself. `channels/slack-interactivity.ts` serves Slack's buttons and forms.
 - `worker/`: the process on a job's boat.dev machine. Claims its one job from Vercel Board, runs a coding CLI headless, pushes, opens a draft PR, settles, exits.
 - `lib/`: what both sides share. `config.ts` (defaults, machine limits, the agent's name: the same for everyone), `deployment.ts` (the schema for a deployment's repos and MCP servers, which live in the gitignored `kiln.config.yaml`), `jobs.ts` (the job contract), `board-jobs.ts` (Board operations), `boat.ts` (the boat API), `machines.ts` (launching and reconciling job machines), `secrets.ts` (repo secrets in boat environments).
 - `scripts/deploy.ts`: deploys the agent and pins the machines' code to the commit. `scripts/boat-workers.ts`: shows machines and their logs.
@@ -24,7 +24,8 @@ kiln runs an AI teammate in Slack (the agent) and the coding workers it hands re
 | machine | A fresh boat machine per job, labeled `kiln=worker` and `job=<id>`. The agent launches it with the job and deletes it after the job settles. |
 | worker | The process on a machine: claims its job by ID, runs it, exits. |
 | repo secrets | A repo's or project's environment variables, in boat environment `kiln-<key>`, which passes secrets and nothing else. Set through a Slack form, never through the model. |
-| report | A settled job's result. The worker labels it `report=pending`; the agent's schedule delivers it to the Slack origin and clears the label. |
+| report | A settled job's result. The worker labels it `report=pending`; the agent's schedule delivers it to the Slack origin and clears the label. It runs as the job's asker (`asker` label: the identity behind the turn that started it, no credentials), because eve refuses a schedule from a turn that runs as the app. |
+| wish list | Limitations the agent hits in kiln or eve itself, filed with `wish` as tasks in the board's `wishes` channel (`lib/wishes.ts`). Not for a deployment's own business. Complete one when it is built; fail it with the reason when it won't be. |
 | drive | The agent's only memory: its files in Vercel Blob (`kiln/drive/`), organized however it likes (`lib/drive.ts`). kiln's own, not eve's memory. |
 | `AGENTS.md` (drive) | The agent's whole standing prompt, in its drive, sent as the system prompt every turn: identity, rules, capabilities, people, decisions. Deployment data, edited by the agent and people; previous versions in `.history/`. The code has no other agent prompt: `lib/agents-starter.ts` seeds a new drive once and is the fallback. Not this repo's own `AGENTS.md`, which is for coding agents. |
 | job files | Files travel with a job both ways as Board attachments on its task, 10 files of 25 MB each way (`lib/jobs.ts`). In: `start_job`'s `files` (drive or sandbox paths, `lib/job-files.ts`), downloaded to `.kiln/inputs/` before the CLI starts. Out: artifacts. The CLI writes the PR description to `.kiln/pr.md`, for reviewers and free of kiln; kiln adds no footer. Never committed from `.kiln/`. |

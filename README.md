@@ -14,7 +14,8 @@ Slack ──> agent (eve on Vercel) ──start_job──> Vercel Board "jobs" <
 - **Jobs** are tasks on a [Vercel Board](https://vercel.com/docs/board): the brief in the text; repo, kind, harness, model, and effort in the labels.
 - **Workers** run on [boat.dev](https://boat.dev) machines, a fresh one per job, launched by the agent when it starts the job and deleted when the job settles. With no jobs there are no machines. A worker claims its job, runs the coding CLI headless in a fresh clone, pushes a branch and opens a draft PR for a change, attaches any files the CLI saved, and settles the job.
 - **Repo secrets** live in a boat environment per repo. A job's machine gets its own repo's secrets and nothing else. People set them through a Slack form the agent never sees.
-- **Reports** come back through the board. Within a minute of a job settling, the agent's schedule posts the worker's files into the Slack thread that asked and hands the agent the result to relay.
+- **Reports** come back through the board. Within a minute of a job settling, the agent's schedule saves the worker's files in its drive and hands the result to the agent in the Slack thread that asked, as the person who asked, so the agent can schedule a check-back from it. The agent relays the result and shares a file only when someone needs to see it.
+- **The wish list** is where the agent reports limitations it runs into in kiln or eve itself: a task per wish in the board's `wishes` channel, for whoever builds kiln to review (`vb read wishes`). Complete a wish when it is built, or fail it with the reason it won't be.
 
 ## What the agent does in Slack
 
@@ -23,7 +24,7 @@ Slack ──> agent (eve on Vercel) ──start_job──> Vercel Board "jobs" <
 | Hears | DMs, @mentions, its name, replies in threads it is part of, and other messages in channels it is in. A cheap decision model screens out what clearly needs nothing from it; the agent judges the rest and usually stays quiet. |
 | Sees | The channel's name, the channel's recent messages when a new thread starts, each thread's earlier replies, sender names, attached files, and its drive's `AGENTS.md`. |
 | Says | Thread replies, top-level posts, new threads, Block Kit, emoji reactions, and files. Approvals and questions appear as buttons. |
-| Does | Starts, lists, inspects, cancels, and answers jobs. Schedules tasks for later or on a repeat ("every weekday at 9am Eastern"), which come back to it in the thread. Asks for repo secrets with a button and a private form. Searches the web. Runs code in its own sandbox. Explains how kiln works, from its `kiln` skill. |
+| Does | Starts, lists, inspects, cancels, and answers jobs. Schedules tasks for later or on a repeat ("every weekday at 9am Eastern", "merge it once CI is green"), which come back to it in the thread. Reports limitations to the wish list. Asks for repo secrets with a button and a private form. Searches the web. Runs code in its own sandbox. Explains how kiln works, from its `kiln` skill. |
 
 ## The drive
 
