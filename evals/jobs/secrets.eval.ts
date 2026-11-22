@@ -5,6 +5,7 @@ import { stubs } from "../stubs.ts";
 const failed = reportMessage(
   {
     id: "813",
+    ref: "813",
     state: "blocked",
     title: "Triage the Linear backlog",
     repo: "web",
@@ -34,7 +35,9 @@ export default defineEval({
       count: 1,
       input: (input: unknown) => {
         const asked = (input ?? {}) as { repo?: string; name?: string; job?: string };
-        return asked.repo === "web" && asked.name === "LINEAR_API_KEY" && asked.job === "813";
+        return (
+          asked.repo === "web" && asked.name === "LINEAR_API_KEY" && asked.job?.replace(/^#/, "") === "813"
+        );
       },
     });
     turn.notCalledTool("start_job");

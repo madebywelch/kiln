@@ -8,6 +8,7 @@ import {
   postJob,
   readJob,
   reportMessage,
+  resolveJobId,
   resumeAfterSecrets,
   sweepReports,
   waitingMessage,
@@ -216,6 +217,17 @@ describe("sweepReports", () => {
   });
 });
 
+describe("resolveJobId", () => {
+  it("finds a job by its short reference, with or without #, and passes a full ID through", async () => {
+    const job = await postJob(team, spec);
+    expect(job.ref).toMatch(/^[0-9a-f]{8}$|^\d+$/);
+    expect(await resolveJobId(team, `#${job.ref}`)).toBe(job.id);
+    expect(await resolveJobId(team, job.ref)).toBe(job.id);
+    expect(await resolveJobId(team, "msg_whatever_1")).toBe("msg_whatever_1");
+    await expect(resolveJobId(team, "#deadbeef")).rejects.toThrow(/no job #deadbeef/);
+  });
+});
+
 describe("resumeAfterSecrets", () => {
   async function pausedJob() {
     const job = await postJob(team, spec);
@@ -257,6 +269,7 @@ describe("resumeAfterSecrets", () => {
 describe("reportMessage", () => {
   const job = {
     id: "7",
+    ref: "7",
     state: "blocked",
     title: "t",
     repo: "r",

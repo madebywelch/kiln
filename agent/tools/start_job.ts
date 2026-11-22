@@ -87,7 +87,7 @@ export default defineDynamic(() => {
       });
       await launchNow();
       return {
-        id: job.id,
+        job: `#${job.ref}`,
         state: job.state,
         runsOn: job.runsOn,
         reportsTo: job.origin ? "this thread" : "nowhere",

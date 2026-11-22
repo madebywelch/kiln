@@ -16,6 +16,6 @@ export default defineTool({
   label: { start: () => "List jobs" },
   async execute({ state, limit }) {
     const jobs = await listJobs(team, { state, limit });
-    return { jobs: jobs.map(({ origin: _origin, ...job }) => job) };
+    return { jobs: jobs.map(({ origin: _origin, id: _id, ref, ...job }) => ({ job: `#${ref}`, ...job })) };
   },
 });

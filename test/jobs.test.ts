@@ -9,6 +9,7 @@ import {
   JobError,
   type JobSpec,
   jobBranch,
+  jobRef,
   resolveSelection,
 } from "../lib/jobs.ts";
 
@@ -238,5 +239,12 @@ describe("naming", () => {
     expect(jobBranch("812", "Add a Christmas theme!")).toBe("kiln/812-add-a-christmas-theme");
     expect(jobBranch("9", "???")).toBe("kiln/9");
     expect(jobBranch("9", "a".repeat(80))).toBe(`kiln/9-${"a".repeat(40)}`);
+  });
+});
+
+describe("jobRef", () => {
+  it("shortens a board ID to its first block, which survives being copied by a model", () => {
+    expect(jobRef("msg_b799fe5c-a9d4-40f2-983a-6d9a6ad32dbd_1")).toBe("b799fe5c");
+    expect(jobRef("812")).toBe("812");
   });
 });

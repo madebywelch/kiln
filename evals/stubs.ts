@@ -9,7 +9,7 @@ export const stubsFor = (runsOn: string): ToolStub[] => [
   {
     id: "start-job",
     tool: "start_job",
-    outcome: { response: { id: "812", state: "ready", runsOn, reportsTo: "this thread" } },
+    outcome: { response: { job: "#b799fe5c", state: "ready", runsOn, reportsTo: "this thread" } },
   },
   { id: "list-jobs", tool: "list_jobs", outcome: { response: { jobs: [] } } },
   {
@@ -31,6 +31,24 @@ export const stubsFor = (runsOn: string): ToolStub[] => [
     id: "request-secret",
     tool: "request_secret",
     outcome: { response: { asked: "LINEAR_API_KEY", repo: "web" } },
+  },
+  {
+    id: "repo-find",
+    tool: "repo_find",
+    outcome: { response: { repo: "web", byPath: ["tools/email-cli/drafts/thanksgiving.md"], byContent: [] } },
+  },
+  { id: "repo-files", tool: "repo_files", outcome: { response: { repo: "web", folder: "/", entries: [] } } },
+  {
+    id: "repo-read",
+    tool: "repo_read",
+    outcome: {
+      response: {
+        repo: "web",
+        path: "tools/email-cli/drafts/thanksgiving.md",
+        size: 120,
+        text: "# Thanksgiving email\n\nSubject: Gobble up 30% off\n\nHero: a turkey in a party hat.",
+      },
+    },
   },
   { id: "drive-list", tool: "drive_list", outcome: { response: { files: [] } } },
   {
