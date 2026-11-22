@@ -166,7 +166,7 @@ export type DeliverReport = (
 
 /**
  * Handles one file the worker attached to a settled job: the agent saves it in its drive under
- * jobFilesFolder(job.id) and, when the job came from Slack, posts it in the thread.
+ * jobFilesFolder(job.id). Nothing posts it; the agent shares one when someone needs to see it.
  */
 export type KeepFile = (job: JobView, file: JobFile) => Promise<unknown>;
 
@@ -222,8 +222,8 @@ export async function sweepReports(
       }
       const { replies } = await team.thread(id, { limit: 100 });
       const last = replies.at(-1);
-      // Files first, so the agent's reply comes after them, and kept even for a job with no thread.
-      // A retry of a failed hand-off keeps them again: the same drive paths, posted again in Slack.
+      // Files first, so the agent can share them in its reply, and kept even for a job with no thread.
+      // A retry of a failed hand-off keeps them again, at the same drive paths.
       const kept: string[] = [];
       for (const attachment of keep ? (last?.attachments ?? []) : []) {
         const response = await team.download(attachment.id);
@@ -271,7 +271,7 @@ export function reportMessage(job: JobView, lastReport: string, files: readonly 
   }
   if (files.length > 0) {
     lines.push(
-      `The worker's files are already posted in this thread and saved in your drive under ${jobFilesFolder(job.id)}: ${files.join(", ")}. Refer to them; don't post them again.`,
+      `The worker returned files, saved in your drive under ${jobFilesFolder(job.id)} and not posted: ${files.join(", ")}. Each post notifies people: share one with drive_share only when it shows something they need to see, such as a screenshot of a change. Otherwise mention it or leave it out.`,
     );
   }
   const report = lastReport.trim();

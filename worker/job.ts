@@ -539,7 +539,7 @@ export function buildPrompt(
   }
   lines.push(
     "- Run the checks that cover what you touched, when the repo has them.",
-    `- To share files with the people who asked, such as screenshots, logs, or generated reports, save them in \`${ARTIFACTS_DIR}/\` at ${root}. They are attached to your report in Slack and never committed. Up to ${MAX_ARTIFACTS} files, ${MAX_ARTIFACT_MB} MB each.`,
+    `- Save a file in \`${ARTIFACTS_DIR}/\` at ${root} only when the brief asks for one, or when people must see it to judge your work, such as a screenshot of a UI change. Never save logs, test output, or machine-readable reports there: say what they showed in your report. Files there go back to the agent with your report and are never committed. Up to ${MAX_ARTIFACTS} files, ${MAX_ARTIFACT_MB} MB each.`,
     "- If you need a credential your environment doesn't have, such as an API key or a database URL, stop and make your final message `SECRET: ` followed by the environment variable names it should have and what for, like `SECRET: STRIPE_API_KEY: read the customer's payment history`. Never ask for a secret's value; people set it privately and the job resumes with it in your environment.",
     "- If you cannot go on without an answer from a person, stop and make your final message `QUESTION: ` followed by the question.",
     "- Otherwise your final message is the report people read in Slack: what you did or found, how you verified it, and what is left open. Under 400 words.",

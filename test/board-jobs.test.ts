@@ -149,7 +149,7 @@ describe("sweepReports", () => {
     expect(sent).toHaveLength(1);
   });
 
-  it("posts the worker's files to the thread before the agent's message, and names them", async () => {
+  it("keeps the worker's files before the agent's message, and names them as unposted", async () => {
     const job = await postJob(team, spec);
     const claim = await claimAs(worker);
     const shot = await worker.upload({ data: new Uint8Array([1, 2, 3]), name: "home.png" });
@@ -164,9 +164,7 @@ describe("sweepReports", () => {
       async (kept, file) => events.push(`file ${file.name} [${[...file.bytes].join(",")}] of ${kept.id}`),
     );
     expect(events[0]).toBe(`file home.png [1,2,3] of ${job.id}`);
-    expect(events[1]).toContain(
-      `already posted in this thread and saved in your drive under jobs/${job.id}/: home.png`,
-    );
+    expect(events[1]).toContain(`saved in your drive under jobs/${job.id}/ and not posted: home.png`);
   });
 
   it("keeps the files of a job with no Slack thread, and tells no one", async () => {

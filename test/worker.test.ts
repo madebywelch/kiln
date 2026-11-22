@@ -477,6 +477,13 @@ describe("artifacts", () => {
     expect([...bytes]).toEqual([0x89, 0x50, 0x4e, 0x47]);
   });
 
+  it("tells the CLI to return files only when asked or when people must see them, never logs", async () => {
+    await postJob(team, spec);
+    const { record } = await work({ mode: "nothing" });
+    expect(record.stdin).toContain("only when the brief asks for one, or when people must see it");
+    expect(record.stdin).toContain("Never save logs, test output, or machine-readable reports there");
+  });
+
   it("hands the CLI the agent's files in .kiln/inputs, and commits one only where the CLI puts it", async () => {
     const favicon = new Uint8Array([0x00, 0x00, 0x01, 0x00, 0xff, 0x7f]);
     const job = await postJob(team, { ...spec, brief: "Put favicon.ico at public/favicon.ico." }, [
