@@ -115,11 +115,11 @@ describe("clearlyNotForAgent", () => {
 describe("nameMatcher", () => {
   it("finds the agent's name, spaced or not, and nothing else", async () => {
     const { nameMatcher } = await import("../agent/lib/ambient.ts");
-    const name = nameMatcher("robdog");
-    expect(name.test("hey robdog, thoughts?")).toBe(true);
-    expect(name.test("Rob dog what do you think")).toBe(true);
-    expect(name.test("robdogs are great")).toBe(false);
-    expect(name.test("Robert's dog")).toBe(false);
+    const name = nameMatcher("evebot");
+    expect(name.test("hey evebot, thoughts?")).toBe(true);
+    expect(name.test("Eve bot what do you think")).toBe(true);
+    expect(name.test("evebots are great")).toBe(false);
+    expect(name.test("Eve's bot")).toBe(false);
     expect(nameMatcher("a.b").test("axb")).toBe(false);
   });
 });

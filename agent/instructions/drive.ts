@@ -7,7 +7,7 @@
 // than on no prompt at all, and the failure is logged.
 
 import { defineDynamic, defineInstructions } from "eve/instructions";
-import { STARTER_AGENTS_MD } from "../../lib/agents-starter.ts";
+import { starterAgentsMd } from "../../lib/agents-starter.ts";
 import { turnContext } from "../../lib/drive.ts";
 import { drive } from "../lib/drive.ts";
 
@@ -17,10 +17,10 @@ export default defineDynamic(async (ctx) => {
       const prompt = await turnContext(await drive());
       if (prompt) return prompt;
       console.error(JSON.stringify({ event: "drive.prompt_empty", using: "starter" }));
-      return STARTER_AGENTS_MD;
+      return starterAgentsMd();
     } catch (error) {
       console.error(JSON.stringify({ event: "drive.prompt_failed", using: "starter", error: String(error) }));
-      return STARTER_AGENTS_MD;
+      return starterAgentsMd();
     }
   });
   return defineInstructions({ content });

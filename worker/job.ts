@@ -5,8 +5,7 @@ import { appendFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:
 import { basename, dirname, join } from "node:path";
 import type { Attachment, Board, ClaimedTask } from "@vercel/board";
 import { benchedUntil, readLedger, usageLabels, type WorkerSubscription } from "../lib/accounts.ts";
-import { agent } from "../lib/config.ts";
-import type { McpServer, RepoConfig } from "../lib/deployment.ts";
+import { agentName, type McpServer, type RepoConfig } from "../lib/deployment.ts";
 import {
   decodeJob,
   describeSelection,
@@ -45,6 +44,27 @@ export type OpenPullRequest = (input: {
 export const SHUTDOWN = "shutdown";
 export const CLAIM_LOST = "claim lost";
 
+/** A repo a job clones, from the agent: its key in kiln.config.yaml, GitHub name, and base branch. */
+export interface JobRepo {
+  readonly key: string;
+  readonly github: string;
+  readonly baseBranch?: string | undefined;
+}
+
+/** What a job clones: one repo, or a project's repos side by side. */
+export type RegistryEntry =
+  | Pick<RepoConfig, "github" | "baseBranch">
+  | { readonly repos: readonly JobRepo[] };
+
+/** One cloned repo of a job: where it is, its branch's starting point, and whether an earlier run pushed it. */
+interface Checkout extends JobRepo {
+  readonly base: string;
+  readonly dir: string;
+  readonly git: (args: readonly string[]) => Promise<string>;
+  readonly startSha: string;
+  readonly resumed: boolean;
+}
+
 export interface JobDeps {
   readonly board: Board;
   readonly claim: ClaimedTask;
@@ -58,8 +78,8 @@ export interface JobDeps {
   readonly signal: AbortSignal;
   readonly log: Logger;
   readonly bins?: HarnessBins;
-  /** The job's repo, from the agent (KILN_REPO). */
-  readonly registry?: Readonly<Record<string, Pick<RepoConfig, "github" | "baseBranch">>>;
+  /** The job's repo or project, from the agent (KILN_REPO). */
+  readonly registry?: Readonly<Record<string, RegistryEntry>>;
   readonly gitIdentity?: { readonly name: string; readonly email: string };
   /** The coding CLI's environment. Default: the worker's, without its credentials (see harnessEnv). */
   readonly harnessEnv?: NodeJS.ProcessEnv;
@@ -228,13 +248,19 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string): Promise<
   const { board, claim, exec, signal } = deps;
   const id = claim.task.id;
   const spec = decodeJob(claim.task);
-  const repo = deps.registry?.[spec.repo];
-  if (!repo) throw new Error(`repo "${spec.repo}" is not in this job's settings from the agent`);
-  const base = repo.baseBranch ?? "main";
+  const entry = deps.registry?.[spec.repo];
+  if (!entry) throw new Error(`repo or project "${spec.repo}" is not in this job's settings from the agent`);
+  const repos: readonly JobRepo[] =
+    "repos" in entry ? entry.repos : [{ key: spec.repo, github: entry.github, baseBranch: entry.baseBranch }];
+  if (repos.length === 0) throw new Error(`project "${spec.repo}" has no repos`);
+  // One repo is cloned into the job's folder itself; a project's repos into subfolders named by key.
+  const single = repos.length === 1;
   const branch = jobBranch(id, spec.title);
-  const git = (args: readonly string[]) => run(exec, "git", args, { cwd: jobDir, signal });
 
-  await board.reply(id, `${STARTED}${deps.profile}: ${describeSelection(spec)} on ${repo.github}.`);
+  await board.reply(
+    id,
+    `${STARTED}${deps.profile}: ${describeSelection(spec)} on ${repos.map((repo) => repo.github).join(" + ")}.`,
+  );
 
   let mcp: ReturnType<typeof resolveMcp>;
   try {
@@ -252,39 +278,58 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string): Promise<
   }
 
   await rm(jobDir, { recursive: true, force: true });
-  await mkdir(dirname(jobDir), { recursive: true });
-  const url = deps.cloneUrl(repo.github);
-  const mirror = await refreshMirror(
-    exec,
-    join(deps.workDir, "mirrors", `${repo.github.replace("/", "__")}.git`),
-    url,
-    signal,
-  );
-  // Objects come from the local mirror; only what changed since its fetch crosses the network.
-  await run(exec, "git", ["clone", "--quiet", "--reference", mirror, url, jobDir], { signal });
+  await mkdir(single ? dirname(jobDir) : jobDir, { recursive: true });
   const identity = deps.gitIdentity ?? {
-    name: `${agent.name} (${deps.profile})`,
+    name: `${agentName()} (${deps.profile})`,
     email: "kiln@users.noreply.github.com",
   };
-  await git(["config", "user.name", identity.name]);
-  await git(["config", "user.email", identity.email]);
-  // .kiln holds the job's files both ways: inputs from the agent, artifacts for the report. Never committed.
-  await appendFile(join(jobDir, ".git", "info", "exclude"), `\n${ARTIFACTS_DIR.split("/")[0]}/\n`);
+  const checkouts: Checkout[] = [];
+  for (const repo of repos) {
+    const dir = single ? jobDir : join(jobDir, repo.key);
+    const git = (args: readonly string[]) => run(exec, "git", args, { cwd: dir, signal });
+    const url = deps.cloneUrl(repo.github);
+    const mirror = await refreshMirror(
+      exec,
+      join(deps.workDir, "mirrors", `${repo.github.replace("/", "__")}.git`),
+      url,
+      signal,
+    );
+    // Objects come from the local mirror; only what changed since its fetch crosses the network.
+    await run(exec, "git", ["clone", "--quiet", "--reference", mirror, url, dir], { signal });
+    await git(["config", "user.name", identity.name]);
+    await git(["config", "user.email", identity.email]);
+    // .kiln holds the job's files both ways: inputs from the agent, artifacts for the report. Never committed.
+    await appendFile(join(dir, ".git", "info", "exclude"), `\n${ARTIFACTS_DIR.split("/")[0]}/\n`);
+    // A job that blocked for an answer pushed its work; the next run continues from it.
+    const resumed =
+      (await exec("git", ["ls-remote", "--exit-code", "--heads", "origin", branch], { cwd: dir })).code === 0;
+    const base = repo.baseBranch ?? "main";
+    await git(["switch", "--quiet", "-c", branch, resumed ? `origin/${branch}` : `origin/${base}`]);
+    checkouts.push({ ...repo, base, dir, git, resumed, startSha: await git(["rev-parse", "HEAD"]) });
+  }
+  const resumed = checkouts.some((checkout) => checkout.resumed);
   const inputs = await fetchInputs(board, claim.task.attachments ?? [], join(jobDir, INPUTS_DIR));
   if (inputs.length) deps.log("job.inputs", { task: id, files: inputs.length });
-
-  // A job that blocked for an answer pushed its work; the next run continues from it.
-  const resumed =
-    (await exec("git", ["ls-remote", "--exit-code", "--heads", "origin", branch], { cwd: jobDir })).code ===
-    0;
-  await git(["switch", "--quiet", "-c", branch, resumed ? `origin/${branch}` : `origin/${base}`]);
-  const startSha = await git(["rev-parse", "HEAD"]);
+  /** Commits and pushes every repo with work; returns those that had new commits. */
+  const pushAll = async () => {
+    const pushed: Checkout[] = [];
+    for (const checkout of checkouts) {
+      if (await pushWork(checkout.git, spec.title, checkout.startSha, branch)) pushed.push(checkout);
+    }
+    return pushed;
+  };
 
   const thread = await board.thread(id, { limit: 100 });
   const earlier = thread.replies.filter((reply) => !reply.text.startsWith(STARTED));
   const prompt = buildPrompt(
     spec,
-    { id, github: repo.github, branch, resumed },
+    {
+      id,
+      github: repos[0]?.github ?? "",
+      branch,
+      resumed,
+      ...(single ? {} : { project: spec.repo, repos: repos.map(({ key, github }) => ({ key, github })) }),
+    },
     earlier,
     deps.guidance,
     inputs,
@@ -371,7 +416,7 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string): Promise<
       current = next;
       continue;
     }
-    if (spec.kind === "change") await pushWork(git, spec.title, startSha, branch);
+    if (spec.kind === "change") await pushAll();
     const resets = subscriptions
       .map((candidate) => {
         const state = states.get(candidate.id);
@@ -402,7 +447,7 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string): Promise<
 
   const secret = SECRET.exec(report.trim());
   if (secret?.[1]) {
-    if (spec.kind === "change") await pushWork(git, spec.title, startSha, branch);
+    if (spec.kind === "change") await pushAll();
     const names = secret[1].split(",").map((name) => name.trim());
     const why = secret[2]?.trim();
     return {
@@ -414,7 +459,7 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string): Promise<
   }
 
   if (QUESTION.test(report)) {
-    if (spec.kind === "change") await pushWork(git, spec.title, startSha, branch);
+    if (spec.kind === "change") await pushAll();
     return { kind: "blocked", question: report.replace(QUESTION, "").trim(), report };
   }
 
@@ -422,17 +467,29 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string): Promise<
     return { kind: "completed", result: firstLine(report), report };
   }
 
-  const pushed = await pushWork(git, spec.title, startSha, branch);
-  if (!pushed && !resumed) return { kind: "completed", result: "No changes made.", report };
-  const prUrl = await deps.openPullRequest({
-    cwd: jobDir,
-    github: repo.github,
-    base,
-    head: branch,
-    title: spec.title,
-    body: `${report}\n\n---\nJob #${id} by ${agent.name} on kiln · ${describeSelection(spec)} · ${deps.profile}`,
-  });
-  return { kind: "completed", result: `Draft PR: ${prUrl}`, report };
+  const pushed = await pushAll();
+  // A repo gets a pull request when this run pushed to it, or an earlier run of the job did.
+  const changed = checkouts.filter((checkout) => pushed.includes(checkout) || checkout.resumed);
+  if (changed.length === 0) return { kind: "completed", result: "No changes made.", report };
+  const across = single ? "" : ` · project ${spec.repo}: ${repos.map((repo) => repo.key).join(", ")}`;
+  const urls: string[] = [];
+  for (const checkout of changed) {
+    urls.push(
+      await deps.openPullRequest({
+        cwd: checkout.dir,
+        github: checkout.github,
+        base: checkout.base,
+        head: branch,
+        title: spec.title,
+        body: `${report}\n\n---\nJob #${id} by ${agentName()} on kiln · ${describeSelection(spec)} · ${deps.profile}${across}`,
+      }),
+    );
+  }
+  return {
+    kind: "completed",
+    result: urls.length === 1 ? `Draft PR: ${urls[0]}` : `Draft PRs: ${urls.join(", ")}`,
+    report,
+  };
 }
 
 /** Writes what Claude Code reported about the subscription to its record, for the agent's next choice. */
@@ -499,22 +556,38 @@ async function pushWork(
 
 export function buildPrompt(
   spec: JobSpec,
-  where: { readonly id: string; readonly github: string; readonly branch: string; readonly resumed: boolean },
+  where: {
+    readonly id: string;
+    readonly github: string;
+    readonly branch: string;
+    readonly resumed: boolean;
+    /** For a project: its key and its repos, cloned side by side in subfolders named by key. */
+    readonly project?: string;
+    readonly repos?: readonly { readonly key: string; readonly github: string }[];
+  },
   earlier: readonly { readonly text: string }[],
   guidance?: string,
   inputs: readonly string[] = [],
 ): string {
-  const lines = [
-    `You are working on job #${where.id} from ${agent.name}, in a fresh clone of ${where.github}, on branch ${where.branch}.`,
-    where.resumed ? "This branch holds work from an earlier run of this job; continue from it." : "",
-    "",
-    "# The job",
-    "",
-    `## ${spec.title}`,
-    "",
-    spec.brief,
-    "",
-  ];
+  const repos = where.repos ?? [];
+  const project = repos.length > 1;
+  const root = project ? "the workspace root, the folder that holds the repos" : "the repo root";
+  const lines = project
+    ? [
+        `You are working on job #${where.id} from ${agentName()}, on project ${where.project}: fresh clones of its repos side by side, each on branch ${where.branch}:`,
+        "",
+        ...repos.map((repo) => `- \`${repo.key}/\`: ${repo.github}`),
+        "",
+        "The job may need one of them or several; change only what it needs. Each repo may have its own CLAUDE.md or AGENTS.md: read it before changing that repo.",
+        where.resumed ? "These branches hold work from an earlier run of this job; continue from it." : "",
+        "",
+      ]
+    : [
+        `You are working on job #${where.id} from ${agentName()}, in a fresh clone of ${where.github}, on branch ${where.branch}.`,
+        where.resumed ? "This branch holds work from an earlier run of this job; continue from it." : "",
+        "",
+      ];
+  lines.push("# The job", "", `## ${spec.title}`, "", spec.brief, "");
   const notes = earlier.slice(-20).map((reply) => clip(reply.text, 2_000));
   if (notes.length > 0)
     lines.push("# Earlier in this job's thread", "", ...notes.map((note) => `- ${note}`), "");
@@ -522,7 +595,7 @@ export function buildPrompt(
     lines.push(
       "# Files for this job",
       "",
-      `The people who asked attached these files; they are in \`${INPUTS_DIR}/\` at the repo root:`,
+      `The people who asked attached these files; they are in \`${INPUTS_DIR}/\` at ${root}:`,
       "",
       ...inputs.map((name) => `- \`${INPUTS_DIR}/${name}\``),
       "",
@@ -532,7 +605,12 @@ export function buildPrompt(
   }
   if (guidance?.trim()) lines.push("# House rules", "", guidance.trim(), "");
   lines.push("# How to work", "");
-  if (spec.kind === "change") {
+  if (spec.kind === "change" && project) {
+    lines.push(
+      "- Make the change on the job's branch in each repo you touch, and commit it there with clear messages.",
+      "- Do not push, open pull requests, or switch branches. The worker pushes each repo you committed to and opens a draft pull request for each after you finish.",
+    );
+  } else if (spec.kind === "change") {
     lines.push(
       "- Make the change on this branch and commit it with clear messages.",
       "- Do not push, open a pull request, or switch branches. The worker pushes and opens a draft pull request after you finish.",
@@ -542,7 +620,7 @@ export function buildPrompt(
   }
   lines.push(
     "- Run the checks that cover what you touched, when the repo has them.",
-    `- To share files with the people who asked, such as screenshots, logs, or generated reports, save them in \`${ARTIFACTS_DIR}/\` at the repo root. They are attached to your report in Slack and never committed. Up to ${MAX_ARTIFACTS} files, ${MAX_ARTIFACT_MB} MB each.`,
+    `- To share files with the people who asked, such as screenshots, logs, or generated reports, save them in \`${ARTIFACTS_DIR}/\` at ${root}. They are attached to your report in Slack and never committed. Up to ${MAX_ARTIFACTS} files, ${MAX_ARTIFACT_MB} MB each.`,
     "- If you need a credential your environment doesn't have, such as an API key or a database URL, stop and make your final message `SECRET: ` followed by the environment variable names it should have and what for, like `SECRET: STRIPE_API_KEY: read the customer's payment history`. Never ask for a secret's value; people set it privately and the job resumes with it in your environment.",
     "- If you cannot go on without an answer from a person, stop and make your final message `QUESTION: ` followed by the question.",
     "- Otherwise your final message is the report people read in Slack: what you did or found, how you verified it, and what is left open. Under 400 words.",

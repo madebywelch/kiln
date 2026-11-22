@@ -1,18 +1,18 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
-import { configuredRepos } from "../../lib/deployment.ts";
+import { configuredProjects } from "../../lib/deployment.ts";
 import { secretNameIssue } from "../../lib/secrets.ts";
 import { requestBlocks } from "../lib/secret-prompt.ts";
 import { slackApi, slackHere } from "../lib/slack.ts";
 
 export default defineDynamic(() => {
-  const repos = configuredRepos();
-  if (!repos) return null;
-  const repoKeys = Object.keys(repos) as [string, ...string[]];
+  const projects = configuredProjects();
+  if (!projects) return null;
+  const repoKeys = Object.keys(projects) as [string, ...string[]];
 
   return defineTool({
     description: [
-      "Ask for a secret a repo's jobs need, such as an API key for an MCP server or a test database URL.",
+      "Ask for a secret a repo's or project's jobs need (a project's jobs share one set of secrets), such as an API key for an MCP server or a test database URL.",
       "Posts a button in this thread; whoever clicks it types the value into a private Slack form that saves",
       "it to the repo's own secrets. You never see the value. Never ask anyone to paste a secret in a message.",
       "Use it when a job is paused for a secret (pass its job ID, and saving resumes the job), or when someone",

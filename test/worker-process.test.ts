@@ -98,7 +98,7 @@ function startWorker(
       BOARD_PROFILE: "claude",
       WORKER_HARNESS: "claude",
       KILN_JOB_ID: jobId,
-      KILN_REPO: JSON.stringify({ key: "web", github: "acme/web" }),
+      KILN_REPO: JSON.stringify({ key: "web", repos: [{ key: "web", github: "acme/web" }] }),
       GH_TOKEN: "test",
       CLAUDE_CODE_OAUTH_TOKEN: "test",
       WORK_DIR: join(root, "work"),

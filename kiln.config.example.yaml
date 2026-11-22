@@ -1,11 +1,13 @@
-# This deployment's own settings: the repos kiln works on and the MCP servers
-# their jobs get. Copy to kiln.config.yaml, which git ignores, so the public
+# This deployment's own settings: the agent's name, the repos kiln works on, the
+# projects that group them, and the MCP servers their jobs get. Copy to kiln.config.yaml, which git ignores, so the public
 # code never names your repos or servers. `pnpm run deploy` checks it and sends
 # it to the agent's Vercel project as KILN_CONFIG.
 #
 # MCP values may name the repo's secrets as ${NAME}. Set those in Slack ("set
 # LINEAR_API_KEY for web"), or let a job pause and ask for them. Never put a
 # secret's value here.
+
+name: eve                                # what the agent is called in Slack; default eve
 
 repos:
   web:                                   # what you call it; jobs and secrets are keyed by it
@@ -15,6 +17,22 @@ repos:
     defaults:                            # optional, per kind of job; see lib/config.ts for the global ones
       investigate: { model: haiku, effort: medium }
     mcp: [linear]                        # servers below that this repo's jobs get
+
+  app:
+    github: acme/app
+    description: The mobile app.
+  app-api:
+    github: acme/app-api
+    description: The mobile app's backend.
+
+# Repos that change together. A job on a project clones all of its repos side by
+# side, and opens a draft PR in each one it changed. Its repos aren't jobs' targets
+# on their own; defaults, MCP servers, and secrets go on the project.
+projects:
+  mobile:
+    description: The mobile app and its backend.
+    repos: [app, app-api]
+    mcp: [linear]
 
 mcpServers:
   # A hosted server. Jobs run headless: it must take a token, not a browser sign-in.

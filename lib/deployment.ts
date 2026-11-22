@@ -1,8 +1,13 @@
-// This deployment's own settings: which repos kiln works on, and the MCP
-// servers each repo's jobs get. They are nobody else's business, so they live
-// outside the public code, in kiln.config.yaml (gitignored), which `pnpm run
-// deploy` checks and sends to the agent's Vercel project as KILN_CONFIG. Out of
-// the box there are none: kiln names no repos and no servers.
+// This deployment's own settings: the agent's name, which repos kiln works on,
+// the projects that group them, and the MCP servers their jobs get. They are
+// nobody else's business, so they live outside the public code, in
+// kiln.config.yaml (gitignored), which `pnpm run deploy` checks and sends to the
+// agent's Vercel project as KILN_CONFIG. Out of the box there are none: kiln
+// names no agent, no repos, and no servers.
+//
+// A job runs on a project: the repos it clones side by side, so one change can
+// span them. A repo in no project is a project of its own. Jobs, defaults, MCP
+// servers, and secrets are keyed by the project.
 //
 // MCP values may name the repo's secrets as ${NAME}; the worker fills them in
 // from the machine's environment, so no secret is in the file.
@@ -39,29 +44,111 @@ export const RepoSchema = z.strictObject({
 });
 export type RepoConfig = z.input<typeof RepoSchema>;
 
+export const ProjectSchema = z.strictObject({
+  /** What the project is, in the words people use for it. */
+  description: text,
+  /** Keys from `repos`, cloned side by side for every job on the project. */
+  repos: z.array(z.string()).min(2, "a project groups at least two repos"),
+  /** Overrides of the global defaults for the project's jobs, by kind of job. */
+  defaults: z.partialRecord(z.enum(KINDS), SelectionOverride).optional(),
+  /** Names from `mcpServers` that the project's jobs get. */
+  mcp: z.array(z.string()).default([]),
+});
+
+/** The agent's name when kiln.config.yaml gives none. */
+export const DEFAULT_AGENT_NAME = "eve";
+
 const name = (what: string) => z.string().regex(/^[a-zA-Z0-9._-]+$/, `${what}: letters, digits, ., - and _`);
 
 export const DeploymentSchema = z
   .strictObject({
+    /** The agent's name: what it is called in Slack, answers to without an @mention, and signs work with. */
+    name: z
+      .string()
+      .regex(/^[A-Za-z0-9][\w .-]{0,34}$/, "up to 35 letters, digits, spaces, and . _ -")
+      .optional(),
     repos: z.record(name("repo"), RepoSchema).default({}),
+    projects: z.record(name("project"), ProjectSchema).default({}),
     mcpServers: z.record(name("server"), McpServerSchema).default({}),
   })
   .superRefine((config, ctx) => {
-    for (const [repo, { mcp }] of Object.entries(config.repos)) {
+    const checkServers = (path: (string | number)[], mcp: readonly string[]) => {
       for (const server of mcp) {
         if (!config.mcpServers[server]) {
+          ctx.addIssue({ code: "custom", path, message: `no MCP server named ${server}` });
+        }
+      }
+    };
+    for (const [repo, { mcp }] of Object.entries(config.repos)) checkServers(["repos", repo, "mcp"], mcp);
+    const inProject = new Map<string, string>();
+    for (const [project, { repos, mcp }] of Object.entries(config.projects)) {
+      checkServers(["projects", project, "mcp"], mcp);
+      for (const repo of repos) {
+        const path = ["projects", project, "repos"];
+        const member = config.repos[repo];
+        if (!member) ctx.addIssue({ code: "custom", path, message: `no repo named ${repo}` });
+        else if (inProject.has(repo)) {
           ctx.addIssue({
             code: "custom",
-            path: ["repos", repo, "mcp"],
-            message: `no MCP server named ${server}`,
+            path,
+            message: `${repo} is already in project ${inProject.get(repo)}`,
+          });
+        } else if (member.defaults || member.mcp.length > 0) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["repos", repo],
+            message: `${repo} is in project ${project}: set its defaults and mcp on the project`,
           });
         }
+        inProject.set(repo, project);
+      }
+    }
+    for (const project of Object.keys(config.projects)) {
+      if (config.repos[project] && inProject.get(project) !== project) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["projects", project],
+          message: `${project} is also a repo outside this project; jobs couldn't tell them apart`,
+        });
       }
     }
   });
 export type Deployment = z.infer<typeof DeploymentSchema>;
 
-export const EMPTY_DEPLOYMENT: Deployment = { repos: {}, mcpServers: {} };
+export const EMPTY_DEPLOYMENT: Deployment = { repos: {}, projects: {}, mcpServers: {} };
+
+/** One repo a job clones: its key in kiln.config.yaml, GitHub name, and base branch. */
+export interface ProjectRepo {
+  readonly key: string;
+  readonly github: string;
+  readonly baseBranch?: string | undefined;
+  readonly description: string;
+}
+
+/** What a job runs on: one repo, or a project's repos side by side. */
+export interface Project {
+  readonly description: string;
+  readonly repos: readonly ProjectRepo[];
+  readonly defaults?: RepoConfig["defaults"];
+  readonly mcp: readonly string[];
+}
+
+/** Every project jobs can run on, by key: the configured projects, and each repo in none as its own. */
+export function projectsOf(config: Deployment): Record<string, Project> {
+  const repo = (key: string): ProjectRepo => {
+    const { github, baseBranch, description } = config.repos[key] as z.infer<typeof RepoSchema>;
+    return { key, github, baseBranch, description };
+  };
+  const grouped = new Set(Object.values(config.projects).flatMap((project) => project.repos));
+  const projects: Record<string, Project> = {};
+  for (const [key, { description, defaults, mcp }] of Object.entries(config.repos)) {
+    if (!grouped.has(key)) projects[key] = { description, repos: [repo(key)], defaults, mcp };
+  }
+  for (const [key, { description, repos, defaults, mcp }] of Object.entries(config.projects)) {
+    projects[key] = { description, repos: repos.map(repo), defaults, mcp };
+  }
+  return projects;
+}
 
 export function describeIssues(error: z.ZodError): string {
   return error.issues.map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`).join("; ");
@@ -94,27 +181,38 @@ export function deployment(
   return value;
 }
 
-/** The configured repos, or null when there are none or the config is broken (and says why in the log). */
-export function configuredRepos(): Deployment["repos"] | null {
+/** The projects jobs can run on, or null when there are none or the config is broken (and says why in the log). */
+export function configuredProjects(): Record<string, Project> | null {
   const config = deployment();
   if (typeof config === "string") {
     console.error(JSON.stringify({ event: "deployment.invalid", problem: config }));
     return null;
   }
-  return Object.keys(config.repos).length > 0 ? config.repos : null;
+  const projects = projectsOf(config);
+  return Object.keys(projects).length > 0 ? projects : null;
 }
 
-/** The MCP servers a repo's jobs get, by name. */
-export function serversFor(config: Deployment, repo: string): Record<string, McpServer> {
+/**
+ * The agent's name: KILN_AGENT_NAME on a job's machine, else kiln.config.yaml's `name`, else
+ * DEFAULT_AGENT_NAME. kiln's code never names the agent.
+ */
+export function agentName(env: Readonly<Record<string, string | undefined>> = process.env): string {
+  if (env.KILN_AGENT_NAME) return env.KILN_AGENT_NAME;
+  const config = deployment(env);
+  return (typeof config !== "string" && config.name) || DEFAULT_AGENT_NAME;
+}
+
+/** The MCP servers a project's jobs get, by name. */
+export function serversFor(config: Deployment, project: string): Record<string, McpServer> {
   return Object.fromEntries(
-    (config.repos[repo]?.mcp ?? []).flatMap((server) => {
+    (projectsOf(config)[project]?.mcp ?? []).flatMap((server) => {
       const definition = config.mcpServers[server];
       return definition ? [[server, definition]] : [];
     }),
   );
 }
 
-/** The secrets a repo's MCP servers name as ${NAME}. */
+/** The secrets a project's MCP servers name as ${NAME}. */
 export function secretsNamedBy(servers: Readonly<Record<string, McpServer>>): string[] {
   const names = new Set<string>();
   for (const match of JSON.stringify(servers).matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g)) {

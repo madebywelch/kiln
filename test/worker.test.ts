@@ -20,6 +20,7 @@ import {
   harnessEnv,
   type OpenPullRequest,
   type Outcome,
+  type RegistryEntry,
   runJob,
   SHUTDOWN,
 } from "../worker/job.ts";
@@ -88,9 +89,10 @@ async function claim(): Promise<ClaimedTask> {
 
 interface RunOptions {
   mode: string;
+  cloneUrl?: (github: string) => string;
   signal?: AbortSignal;
   timeoutMs?: number;
-  registry?: Record<string, RepoConfig>;
+  registry?: Record<string, RegistryEntry>;
   harnessEnv?: NodeJS.ProcessEnv;
   guidance?: string;
   mcpServers?: Record<string, McpServer>;
@@ -120,7 +122,7 @@ async function work(
     workDir: join(root, "work"),
     exec: fakeExec,
     bins: { claude: FAKE, codex: FAKE, opencode: FAKE },
-    cloneUrl: () => remote,
+    cloneUrl: options.cloneUrl ?? (() => remote),
     openPullRequest: async (input) => {
       pullRequests.push(input);
       return "https://github.com/acme/web/pull/7";
@@ -293,6 +295,69 @@ describe("change jobs", () => {
     expect(second.record.stdin).not.toContain("Started by");
     expect(second.outcome).toMatchObject({ kind: "completed" });
     expect(remoteFiles(branch)).toEqual(expect.arrayContaining(["draft.css", "theme.css"]));
+  });
+});
+
+describe("project jobs", () => {
+  // A second repo, so a project job clones two side by side.
+  async function secondRemote(): Promise<string> {
+    const cloud = join(root, "cloud.git");
+    git(["init", "--quiet", "--bare", "-b", "main", cloud]);
+    const seed = join(root, "cloud-seed");
+    git(["clone", "--quiet", cloud, seed]);
+    await writeFile(join(seed, "README.md"), "# cloud\n");
+    git(["add", "-A"], seed);
+    git(["commit", "--quiet", "-m", "init"], seed);
+    git(["push", "--quiet", "origin", "HEAD:main"], seed);
+    return cloud;
+  }
+  const project = {
+    shop: {
+      repos: [
+        { key: "web", github: "acme/web" },
+        { key: "cloud", github: "acme/cloud" },
+      ],
+    },
+  };
+  const shopSpec = { ...spec, repo: "shop" };
+
+  it("clones every repo side by side and opens a draft PR for each one it changed", async () => {
+    const cloud = await secondRemote();
+    const job = await postJob(team, shopSpec);
+    const { outcome, record } = await work({
+      mode: "project",
+      registry: project,
+      cloneUrl: (github) => (github === "acme/cloud" ? cloud : remote),
+    });
+    expect(record.stdin).toContain("on project shop: fresh clones of its repos side by side");
+    expect(record.stdin).toContain("- `web/`: acme/web");
+    expect(record.stdin).toContain("- `cloud/`: acme/cloud");
+    expect(record.stdin).toContain("opens a draft pull request for each");
+    const branch = jobBranch(job.id, shopSpec.title);
+    expect(remoteFiles(branch)).toContain("theme.css");
+    expect(git(["--git-dir", cloud, "ls-tree", "-r", "--name-only", branch]).split("\n")).toContain(
+      "theme.css",
+    );
+    expect(pullRequests.map((pr) => pr.github).sort()).toEqual(["acme/cloud", "acme/web"]);
+    expect(pullRequests[0]?.body).toContain("project shop: web, cloud");
+    expect(outcome).toMatchObject({ kind: "completed" });
+    expect(outcome.kind === "completed" && outcome.result).toMatch(/^Draft PRs: /);
+  });
+
+  it("opens a PR only for the repo it changed, and leaves the other untouched", async () => {
+    const cloud = await secondRemote();
+    const job = await postJob(team, shopSpec);
+    const { outcome } = await work({
+      mode: "project-one",
+      registry: project,
+      cloneUrl: (github) => (github === "acme/cloud" ? cloud : remote),
+    });
+    const branch = jobBranch(job.id, shopSpec.title);
+    expect(pullRequests.map((pr) => pr.github)).toEqual(["acme/web"]);
+    expect(() => git(["--git-dir", cloud, "rev-parse", "--verify", branch])).toThrow();
+    expect(outcome.kind === "completed" && outcome.result).toBe(
+      "Draft PR: https://github.com/acme/web/pull/7",
+    );
   });
 });
 

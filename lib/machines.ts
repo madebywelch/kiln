@@ -16,7 +16,13 @@ import {
 } from "./accounts.ts";
 import { type Boat, BoatError, type Machine } from "./boat.ts";
 import { enabledHarnesses, type Harness, jobsPerSubscription, machineLimits, machineType } from "./config.ts";
-import { type Deployment, parseDeployment, serversFor } from "./deployment.ts";
+import {
+  DEFAULT_AGENT_NAME,
+  type Deployment,
+  parseDeployment,
+  projectsOf,
+  serversFor,
+} from "./deployment.ts";
 import { decodeJob, JOBS_CHANNEL, type JobSpec, REPORT_LABEL, REPORT_PENDING } from "./jobs.ts";
 import { environmentName, repoEnvironment } from "./secrets.ts";
 
@@ -142,7 +148,7 @@ export function workerSettings(
   repo?: string,
 ): Record<string, string> {
   const servers = repo ? serversFor(config.deployment, repo) : {};
-  const repoConfig = repo ? config.deployment.repos[repo] : undefined;
+  const project = repo ? projectsOf(config.deployment)[repo] : undefined;
   const own = KEY_CREDENTIAL[harness];
   const shared = Object.fromEntries(
     Object.entries(config.settings).filter(([name]) => !KEY_CREDENTIALS.has(name) || name === own),
@@ -153,15 +159,19 @@ export function workerSettings(
     ...(first
       ? { CLAUDE_CODE_OAUTH_TOKEN: first.token, KILN_SUBSCRIPTIONS: JSON.stringify(subscriptions) }
       : {}),
-    ...(repo && repoConfig
+    ...(repo && project
       ? {
           KILN_REPO: JSON.stringify({
             key: repo,
-            github: repoConfig.github,
-            ...(repoConfig.baseBranch ? { baseBranch: repoConfig.baseBranch } : {}),
+            repos: project.repos.map(({ key, github, baseBranch }) => ({
+              key,
+              github,
+              ...(baseBranch ? { baseBranch } : {}),
+            })),
           }),
         }
       : {}),
+    KILN_AGENT_NAME: config.deployment.name ?? DEFAULT_AGENT_NAME,
     ...(Object.keys(servers).length > 0 ? { KILN_MCP_SERVERS: JSON.stringify(servers) } : {}),
     BOARD_PROFILE: harness,
     WORKER_HARNESS: harness,
@@ -235,7 +245,9 @@ export async function launchMachine(
   }
   const failedStarts = Number(job.labels[FAILED_STARTS_LABEL] ?? 0);
   const reason =
-    (config.deployment.repos[spec.repo] ? null : `${spec.repo} is no longer a repo in kiln.config.yaml`) ??
+    (projectsOf(config.deployment)[spec.repo]
+      ? null
+      : `${spec.repo} is no longer a repo or project in kiln.config.yaml`) ??
     harnessIssue(spec.harness, config) ??
     (failedStarts >= MAX_FAILED_STARTS
       ? `its worker machine failed to start ${failedStarts} times; see the agent's logs for machines.reconciled`

@@ -149,7 +149,7 @@ describe("sweepReports", () => {
     expect(sent).toHaveLength(1);
   });
 
-  it("posts the worker's files to the thread before robdog's message, and names them", async () => {
+  it("posts the worker's files to the thread before the agent's message, and names them", async () => {
     const job = await postJob(team, spec);
     const claim = await claimAs(worker);
     const shot = await worker.upload({ data: new Uint8Array([1, 2, 3]), name: "home.png" });
@@ -224,7 +224,7 @@ describe("sweepReports", () => {
     await team.tasks.cancel(job.id, "not needed");
     const old = await team.tasks.create(JOBS_CHANNEL, {
       text: "## Old\n\nfrom before a rename",
-      labels: { robdog: "job", [REPORT_LABEL]: REPORT_PENDING },
+      labels: { other: "job", [REPORT_LABEL]: REPORT_PENDING },
     });
 
     const result = await sweepReports(team, async () => {
@@ -307,7 +307,7 @@ describe("reportMessage", () => {
     secretsNeeded: null,
   };
 
-  it("tells robdog to relay a question and how to answer it", () => {
+  it("tells the agent to relay a question and how to answer it", () => {
     const message = reportMessage(job, "");
     expect(message).toContain("The worker asks: Which color?");
     expect(message).toContain("answer_job");

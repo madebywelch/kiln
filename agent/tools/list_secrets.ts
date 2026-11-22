@@ -1,17 +1,17 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
-import { configuredRepos, deployment, secretsNamedBy, serversFor } from "../../lib/deployment.ts";
+import { configuredProjects, deployment, secretsNamedBy, serversFor } from "../../lib/deployment.ts";
 import { secretNames } from "../../lib/secrets.ts";
 import { boatClient } from "../lib/machines.ts";
 
 export default defineDynamic(() => {
-  const repos = configuredRepos();
-  if (!repos) return null;
-  const repoKeys = Object.keys(repos) as [string, ...string[]];
+  const projects = configuredProjects();
+  if (!projects) return null;
+  const repoKeys = Object.keys(projects) as [string, ...string[]];
 
   return defineTool({
     description:
-      "List the names of a repo's secrets, its MCP servers, and which secrets those servers need but don't have. Names only; values never leave boat.",
+      "List the names of a repo's or project's secrets, its MCP servers, and which secrets those servers need but don't have. Names only; values never leave boat.",
     inputSchema: z.object({ repo: z.enum(repoKeys) }),
     label: false,
     async execute({ repo }) {

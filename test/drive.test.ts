@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { STARTER_AGENTS_MD } from "../lib/agents-starter.ts";
-import { agent } from "../lib/config.ts";
+import { starterAgentsMd } from "../lib/agents-starter.ts";
+import { DEFAULT_AGENT_NAME } from "../lib/deployment.ts";
 import {
-  DEFAULT_FILES,
   DriveError,
+  defaultFiles,
   driveName,
   drivePath,
   editFile,
@@ -33,10 +33,11 @@ describe("AGENTS.md", () => {
   it("starts as the whole starter prompt, with the agent's configured name, written once", async () => {
     const store = memoryDrive();
     await ensureDefaults(store);
-    expect(Object.keys(DEFAULT_FILES)).toEqual(["AGENTS.md"]);
+    expect(Object.keys(defaultFiles())).toEqual(["AGENTS.md"]);
     const starter = (await readText(store, "AGENTS.md")).text ?? "";
-    expect(starter).toBe(STARTER_AGENTS_MD);
-    expect(starter).toContain(`You are ${agent.name},`);
+    expect(starter).toBe(starterAgentsMd());
+    expect(starter).toContain(`You are ${DEFAULT_AGENT_NAME},`);
+    expect(starterAgentsMd("Mabel")).toContain("You are Mabel,");
     for (const section of ["## How you talk", "## Jobs", "## What you can do", "## People", "## This file"]) {
       expect(starter, section).toContain(section);
     }
@@ -74,7 +75,7 @@ describe("AGENTS.md", () => {
       ".history/AGENTS-2026-11-22T05-00-00-000Z.md",
       ".history/AGENTS-2026-11-22T05-01-00-000Z.md",
     ]);
-    expect((await readText(store, history[0]?.path ?? "")).text).toBe(STARTER_AGENTS_MD);
+    expect((await readText(store, history[0]?.path ?? "")).text).toBe(starterAgentsMd());
     expect((await readText(store, history[1]?.path ?? "")).text).toBe("v2");
     expect((await readText(store, "AGENTS.md")).text).toBe("v3");
   });
@@ -83,7 +84,7 @@ describe("AGENTS.md", () => {
     const store = memoryDrive();
     await ensureDefaults(store);
     await writeFile(store, "xmas/plan.md", text("the snow theme"));
-    expect(await turnContext(store)).toBe(STARTER_AGENTS_MD.trim());
+    expect(await turnContext(store)).toBe(starterAgentsMd().trim());
     await writeFile(store, "AGENTS.md", text(`# Who you are\n${"x".repeat(23_900)}`));
     expect(await turnContext(store)).not.toContain("[cut:");
     await writeFile(store, "AGENTS.md", text(`# Who you are\n${"x".repeat(24_100)}`));

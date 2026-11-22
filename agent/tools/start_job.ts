@@ -2,7 +2,7 @@ import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { postJob } from "../../lib/board-jobs.ts";
 import { defaultSelection, EFFORTS, enabledHarnesses, type Harness } from "../../lib/config.ts";
-import { configuredRepos } from "../../lib/deployment.ts";
+import { configuredProjects } from "../../lib/deployment.ts";
 import { drivePath } from "../../lib/drive.ts";
 import { collectJobFiles } from "../../lib/job-files.ts";
 import {
@@ -22,17 +22,21 @@ import { slackHere } from "../lib/slack.ts";
 // Built per model call from kiln.config.yaml (KILN_CONFIG), so the public code names no repos.
 // With none configured, the tool isn't offered.
 export default defineDynamic(() => {
-  const repos = configuredRepos();
+  const repos = configuredProjects();
   if (!repos) return null;
   const repoKeys = Object.keys(repos) as [string, ...string[]];
   const repoLines = Object.entries(repos).map(([key, repo]) => {
+    const together =
+      repo.repos.length > 1
+        ? ` Project: ${repo.repos.map((member) => `${member.key} (${member.description})`).join(", ")}, cloned side by side.`
+        : "";
     const own = Object.entries(repo.defaults ?? {})
       .map(
         ([kind, d]) =>
           `${kind}: ${describeSelection({ ...defaultSelection[kind as keyof typeof defaultSelection], ...d })}`,
       )
       .join(", ");
-    return `- ${key}: ${repo.description}${own ? ` (defaults: ${own})` : ""}`;
+    return `- ${key}: ${repo.description}${together}${own ? ` (defaults: ${own})` : ""}`;
   });
   const HARNESS_LINES: Readonly<Record<Harness, string>> = {
     claude: "claude (Claude Code: opus, sonnet, haiku)",
@@ -45,9 +49,11 @@ export default defineDynamic(() => {
     description: [
       "Hand work on a repo to the worker pool, each job in a fresh clone. A change job commits to its own",
       "branch and opens a draft pull request; an investigate job only reports. The result comes back to this",
-      "thread when the job settles.",
+      "thread when the job settles. A project is several repos cloned side by side: a job on it can change any",
+      "of them, and each one it changes gets its own draft pull request. Pick the project even when the work",
+      "touches only one of its repos.",
       "",
-      "Repos:",
+      "Repos and projects:",
       ...repoLines,
       "",
       `Workers run on subscriptions only: ${harnessLines.join("; ")}.`,

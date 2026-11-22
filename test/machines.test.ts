@@ -155,9 +155,9 @@ describe("workerSettings", () => {
     const settings = workerSettings("msg_1", "opencode", withMcp, [], "web");
     expect(JSON.parse(settings.KILN_REPO ?? "{}")).toEqual({
       key: "web",
-      github: "acme/web",
-      baseBranch: "dev",
+      repos: [{ key: "web", github: "acme/web", baseBranch: "dev" }],
     });
+    expect(settings.KILN_AGENT_NAME).toBe("eve");
     expect(JSON.parse(settings.KILN_MCP_SERVERS ?? "{}")).toEqual({
       linear: { url: "https://mcp.linear.app/mcp" },
     });
@@ -171,7 +171,32 @@ describe("workerSettings", () => {
     const job = await postJob(team, spec);
     const gone = launchConfig({ ...env, KILN_CONFIG: "" }) as LaunchConfig;
     const { failed } = await launchMachine({ ...deps, config: gone }, job.message);
-    expect(failed).toMatch(/web is no longer a repo in kiln.config.yaml/);
+    expect(failed).toMatch(/web is no longer a repo or project in kiln.config.yaml/);
+  });
+
+  it("gives a project's job every repo in it, the project's servers, and the configured agent name", () => {
+    const project = launchConfig({
+      ...env,
+      KILN_CONFIG: JSON.stringify({
+        name: "Mabel",
+        repos: {
+          app: { github: "acme/app", description: "the app" },
+          cloud: { github: "acme/cloud", description: "the hosted service", baseBranch: "dev" },
+        },
+        projects: { shop: { description: "Shop", repos: ["app", "cloud"], mcp: ["linear"] } },
+        mcpServers: { linear: { url: "https://mcp.linear.app/mcp" } },
+      }),
+    }) as LaunchConfig;
+    const settings = workerSettings("msg_1", "claude", project, [], "shop");
+    expect(JSON.parse(settings.KILN_REPO ?? "{}")).toEqual({
+      key: "shop",
+      repos: [
+        { key: "app", github: "acme/app" },
+        { key: "cloud", github: "acme/cloud", baseBranch: "dev" },
+      ],
+    });
+    expect(Object.keys(JSON.parse(settings.KILN_MCP_SERVERS ?? "{}"))).toEqual(["linear"]);
+    expect(settings.KILN_AGENT_NAME).toBe("Mabel");
   });
 
   it("says why a harness can't run", () => {

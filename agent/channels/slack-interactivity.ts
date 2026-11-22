@@ -5,7 +5,7 @@
 
 import { defineChannel, POST } from "eve/channels";
 import { resumeAfterSecrets } from "../../lib/board-jobs.ts";
-import { configuredRepos } from "../../lib/deployment.ts";
+import { configuredProjects } from "../../lib/deployment.ts";
 import { secretNames, setSecret } from "../../lib/secrets.ts";
 import { team } from "../lib/board.ts";
 import { boatClient, launchNow, log } from "../lib/machines.ts";
@@ -25,7 +25,7 @@ export default defineChannel({
     POST("/slack/interactivity", (request, { waitUntil }) =>
       handleInteractivity(request, {
         signingSecret: process.env.SLACK_SIGNING_SECRET,
-        isRepo: (repo) => Boolean(configuredRepos()?.[repo]),
+        isRepo: (repo) => Boolean(configuredProjects()?.[repo]),
         mayEdit: secretEditors(process.env.KILN_SECRET_ADMINS),
         openView: (triggerId, view) => slackApi("views.open", { trigger_id: triggerId, view }),
         setSecret: async (repo, name, value) => {

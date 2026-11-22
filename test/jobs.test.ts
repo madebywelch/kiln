@@ -39,7 +39,9 @@ const spec: JobSpec = {
 
 describe("resolveSelection", () => {
   it("rejects a repo outside the registry", () => {
-    expect(() => resolveSelection("nope", "change", {}, registry, HARNESSES)).toThrow(/unknown repo "nope"/);
+    expect(() => resolveSelection("nope", "change", {}, registry, HARNESSES)).toThrow(
+      /unknown repo or project "nope"/,
+    );
   });
 
   it("rejects a model that belongs to another harness", () => {

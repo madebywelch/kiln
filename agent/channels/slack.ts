@@ -1,12 +1,12 @@
 import { defaultSlackAuth, slackChannel } from "eve/channels/slack";
-import { agent } from "../../lib/config.ts";
+import { agentName } from "../../lib/deployment.ts";
 import { channelHistory, clearlyNotForAgent } from "../lib/ambient.ts";
 import { route } from "../lib/route.ts";
 import { conversationContext, slackCredentials } from "../lib/slack.ts";
 
 export default slackChannel({
   credentials: slackCredentials,
-  botName: agent.name,
+  botName: agentName(),
   // Each thread's earlier replies, attributed. Within a session only what's new since the agent last spoke.
   threadContext: { since: "last-agent-reply" },
   messageContext: { users: {} },

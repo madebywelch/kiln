@@ -84,7 +84,7 @@ function checkModel(harness: Harness, model: string | undefined): void {
 
 /**
  * Resolves what a job runs on. Precedence, field by field: what was asked for,
- * then the repo's defaults, then the global defaults. A model always belongs to
+ * then the repo's or project's defaults, then the global defaults. A model always belongs to
  * the harness that runs it, so a named model picks its harness, and a named
  * harness without a model gets that harness's default model.
  */
@@ -92,14 +92,14 @@ export function resolveSelection(
   repoKey: string,
   kind: JobKind,
   request: SelectionRequest,
-  registry: Readonly<Record<string, RepoConfig>>,
+  registry: Readonly<Record<string, Pick<RepoConfig, "defaults">>>,
   enabled: readonly Harness[] = enabledHarnesses,
 ): Selection {
   const repo = registry[repoKey];
   if (!repo) {
     const known = Object.keys(registry);
     throw new JobError(
-      `unknown repo "${repoKey}"; ${known.length ? `known: ${known.join(", ")}` : "kiln.config.yaml names no repos"}`,
+      `unknown repo or project "${repoKey}"; ${known.length ? `known: ${known.join(", ")}` : "kiln.config.yaml names no repos"}`,
     );
   }
   const repoDefaults = repo.defaults?.[kind] ?? {};

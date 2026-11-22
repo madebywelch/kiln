@@ -3,7 +3,15 @@
 // what it does; FAKE_RECORD names a file where it writes its argv and stdin.
 
 import { execFileSync } from "node:child_process";
-import { appendFileSync, copyFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 
 const args = process.argv.slice(2);
@@ -16,7 +24,15 @@ const cwd = isCodex
     : process.cwd();
 // OpenCode takes the prompt as its last argument; the others read it from stdin.
 const stdin = isOpencode ? args.at(-1) : readFileSync(0, "utf8");
-const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf8" }).trim();
+// A project job runs above its repos, where there is no HEAD.
+let head = null;
+try {
+  head = execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  }).trim();
+} catch {}
 const mode = process.env.FAKE_MODE ?? "change";
 const seen = {
   GH_TOKEN: process.env.GH_TOKEN ?? null,
@@ -101,6 +117,18 @@ switch (mode) {
     mkdirSync(join(cwd, "public"), { recursive: true });
     copyFileSync(join(cwd, ".kiln", "inputs", name), join(cwd, "public", name));
     finish(`Put ${name} in public/.`);
+    break;
+  }
+  case "project":
+  case "project-one": {
+    // A project job runs above its repos: change each one, or only the last.
+    const repos = readdirSync(cwd)
+      .filter((name) => existsSync(join(cwd, name, ".git")))
+      .sort();
+    for (const name of mode === "project" ? repos : repos.slice(-1)) {
+      writeFileSync(join(cwd, name, "theme.css"), "body { background: snow; }\n");
+    }
+    finish(`Changed ${mode === "project" ? repos.join(" and ") : repos.at(-1)}.`);
     break;
   }
   case "nothing":

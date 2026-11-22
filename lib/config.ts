@@ -3,12 +3,6 @@
 // MCP servers, are its own business: they live in kiln.config.yaml (see
 // lib/deployment.ts), never here.
 
-/**
- * The agent kiln runs: the name it goes by in Slack, answers to without an @mention, and signs its
- * commits and pull requests with. Its identity and rules are its drive's AGENTS.md; its Slack app has the same name.
- */
-export const agent = { name: "robdog" } as const;
-
 /** claude and codex run on subscriptions; opencode runs AI Gateway models on the team's credits. */
 export const HARNESSES = ["claude", "codex", "opencode"] as const;
 export type Harness = (typeof HARNESSES)[number];

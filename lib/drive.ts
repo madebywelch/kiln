@@ -4,7 +4,7 @@
 // the people it works with), shown every turn. Every change to it keeps the
 // previous version under .history/. Everything else it reads when it looks.
 
-import { STARTER_AGENTS_MD } from "./agents-starter.ts";
+import { starterAgentsMd } from "./agents-starter.ts";
 
 export interface DriveEntry {
   readonly path: string;
@@ -25,10 +25,10 @@ export class DriveError extends Error {
 }
 
 /** The files every drive has, with what they start as. The agent edits them; nobody removes them. */
-export const DEFAULT_FILES: Readonly<Record<string, string>> = { "AGENTS.md": STARTER_AGENTS_MD };
+export const defaultFiles = (): Readonly<Record<string, string>> => ({ "AGENTS.md": starterAgentsMd() });
 /** The default file the agent sees every turn. */
 export const TURN_FILE = "AGENTS.md";
-const isDefault = (path: string) => path in DEFAULT_FILES;
+const isDefault = (path: string) => path === TURN_FILE;
 /** How much of AGENTS.md the agent sees every turn: room for its rules, its people, and its decisions. */
 const MAX_TURN_CHARS = 24_000;
 /** Where earlier versions of AGENTS.md are kept. */
@@ -99,7 +99,7 @@ export function driveFolder(raw: string | undefined): string {
 
 /** Writes any default file that is missing. */
 export async function ensureDefaults(store: DriveStore): Promise<void> {
-  for (const [path, text] of Object.entries(DEFAULT_FILES)) {
+  for (const [path, text] of Object.entries(defaultFiles())) {
     if (!(await store.read(path)))
       await store.write(path, new TextEncoder().encode(text), contentTypeOf(path));
   }

@@ -1,6 +1,6 @@
 # kiln
 
-kiln runs an AI teammate in Slack. It thinks through ideas with you, keeps one drive of notes and files across every channel and DM, and hands work on your repos to coding agents running on your own subscriptions and keys. Mine is called robdog.
+kiln runs an AI teammate in Slack. It thinks through ideas with you, keeps one drive of notes and files across every channel and DM, and hands work on your repos to coding agents running on your own subscriptions and keys. You name it; out of the box it is eve.
 
 ```
 Slack ──> agent (eve on Vercel) ──start_job──> Vercel Board "jobs" <──claim── one boat.dev machine per job
@@ -36,6 +36,7 @@ The drive is the agent's only memory: a folder of files it organizes however it 
 ## Jobs and models
 
 - **change** jobs commit to `kiln/<id>-<title>`, push it, and open a draft PR. Workers never merge; the agent can, with `gh`, when you ask it to.
+- **Projects** group repos that change together, such as an app and its hosted service. A job on a project clones all of its repos side by side, works across them, and opens a draft PR in each repo it changed. Projects, like repos, have their own defaults, MCP servers, and secrets.
 - **investigate** jobs report findings and change nothing.
 - **Files go both ways.** Drop a file in Slack and the agent keeps it in its drive, works on it in its sandbox (ImageMagick, zip, Python), or hands it to a job: the worker finds it in `.kiln/inputs/`, and it lands in the repo only where the brief says. Files a job's CLI saves in `.kiln/artifacts/`, such as screenshots, come back posted in the Slack thread and saved in the drive under `jobs/<id>/`. They ride on the job's Board task as attachments, never signed URLs, and workers never get drive access. Up to 10 files of 25 MB each way.
 - **Questions:** a CLI that needs a person ends with `QUESTION: ...`. The worker pushes its work and blocks the job; the agent asks in the thread, passes the answer back, and the next run resumes from the branch.
@@ -60,8 +61,8 @@ What you ask for wins over the repo's defaults for that kind of job, which win o
 
 | To change | Edit | Then |
 |---|---|---|
-| The agent's name | `agent.name` in [lib/config.ts](lib/config.ts), its Slack app, and the first line of its `AGENTS.md` | redeploy, then update `AGENTS.md`; the drive keeps its files |
-| Repos, their default models, and their MCP servers | `kiln.config.yaml`, gitignored; copy [kiln.config.example.yaml](kiln.config.example.yaml) | `pnpm run deploy` |
+| The agent's name | `name` in `kiln.config.yaml` (default `eve`), its Slack app, and the first line of its `AGENTS.md` | `pnpm run deploy`, then update `AGENTS.md`; the drive keeps its files |
+| Repos, projects, their default models, and their MCP servers | `kiln.config.yaml`, gitignored; copy [kiln.config.example.yaml](kiln.config.example.yaml) | `pnpm run deploy` |
 | Global default models | `defaultSelection` in [lib/config.ts](lib/config.ts) | `pnpm run deploy` |
 | How many jobs run at once per subscription or harness, and machine size | `jobsPerSubscription`, `machineLimits`, and `machineType` in [lib/config.ts](lib/config.ts) | `pnpm run deploy` |
 | Claude subscriptions | `WORKER_CLAUDE_CODE_OAUTH_TOKEN` and `WORKER_CLAUDE_CODE_OAUTH_TOKEN_<NAME>` on the Vercel project | `pnpm run deploy` |
@@ -145,4 +146,4 @@ pnpm eval         # the agent's real model on scripted conversations; spends tok
 - Each Claude subscription runs two jobs at a time (`jobsPerSubscription`). Codex and OpenCode are off (`enabledHarnesses`).
 - A job whose every subscription is out of usage for its model waits for the earliest reset; it never moves to another model on its own.
 - Reactions on the agent's messages don't reach it.
-- One repo per job.
+- One repo or project per job. A project's repos are cloned side by side; each one the job changes gets its own draft PR.
