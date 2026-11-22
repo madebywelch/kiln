@@ -1,9 +1,9 @@
 // One job, from a held claim to a settled task: clone, branch, run the
 // harness, push and open a draft PR (for changes), report, settle.
 
-import { appendFile, mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
-import { dirname, join } from "node:path";
-import type { Board, ClaimedTask } from "@vercel/board";
+import { appendFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
+import type { Attachment, Board, ClaimedTask } from "@vercel/board";
 import { benchedUntil, readLedger, usageLabels, type WorkerSubscription } from "../lib/accounts.ts";
 import { agent } from "../lib/config.ts";
 import type { McpServer, RepoConfig } from "../lib/deployment.ts";
@@ -12,6 +12,8 @@ import {
   describeSelection,
   type JobSpec,
   jobBranch,
+  MAX_JOB_FILE_BYTES,
+  MAX_JOB_FILES,
   NEEDS_SECRET_KIND,
   NEEDS_SECRETS_LABEL,
   REPORT_LABEL,
@@ -121,8 +123,32 @@ const SECRET = /^SECRET:\s*([A-Z][A-Z0-9_]*(?:\s*,\s*[A-Z][A-Z0-9_]*)*)\s*(?:[:\
 
 /** Where the CLI puts files to share, relative to the clone. */
 export const ARTIFACTS_DIR = ".kiln/artifacts";
-const MAX_ARTIFACTS = 10;
-const MAX_ARTIFACT_MB = 20;
+/** Where the files the agent attached to the job are, relative to the clone. */
+export const INPUTS_DIR = ".kiln/inputs";
+const MAX_ARTIFACTS = MAX_JOB_FILES;
+const MAX_ARTIFACT_MB = MAX_JOB_FILE_BYTES / 1024 / 1024;
+
+/**
+ * Downloads the files the agent attached to the job's task into dir, before the CLI starts, and
+ * returns their names. Runs again on a resumed job, so the files are there on every run.
+ */
+export async function fetchInputs(
+  board: Pick<Board, "download">,
+  attachments: readonly Attachment[],
+  dir: string,
+): Promise<string[]> {
+  if (attachments.length === 0) return [];
+  await mkdir(dir, { recursive: true });
+  const names: string[] = [];
+  for (const attachment of attachments) {
+    const name = basename(attachment.name);
+    const response = await board.download(attachment.id);
+    if (!response.ok) throw new Error(`could not download the job's file ${name}: HTTP ${response.status}`);
+    await writeFile(join(dir, name), new Uint8Array(await response.arrayBuffer()));
+    names.push(name);
+  }
+  return names;
+}
 
 export interface Artifact {
   readonly name: string;
@@ -242,8 +268,10 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string): Promise<
   };
   await git(["config", "user.name", identity.name]);
   await git(["config", "user.email", identity.email]);
-  // Files the CLI shares go in .kiln/artifacts; they are attached to the report, never committed.
+  // .kiln holds the job's files both ways: inputs from the agent, artifacts for the report. Never committed.
   await appendFile(join(jobDir, ".git", "info", "exclude"), `\n${ARTIFACTS_DIR.split("/")[0]}/\n`);
+  const inputs = await fetchInputs(board, claim.task.attachments ?? [], join(jobDir, INPUTS_DIR));
+  if (inputs.length) deps.log("job.inputs", { task: id, files: inputs.length });
 
   // A job that blocked for an answer pushed its work; the next run continues from it.
   const resumed =
@@ -254,7 +282,13 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string): Promise<
 
   const thread = await board.thread(id, { limit: 100 });
   const earlier = thread.replies.filter((reply) => !reply.text.startsWith(STARTED));
-  const prompt = buildPrompt(spec, { id, github: repo.github, branch, resumed }, earlier, deps.guidance);
+  const prompt = buildPrompt(
+    spec,
+    { id, github: repo.github, branch, resumed },
+    earlier,
+    deps.guidance,
+    inputs,
+  );
   const reportFile = join(deps.workDir, "logs", `${id}.report.md`);
   const subscriptions = spec.harness === "claude" ? (deps.subscriptions ?? []) : [];
   let current = 0;
@@ -468,6 +502,7 @@ export function buildPrompt(
   where: { readonly id: string; readonly github: string; readonly branch: string; readonly resumed: boolean },
   earlier: readonly { readonly text: string }[],
   guidance?: string,
+  inputs: readonly string[] = [],
 ): string {
   const lines = [
     `You are working on job #${where.id} from ${agent.name}, in a fresh clone of ${where.github}, on branch ${where.branch}.`,
@@ -483,6 +518,18 @@ export function buildPrompt(
   const notes = earlier.slice(-20).map((reply) => clip(reply.text, 2_000));
   if (notes.length > 0)
     lines.push("# Earlier in this job's thread", "", ...notes.map((note) => `- ${note}`), "");
+  if (inputs.length > 0) {
+    lines.push(
+      "# Files for this job",
+      "",
+      `The people who asked attached these files; they are in \`${INPUTS_DIR}/\` at the repo root:`,
+      "",
+      ...inputs.map((name) => `- \`${INPUTS_DIR}/${name}\``),
+      "",
+      `Nothing in \`${INPUTS_DIR}/\` is committed. To put a file in the repo, copy or convert it to where the job says, and commit it there. Leave a file out of the repo when the job doesn't say where it goes.`,
+      "",
+    );
+  }
   if (guidance?.trim()) lines.push("# House rules", "", guidance.trim(), "");
   lines.push("# How to work", "");
   if (spec.kind === "change") {

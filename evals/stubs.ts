@@ -72,6 +72,7 @@ export type JobInput = {
   harness?: string;
   model?: string;
   effort?: string;
+  files?: string[];
 };
 
 export const asJob = (input: unknown) => (input ?? {}) as JobInput;

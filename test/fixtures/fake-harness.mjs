@@ -3,7 +3,7 @@
 // what it does; FAKE_RECORD names a file where it writes its argv and stdin.
 
 import { execFileSync } from "node:child_process";
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const args = process.argv.slice(2);
@@ -95,6 +95,14 @@ switch (mode) {
     writeFileSync(join(cwd, ".kiln", "artifacts", "home.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
     finish("Added snow. Screenshot attached.");
     break;
+  case "place-input": {
+    // Does what a brief asks of an attached file: put it in the repo, at public/.
+    const name = readdirSync(join(cwd, ".kiln", "inputs"))[0];
+    mkdirSync(join(cwd, "public"), { recursive: true });
+    copyFileSync(join(cwd, ".kiln", "inputs", name), join(cwd, "public", name));
+    finish(`Put ${name} in public/.`);
+    break;
+  }
   case "nothing":
     finish("Nothing needed changing.");
     break;

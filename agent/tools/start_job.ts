@@ -3,14 +3,19 @@ import { z } from "zod";
 import { postJob } from "../../lib/board-jobs.ts";
 import { defaultSelection, EFFORTS, enabledHarnesses, type Harness } from "../../lib/config.ts";
 import { configuredRepos } from "../../lib/deployment.ts";
+import { drivePath } from "../../lib/drive.ts";
+import { collectJobFiles } from "../../lib/job-files.ts";
 import {
   describeSelection,
   KINDS,
   MAX_BRIEF_CHARS,
+  MAX_JOB_FILE_BYTES,
+  MAX_JOB_FILES,
   MAX_TITLE_CHARS,
   resolveSelection,
 } from "../../lib/jobs.ts";
 import { team } from "../lib/board.ts";
+import { drive } from "../lib/drive.ts";
 import { launchNow } from "../lib/machines.ts";
 import { slackHere } from "../lib/slack.ts";
 
@@ -72,25 +77,44 @@ export default defineDynamic(() => {
         .optional()
         .describe("The harness CLI's model name or alias, e.g. opus, sonnet, gpt-5.5."),
       effort: z.enum(EFFORTS).optional(),
+      files: z
+        .array(z.string())
+        .max(MAX_JOB_FILES)
+        .optional()
+        .describe(
+          `Files the worker needs, up to ${MAX_JOB_FILES}, ${MAX_JOB_FILE_BYTES / 1024 / 1024} MB each: drive paths (such as ` +
+            "assets/favicon.ico), or sandbox paths such as a Slack attachment under /workspace/.eve/attachments/. " +
+            "The worker finds them by file name in .kiln/inputs/. Say in the brief what to do with each, such as " +
+            '"put favicon.ico at public/favicon.ico". Files go into the repo only if the brief says where.',
+        ),
     }),
     label: { start: ({ repo, title }) => `Start job on ${repo}: ${title}` },
     async execute(input, ctx) {
       const selection = resolveSelection(input.repo, input.kind, input, repos);
       const here = slackHere(ctx);
-      const job = await postJob(team, {
-        ...selection,
-        repo: input.repo,
-        kind: input.kind,
-        title: input.title,
-        brief: input.brief,
-        origin: here?.threadTs ? { channelId: here.channelId, threadTs: here.threadTs } : undefined,
+      const files = await collectJobFiles(input.files ?? [], {
+        sandbox: async (path) => (await ctx.getSandbox()).readBinaryFile({ path }),
+        drive: async (path) => (await (await drive()).read(drivePath(path)))?.bytes ?? null,
       });
+      const job = await postJob(
+        team,
+        {
+          ...selection,
+          repo: input.repo,
+          kind: input.kind,
+          title: input.title,
+          brief: input.brief,
+          origin: here?.threadTs ? { channelId: here.channelId, threadTs: here.threadTs } : undefined,
+        },
+        files,
+      );
       await launchNow();
       return {
         id: job.id,
         state: job.state,
         runsOn: job.runsOn,
         reportsTo: job.origin ? "this thread" : "nowhere",
+        ...(files.length ? { files: files.map((file) => file.name) } : {}),
       };
     },
   });

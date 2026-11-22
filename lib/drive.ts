@@ -33,7 +33,8 @@ const isDefault = (path: string) => path in DEFAULT_FILES;
 const MAX_TURN_CHARS = 24_000;
 /** Where earlier versions of AGENTS.md are kept. */
 export const HISTORY_FOLDER = ".history/";
-export const MAX_FILE_BYTES = 20 * 1024 * 1024;
+/** Matches what a job takes and returns (MAX_JOB_FILE_BYTES), so any file can move between them. */
+export const MAX_FILE_BYTES = 25 * 1024 * 1024;
 const MAX_TEXT_READ = 100_000;
 const MAX_SEARCH_FILES = 500;
 const MAX_SEARCH_HITS = 40;
@@ -76,6 +77,18 @@ export function drivePath(raw: string): string {
   }
   if (segments.length > 8) throw new DriveError(`"${raw}" is nested too deep; keep it within 8 folders`);
   return path;
+}
+
+/** A file name made safe for the drive: other characters become "-", and it keeps its extension. */
+export function driveName(raw: string): string {
+  const cleaned = raw
+    .split("/")
+    .at(-1)
+    ?.replace(/[^\w.() -]/g, "-")
+    .replace(/^\.+$/, "")
+    .trim();
+  if (!cleaned) return "file";
+  return cleaned.length > 100 ? cleaned.slice(cleaned.length - 100) : cleaned;
 }
 
 /** A folder prefix for listing: "" for the root, else a clean path with a trailing slash. */

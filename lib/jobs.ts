@@ -30,6 +30,12 @@ export const NEEDS_SECRET_KIND = "needs_secret";
 
 export const MAX_BRIEF_CHARS = 9_000;
 export const MAX_TITLE_CHARS = 120;
+/**
+ * Files travel with a job both ways through Board attachments: the agent's in, the worker's
+ * artifacts out. The same limits each way, sized to what Slack hands the agent (eve's 25 MB).
+ */
+export const MAX_JOB_FILES = 10;
+export const MAX_JOB_FILE_BYTES = 25 * 1024 * 1024;
 
 export interface SlackOrigin {
   readonly channelId: string;

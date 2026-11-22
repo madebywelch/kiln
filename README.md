@@ -37,7 +37,7 @@ The drive is the agent's only memory: a folder of files it organizes however it 
 
 - **change** jobs commit to `kiln/<id>-<title>`, push it, and open a draft PR. Workers never merge.
 - **investigate** jobs report findings and change nothing.
-- **Files** a job's CLI saves in `.kiln/artifacts/`, such as screenshots, are posted into the Slack thread with the report. They are never committed.
+- **Files go both ways.** Drop a file in Slack and the agent keeps it in its drive, works on it in its sandbox (ImageMagick, zip, Python), or hands it to a job: the worker finds it in `.kiln/inputs/`, and it lands in the repo only where the brief says. Files a job's CLI saves in `.kiln/artifacts/`, such as screenshots, come back posted in the Slack thread and saved in the drive under `jobs/<id>/`. They ride on the job's Board task as attachments, never signed URLs, and workers never get drive access. Up to 10 files of 25 MB each way.
 - **Questions:** a CLI that needs a person ends with `QUESTION: ...`. The worker pushes its work and blocks the job; the agent asks in the thread, passes the answer back, and the next run resumes from the branch.
 - **Secrets:** a job whose repo lacks a secret it needs pauses. That includes an MCP server's key, or a credential the CLI asks for by name with `SECRET: NAME`. The agent posts a button for it, and saving the value in the private form resumes the job.
 

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Board, board, type ClaimedTask } from "@vercel/board";
@@ -15,6 +15,7 @@ import {
   buildPrompt,
   CLAIM_LOST,
   collectArtifacts,
+  fetchInputs,
   firstLine,
   harnessEnv,
   type OpenPullRequest,
@@ -361,6 +362,39 @@ describe("artifacts", () => {
     expect(report?.attachments.map((attachment) => attachment.name)).toEqual(["home.png"]);
     const bytes = new Uint8Array(await (await team.download(report!.attachments[0]!.id)).arrayBuffer());
     expect([...bytes]).toEqual([0x89, 0x50, 0x4e, 0x47]);
+  });
+
+  it("hands the CLI the agent's files in .kiln/inputs, and commits one only where the CLI puts it", async () => {
+    const favicon = new Uint8Array([0x00, 0x00, 0x01, 0x00, 0xff, 0x7f]);
+    const job = await postJob(team, { ...spec, brief: "Put favicon.ico at public/favicon.ico." }, [
+      { name: "favicon.ico", bytes: favicon },
+    ]);
+    const { outcome, record } = await work({ mode: "place-input" });
+    expect(outcome).toMatchObject({ kind: "completed" });
+    expect(record.stdin).toContain("# Files for this job");
+    expect(record.stdin).toContain("`.kiln/inputs/favicon.ico`");
+    const branch = jobBranch(job.id, spec.title);
+    const files = remoteFiles(branch);
+    expect(files).toContain("public/favicon.ico");
+    expect(files.some((file) => file.startsWith(".kiln"))).toBe(false);
+    const committed = execFileSync("git", ["--git-dir", remote, "show", `${branch}:public/favicon.ico`]);
+    expect([...committed]).toEqual([...favicon]);
+  });
+
+  it("downloads nothing for a job without files, and says nothing about them", async () => {
+    const dir = join(root, "inputs");
+    expect(await fetchInputs(team, [], dir)).toEqual([]);
+    await expect(stat(dir)).rejects.toThrow();
+    await postJob(team, spec);
+    const { record } = await work({ mode: "nothing" });
+    expect(record.stdin).not.toContain("# Files for this job");
+  });
+
+  it("fails the job, before the CLI runs, when a file can't be downloaded", async () => {
+    const broken = { download: async () => new Response("gone", { status: 404 }) };
+    await expect(
+      fetchInputs(broken, [{ id: "att_1", name: "logo.svg" } as never], join(root, "inputs")),
+    ).rejects.toThrow(/could not download the job's file logo.svg: HTTP 404/);
   });
 
   it("takes at most ten files, and nothing from a missing folder", async () => {

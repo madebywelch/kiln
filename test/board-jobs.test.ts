@@ -44,6 +44,19 @@ async function claimAs(handle: Board) {
 }
 
 describe("posting and reading jobs", () => {
+  it("attaches the job's files to its task, byte for byte, where a worker finds them", async () => {
+    const job = await postJob(team, spec, [
+      { name: "favicon.ico", bytes: new Uint8Array([0, 0, 1, 0]) },
+      { name: "data.bin", bytes: new Uint8Array([255, 254]) },
+    ]);
+    const claim = await claimAs(worker);
+    expect(claim.task.id).toBe(job.id);
+    expect(claim.task.attachments.map((attachment) => attachment.name)).toEqual(["favicon.ico", "data.bin"]);
+    const second = claim.task.attachments[1];
+    const bytes = new Uint8Array(await (await worker.download(second?.id ?? "")).arrayBuffer());
+    expect([...bytes]).toEqual([255, 254]);
+  });
+
   it("posts a job a worker can claim by harness", async () => {
     const job = await postJob(team, spec);
     expect(job).toMatchObject({
@@ -148,11 +161,32 @@ describe("sweepReports", () => {
     await sweepReports(
       team,
       async (_origin, message) => events.push(`message: ${message}`),
-      async (origin, file) =>
-        events.push(`file ${file.name} [${[...file.bytes].join(",")}] to ${origin.threadTs}`),
+      async (kept, file) => events.push(`file ${file.name} [${[...file.bytes].join(",")}] of ${kept.id}`),
     );
-    expect(events[0]).toBe(`file home.png [1,2,3] to ${spec.origin?.threadTs}`);
-    expect(events[1]).toContain("already posted in this thread: home.png");
+    expect(events[0]).toBe(`file home.png [1,2,3] of ${job.id}`);
+    expect(events[1]).toContain(
+      `already posted in this thread and saved in your drive under jobs/${job.id}/: home.png`,
+    );
+  });
+
+  it("keeps the files of a job with no Slack thread, and tells no one", async () => {
+    const job = await postJob(team, { ...spec, origin: undefined });
+    const claim = await claimAs(worker);
+    const log = await worker.upload({ data: new Uint8Array([7]), name: "run.log" });
+    await worker.reply(job.id, { text: "**Done.**", attachments: [log] });
+    await worker.label(job.id, { set: { [REPORT_LABEL]: REPORT_PENDING } });
+    await claim.complete("Done.");
+
+    const kept: string[] = [];
+    const messages: string[] = [];
+    const result = await sweepReports(
+      team,
+      async (_origin, message) => messages.push(message),
+      async (keptJob, file) => kept.push(`${keptJob.id}/${file.name}`),
+    );
+    expect(kept).toEqual([`${job.id}/run.log`]);
+    expect(messages).toEqual([]);
+    expect(result.delivered).toEqual([job.id]);
   });
 
   it("keeps the label when delivery fails, so the next sweep retries", async () => {

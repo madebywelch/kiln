@@ -96,7 +96,9 @@ Every top-level message in a busy channel costs one screening call, and the ones
 
 ## Files
 
-Files attached to a message reach robdog; a mention without files also gets files posted in the thread since its last mention. They land in robdog's sandbox under `/workspace/.eve/attachments`, so it can read, convert, or analyze them. Files are not passed on to jobs; describe what a worker needs in the brief, or commit the file.
+Files attached to a message reach robdog; a mention without files also gets files posted in the thread since its last mention. They land in robdog's sandbox under `/workspace/.eve/attachments`, so it can read, convert, or analyze them; the sandbox has ImageMagick, zip and unzip, `file`, Python 3, and jq (`agent/sandbox/sandbox.ts`). The sandbox doesn't last, so robdog saves files worth keeping to its drive.
+
+To put a file in a repo, robdog passes it to `start_job` (`files`). It travels as an attachment on the job's Board task, and the worker downloads it into `.kiln/inputs/` before the CLI starts; the brief says where it goes. Files a job returns are posted in the thread and saved in robdog's drive under `jobs/<id>/`. Up to 10 files, 25 MB each, either way.
 
 Voice clips and other audio reach the model as a file label, not sound. robdog transcribes them with `transcribe_audio` (AI Gateway, `KILN_TRANSCRIPTION_MODEL`) before deciding whether to answer, then treats the transcript as what was said. The screen never drops a message with audio, because it reads text only. Each clip costs one transcription call, about $0.003 a minute on the default model. Transcriptions are logged as `audio.transcribed` with size, duration, and character count, never the words; failures as `audio.transcribe_failed`.
 

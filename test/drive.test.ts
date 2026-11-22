@@ -4,6 +4,7 @@ import { agent } from "../lib/config.ts";
 import {
   DEFAULT_FILES,
   DriveError,
+  driveName,
   drivePath,
   editFile,
   ensureDefaults,
@@ -89,6 +90,21 @@ describe("AGENTS.md", () => {
     expect(await turnContext(store)).toContain("[cut: AGENTS.md is too long; tighten it]");
     await writeFile(store, "AGENTS.md", text("  \n"));
     expect(await turnContext(store)).toBe("");
+  });
+});
+
+describe("driveName", () => {
+  it("makes any file name safe for the drive, keeping its extension", () => {
+    expect(driveName("Screen Shot 2026-11-22 at 9.41.03 AM.png")).toBe(
+      "Screen Shot 2026-11-22 at 9.41.03 AM.png",
+    );
+    expect(driveName("logo@2x.png")).toBe("logo-2x.png");
+    expect(driveName("../../etc/passwd")).toBe("passwd");
+    expect(driveName("..")).toBe("file");
+    expect(driveName("")).toBe("file");
+    expect(driveName(`${"a".repeat(150)}.zip`)).toHaveLength(100);
+    expect(driveName(`${"a".repeat(150)}.zip`).endsWith(".zip")).toBe(true);
+    expect(() => drivePath(`jobs/msg_1/${driveName("we!rd$name#.json")}`)).not.toThrow();
   });
 });
 

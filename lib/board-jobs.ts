@@ -2,6 +2,7 @@
 // Every function takes the board handle, so tests run them on a local board.
 
 import type { Board, MessageView } from "@vercel/board";
+import type { JobFile } from "./job-files.ts";
 import {
   decodeJob,
   describeSelection,
@@ -58,13 +59,23 @@ export function viewJob(root: MessageView): JobView {
   };
 }
 
-/** Posts a job to the board and returns it, with the board's own message for whoever launches its machine. */
+/**
+ * Posts a job to the board and returns it, with the board's own message for whoever launches its
+ * machine. Its files are uploaded first and attached to the task, where the worker finds them.
+ */
 export async function postJob(
   team: Board,
   spec: JobSpec,
+  files: readonly JobFile[] = [],
 ): Promise<JobView & { readonly message: MessageView }> {
   const { text, labels } = encodeJob(spec);
-  const { task } = await team.tasks.create(JOBS_CHANNEL, { text, labels });
+  const attachments = [];
+  for (const file of files) attachments.push(await team.upload({ data: file.bytes, name: file.name }));
+  const { task } = await team.tasks.create(JOBS_CHANNEL, {
+    text,
+    labels,
+    ...(attachments.length ? { attachments } : {}),
+  });
   return { ...viewJob(task), message: task };
 }
 
@@ -135,11 +146,14 @@ export type DeliverReport = (
   idempotencyKey: string,
 ) => Promise<unknown>;
 
-/** Posts one file the worker attached into the job's Slack thread. */
-export type ShareFile = (
-  origin: SlackOrigin,
-  file: { readonly name: string; readonly bytes: Uint8Array<ArrayBuffer> },
-) => Promise<unknown>;
+/**
+ * Handles one file the worker attached to a settled job: the agent saves it in its drive under
+ * jobFilesFolder(job.id) and, when the job came from Slack, posts it in the thread.
+ */
+export type KeepFile = (job: JobView, file: JobFile) => Promise<unknown>;
+
+/** Where a job's returned files are saved in the agent's drive. */
+export const jobFilesFolder = (id: string) => `jobs/${id}/`;
 
 export interface SweepResult {
   readonly delivered: string[];
@@ -156,7 +170,7 @@ export interface SweepResult {
 export async function sweepReports(
   team: Board,
   deliver: DeliverReport,
-  share?: ShareFile,
+  keep?: KeepFile,
 ): Promise<SweepResult> {
   const { tasks } = await team.tasks.list({
     channel: JOBS_CHANNEL,
@@ -188,22 +202,20 @@ export async function sweepReports(
         result.skipped.push(id); // re-queued after the label was set; the next settle sets it again
         continue;
       }
+      const { replies } = await team.thread(id, { limit: 100 });
+      const last = replies.at(-1);
+      // Files first, so the agent's reply comes after them, and kept even for a job with no thread.
+      // A retry of a failed hand-off keeps them again: the same drive paths, posted again in Slack.
+      const kept: string[] = [];
+      for (const attachment of keep ? (last?.attachments ?? []) : []) {
+        const response = await team.download(attachment.id);
+        await keep?.(job, { name: attachment.name, bytes: new Uint8Array(await response.arrayBuffer()) });
+        kept.push(attachment.name);
+      }
       if (job.origin) {
-        const { replies } = await team.thread(id, { limit: 100 });
-        const last = replies.at(-1);
-        // Files first, so the agent's reply comes after them. A retry of a failed hand-off posts them again.
-        const shared: string[] = [];
-        for (const attachment of share ? (last?.attachments ?? []) : []) {
-          const response = await team.download(attachment.id);
-          await share?.(job.origin, {
-            name: attachment.name,
-            bytes: new Uint8Array(await response.arrayBuffer()),
-          });
-          shared.push(attachment.name);
-        }
         await deliver(
           job.origin,
-          reportMessage(job, last?.text ?? "", shared),
+          reportMessage(job, last?.text ?? "", kept),
           `job:${id}:${job.state}:${message.task?.epoch ?? 0}`,
         );
       }
@@ -241,7 +253,7 @@ export function reportMessage(job: JobView, lastReport: string, files: readonly 
   }
   if (files.length > 0) {
     lines.push(
-      `The worker's files are already posted in this thread: ${files.join(", ")}. Refer to them; don't post them again.`,
+      `The worker's files are already posted in this thread and saved in your drive under ${jobFilesFolder(job.id)}: ${files.join(", ")}. Refer to them; don't post them again.`,
     );
   }
   const report = lastReport.trim();
