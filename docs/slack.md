@@ -99,3 +99,11 @@ Every top-level message in a busy channel costs one screening call, and the ones
 Files attached to a message reach robdog; a mention without files also gets files posted in the thread since its last mention. They land in robdog's sandbox under `/workspace/.eve/attachments`, so it can read, convert, or analyze them. Files are not passed on to jobs; describe what a worker needs in the brief, or commit the file.
 
 Voice clips and other audio reach the model as a file label, not sound. robdog transcribes them with `transcribe_audio` (AI Gateway, `KILN_TRANSCRIPTION_MODEL`) before deciding whether to answer, then treats the transcript as what was said. The screen never drops a message with audio, because it reads text only. Each clip costs one transcription call, about $0.003 a minute on the default model. Transcriptions are logged as `audio.transcribed` with size, duration, and character count, never the words; failures as `audio.transcribe_failed`.
+
+## Watching a conversation
+
+Every turn is traced to Vercel Agent Runs: in the Vercel dashboard, open the project, then **Observability → Agent Runs**. Each Slack thread is a session; open one to see each turn's model calls, the instructions and context the model saw, its reasoning and replies, and every tool call with its input and result. Traces are kept 30 days.
+
+Tracing needs a sampling rule on the project, set once: `vercel traces config set 100 --environment production`. Content is recorded in every conversation, DMs and private channels included (`agent/instrumentation/otel.ts`); narrow that policy if the workspace is shared with people who shouldn't have their DMs in traces. From the terminal, `vercel traces search --project <project>` lists recent spans and `vercel traces inspect <id>` shows one trace.
+
+The routing decisions before a turn (`slack.route`, `ambient.screen`) are in the function logs, not the traces: `vercel logs --environment production`.
