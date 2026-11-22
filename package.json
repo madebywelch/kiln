@@ -22,7 +22,6 @@
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.107",
-    "@ai-sdk/openai-compatible": "^3.0.94",
     "@vercel/blob": "2.9.0",
     "@vercel/board": "0.54.0",
     "@vercel/connect": "^2.9.5",

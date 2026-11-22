@@ -4,7 +4,6 @@ import { postJob } from "../../lib/board-jobs.ts";
 import { defaultSelection, EFFORTS, enabledHarnesses, type Harness } from "../../lib/config.ts";
 import { configuredProjects } from "../../lib/deployment.ts";
 import { drivePath } from "../../lib/drive.ts";
-import { inferenceFrom } from "../../lib/inference.ts";
 import { collectJobFiles } from "../../lib/job-files.ts";
 import {
   describeSelection,
@@ -57,11 +56,9 @@ export default defineDynamic(() => {
       "Repos and projects:",
       ...repoLines,
       "",
-      typeof inferenceFrom(process.env) === "object"
-        ? `Workers run ${harnessLines.join("; ")}. Claude Code runs on the deployment's inference endpoint.`
-        : `Workers run on subscriptions only: ${harnessLines.join("; ")}.`,
+      `Workers run ${harnessLines.join("; ")}, on the deployment's inference endpoint.`,
       "Models billed per token (AI Gateway IDs such as deepseek/..., or another vendor's models) are off. If someone",
-      "asks for one, say so and offer a subscription model instead; don't start the job on something else.",
+      "asks for one, say so and offer a Claude model instead; don't start the job on something else.",
       "",
       `Unless the user names them: change jobs run on ${describeSelection(defaultSelection.change)} (the implementer), investigate jobs on ${describeSelection(defaultSelection.investigate)} (the researcher, fast).`,
       'Pass harness, model, or effort only when the user asked for them ("opus at max effort", "sonnet, low effort").',

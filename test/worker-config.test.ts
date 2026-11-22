@@ -10,7 +10,8 @@ const base = {
   WORKER_HARNESS: "claude",
   GH_TOKEN: "ghp_x",
   KILN_JOB_ID: "msg_1",
-  CLAUDE_CODE_OAUTH_TOKEN: "t",
+  INFERENCE_BASE_URL: "https://llm.example.com",
+  INFERENCE_API_KEY: "sk-endpoint",
 };
 
 describe("parseConfig", () => {
@@ -41,18 +42,14 @@ describe("parseConfig", () => {
     expect(parseConfig({ ...base, BOARD_PROFILE: `c${"x".repeat(32)}` }).success).toBe(false);
   });
 
-  it("refuses a claude worker without its subscription token", () => {
-    const { CLAUDE_CODE_OAUTH_TOKEN: _token, ...noToken } = base;
-    const parsed = parseConfig({ ...noToken, CLAUDE_CODE_OAUTH_TOKEN: "" });
-    expect(parsed.error?.issues.map((issue) => issue.path.join("."))).toEqual(["CLAUDE_CODE_OAUTH_TOKEN"]);
-    expect(parseConfig({ ...noToken, BOARD_PROFILE: "codex-1", WORKER_HARNESS: "codex" }).success).toBe(true);
-  });
-
-  it("starts a claude worker on the inference endpoint with no subscription token, and only with both halves", () => {
-    const { CLAUDE_CODE_OAUTH_TOKEN: _token, ...noToken } = base;
-    const endpoint = { INFERENCE_BASE_URL: "https://llm.example.com", INFERENCE_API_KEY: "sk-endpoint" };
-    expect(parseConfig({ ...noToken, ...endpoint }).success).toBe(true);
-    expect(parseConfig({ ...noToken, INFERENCE_BASE_URL: endpoint.INFERENCE_BASE_URL }).success).toBe(false);
+  it("starts a claude worker only with the whole inference endpoint", () => {
+    const { INFERENCE_BASE_URL: _url, INFERENCE_API_KEY: _key, ...noEndpoint } = base;
+    expect(parseConfig(base).success).toBe(true);
+    const parsed = parseConfig({ ...noEndpoint, INFERENCE_BASE_URL: "https://llm.example.com" });
+    expect(parsed.error?.issues.map((issue) => issue.path.join("."))).toEqual(["INFERENCE_BASE_URL"]);
+    expect(parseConfig({ ...noEndpoint, BOARD_PROFILE: "codex-1", WORKER_HARNESS: "codex" }).success).toBe(
+      true,
+    );
   });
 
   it("refuses a harness the worker cannot run", () => {

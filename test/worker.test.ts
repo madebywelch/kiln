@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { type Board, board, type ClaimedTask } from "@vercel/board";
 import { local } from "@vercel/board/backend-local";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { ledger, readLedger, type WorkerSubscription } from "../lib/accounts.ts";
 import { answerJob, postJob, readJob } from "../lib/board-jobs.ts";
 import type { McpServer, RepoConfig } from "../lib/deployment.ts";
 import { JOBS_CHANNEL, type JobSpec, jobBranch, REPORT_LABEL } from "../lib/jobs.ts";
@@ -96,7 +95,6 @@ interface RunOptions {
   harnessEnv?: NodeJS.ProcessEnv;
   guidance?: string;
   mcpServers?: Record<string, McpServer>;
-  subscriptions?: WorkerSubscription[];
   inference?: { baseURL: string; apiKey: string };
 }
 
@@ -143,7 +141,6 @@ async function work(
     ...(options.harnessEnv ? { harnessEnv: options.harnessEnv } : {}),
     ...(options.guidance ? { guidance: options.guidance } : {}),
     ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
-    ...(options.subscriptions ? { subscriptions: options.subscriptions } : {}),
     ...(options.inference ? { inference: options.inference } : {}),
   });
   let record: Record_ = { args: [], stdin: "", env: { GH_TOKEN: null, BOARD_TOKEN: null } };
@@ -394,12 +391,11 @@ describe("pull request descriptions", () => {
 });
 
 describe("the inference endpoint", () => {
-  it("runs a Claude job on the endpoint instead of a subscription, with Claude Code's own settings", async () => {
+  it("runs a Claude job on the endpoint, with Claude Code's own settings", async () => {
     await postJob(team, spec);
     const { outcome, record } = await work({
       mode: "change",
       harnessEnv: harnessEnv({ ...process.env, INFERENCE_API_KEY: "sk-endpoint", GH_TOKEN: "ghp_write" }),
-      subscriptions: [{ id: "main", token: "oauth-main", record: "msg_ledger" }],
       inference: { baseURL: "https://llm.example.com/v1/", apiKey: "sk-endpoint" },
     });
     expect(outcome).toMatchObject({ kind: "completed" });
@@ -723,59 +719,4 @@ describe("failure reports", () => {
     });
     expect(outcome.kind === "failed" && outcome.report).not.toContain("unknown format");
   });
-});
-
-describe("subscriptions", () => {
-  async function subscriptions(): Promise<WorkerSubscription[]> {
-    const states = await ledger(team, "claude", ["a", "b"]);
-    return [
-      { id: "a", token: "sub-a", record: states.get("a")?.record ?? "" },
-      { id: "b", token: "sub-b", record: states.get("b")?.record ?? "" },
-    ];
-  }
-
-  it("moves a job to the next subscription when its own runs out, resuming the session on the same model", async () => {
-    const job = await postJob(team, spec);
-    const subs = await subscriptions();
-    const { outcome, runs } = await work({ mode: "exhausted-first", subscriptions: subs });
-
-    expect(outcome.kind).toBe("completed");
-    expect(runs.map((run) => run.token)).toEqual(["sub-a", "sub-b"]);
-    expect(runs[0]?.args).not.toContain("--resume");
-    expect(runs[1]?.args).toEqual(expect.arrayContaining(["--resume", "ses-claude-1", "--model", "opus"]));
-    expect(runs[0]?.args).toEqual(expect.arrayContaining(["--model", "opus"]));
-
-    const states = await readLedger(team, "claude");
-    expect(states.get("a")?.benches.all).toBe(1_900_000_000);
-    expect(states.get("b")?.usage.seven_day?.percent).toBe(42);
-    const { log } = await readJob(team, job.id);
-    expect(log.some((entry) => /out of usage .*continuing on b, same model/.test(entry.text))).toBe(true);
-    expect((await rootOf(job.id)).labels.account).toBe("b");
-  }, 30_000);
-
-  it("never hands the coding CLI the other subscriptions' tokens", async () => {
-    await postJob(team, spec);
-    const { record } = await work({
-      mode: "change",
-      subscriptions: await subscriptions(),
-      harnessEnv: harnessEnv({ ...process.env, KILN_SUBSCRIPTIONS: "[secret]" }),
-    });
-    expect(record.env).toMatchObject({ CLAUDE_CODE_OAUTH_TOKEN: "sub-a", KILN_SUBSCRIPTIONS: null });
-  }, 30_000);
-
-  it("hands the job back to wait for usage when every subscription is out, with its work pushed", async () => {
-    const job = await postJob(team, spec);
-    const { outcome, runs } = await work({ mode: "exhausted-all", subscriptions: await subscriptions() });
-
-    expect(outcome).toMatchObject({ kind: "waiting", until: 1_900_000_000 });
-    expect(runs.map((run) => run.token)).toEqual(["sub-a", "sub-b"]);
-    const root = await rootOf(job.id);
-    expect(root.task?.state).toBe("ready");
-    expect(root.labels.waiting).toBe("1900000000");
-    expect(root.labels.account).toBeUndefined();
-    expect(root.labels[REPORT_LABEL]).toBeUndefined();
-    expect(
-      git(["--git-dir", remote, "ls-tree", "-r", "--name-only", jobBranch(job.id, spec.title)]),
-    ).toContain("draft.css");
-  }, 30_000);
 });

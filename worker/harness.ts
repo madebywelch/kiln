@@ -2,7 +2,6 @@
 // and how its final message is read.
 
 import { readFile } from "node:fs/promises";
-import type { RateLimitInfo } from "../lib/accounts.ts";
 import type { Effort, Harness, Selection } from "../lib/config.ts";
 import type { McpServer } from "../lib/deployment.ts";
 
@@ -91,14 +90,12 @@ export function harnessInvocation(
   reportFile: string,
   mcp: Readonly<Record<string, ResolvedMcp>> = {},
   bins: HarnessBins = defaultBins,
-  /** A Claude session to continue, after the job moved to another subscription. */
-  resume?: string,
 ): HarnessInvocation {
   const servers = Object.entries(mcp);
   switch (selection.harness) {
     case "claude": {
-      // The machine is the sandbox: there is no person to answer a permission prompt. stream-json carries
-      // the session ID and Claude Code's usage reports as they happen, so the worker can act on a limit.
+      // The machine is the sandbox: there is no person to answer a permission prompt. stream-json puts
+      // each event in the log as it happens, so a failed run's log shows how far it got.
       const args = [
         "-p",
         "--output-format",
@@ -107,7 +104,6 @@ export function harnessInvocation(
         "--permission-mode",
         "bypassPermissions",
       ];
-      if (resume) args.push("--resume", resume);
       args.push("--effort", selection.effort);
       if (selection.model) args.push("--model", selection.model);
       if (servers.length > 0) {
@@ -236,57 +232,5 @@ function parseLine(line: string): Record<string, unknown> | undefined {
     return JSON.parse(line) as Record<string, unknown>;
   } catch {
     return undefined;
-  }
-}
-
-/** Claude Code's message when a subscription is out of usage, e.g. "You've hit your session limit · resets 3:45pm". */
-const USAGE_LIMIT_TEXT = /hit your .*limit/i;
-
-/**
- * Follows Claude Code's stream-json output as it arrives: the session to resume, every usage report,
- * and whether the subscription ran out. Chunks may split lines; it buffers them.
- */
-export class ClaudeWatch {
-  sessionId: string | undefined;
-  /** Every usage report, in order. */
-  readonly limits: RateLimitInfo[] = [];
-  #buffer = "";
-  #limitText = false;
-
-  feed(chunk: string): void {
-    this.#buffer += chunk;
-    const lines = this.#buffer.split("\n");
-    this.#buffer = lines.pop() ?? "";
-    for (const line of lines) this.#line(line);
-  }
-
-  #line(line: string): void {
-    const event = parseLine(line);
-    if (!event) return;
-    if (typeof event.session_id === "string") this.sessionId = event.session_id;
-    if (
-      event.type === "rate_limit_event" &&
-      event.rate_limit_info &&
-      typeof event.rate_limit_info === "object"
-    ) {
-      this.limits.push(event.rate_limit_info as RateLimitInfo);
-    }
-    if (event.type === "result" && event.is_error === true && USAGE_LIMIT_TEXT.test(String(event.result))) {
-      this.#limitText = true;
-    }
-  }
-
-  /** The report that said the subscription is out, or one made up from the limit message. */
-  get exhausted(): RateLimitInfo | undefined {
-    const rejected = this.limits.findLast((info) => info.status === "rejected");
-    if (rejected) return rejected;
-    if (!this.#limitText) return undefined;
-    const last = this.limits.at(-1);
-    return { ...(last ?? {}), status: "rejected" };
-  }
-
-  /** The latest report, which carries the use of every window. */
-  get latest(): RateLimitInfo | undefined {
-    return this.limits.at(-1);
   }
 }

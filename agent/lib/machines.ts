@@ -1,6 +1,6 @@
 // The agent's handle on boat: launching job machines and writing repo secrets.
-// Reads BOAT_API_KEY, KILN_WORKER_CODE, and the WORKER_* settings from the
-// Vercel project's environment.
+// Reads BOAT_API_KEY, KILN_WORKER_CODE, the WORKER_* settings, and the inference
+// endpoint (INFERENCE_*) from the Vercel project's environment.
 
 import { Boat } from "../../lib/boat.ts";
 import { type Log, launchConfig, type MachineDeps, reconcileMachines } from "../../lib/machines.ts";
@@ -14,10 +14,10 @@ export function boatClient(): Boat | string {
   return key ? new Boat(key) : "set BOAT_API_KEY on the agent's Vercel project";
 }
 
-export function machineDeps(notify?: MachineDeps["notify"]): MachineDeps | string {
+export function machineDeps(): MachineDeps | string {
   const boat = boatClient();
   if (typeof boat === "string") return boat;
-  return { team, boat, config: launchConfig(process.env), log, ...(notify ? { notify } : {}) };
+  return { team, boat, config: launchConfig(process.env), log };
 }
 
 /**

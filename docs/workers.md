@@ -2,7 +2,7 @@
 
 Every job runs on its own fresh boat.dev machine. The agent launches the machine when it starts the job and deletes it once the job settles. With no jobs, there are no machines and nothing to pay for.
 
-Workers run on subscriptions only. `enabledHarnesses` in `lib/config.ts` lists the coding CLIs they may use; out of the box that is Claude Code. OpenCode, for AI Gateway models billed per token, is built in and switched off, and Codex waits on lending its login to per-job machines. A job for a harness that is off fails at once with that reason.
+Workers run Claude Code on the deployment's inference endpoint (`INFERENCE_BASE_URL` and `INFERENCE_API_KEY`). `enabledHarnesses` in `lib/config.ts` lists the coding CLIs they may use; out of the box that is Claude Code. OpenCode, for AI Gateway models, is built in and switched off, and Codex waits on lending its login to per-job machines. A job for a harness that is off fails at once with that reason.
 
 ## A machine's life
 
@@ -23,8 +23,7 @@ The minute's check also does the following:
 
 | It finds | It does |
 |---|---|
-| A ready job with no machine | Launches one. A Claude job goes on the first subscription with room (`jobsPerSubscription`, 2) that can run its model. If OpenCode is enabled, its jobs are capped at `machineLimits` (3). Jobs over a limit wait their turn, oldest first. |
-| A ready Claude job whose every subscription is out of usage for its model | Labels it `waiting` with the earliest reset, tells its thread once, and launches it when that subscription resets. |
+| A ready job with no machine | Launches one, up to `machineLimits` per harness (3 for Claude, 3 for OpenCode if enabled). Jobs over a limit wait their turn, oldest first. |
 | A machine whose setup failed, or whose job is still unclaimed after 10 minutes | Deletes it and launches another. After 3 launches the job fails, with the reason in its thread. |
 | A job for a harness that can't run | Fails it at once, with the reason in its thread: Codex, or a harness without its credential. |
 
@@ -40,7 +39,7 @@ Everything lives in the agent's Vercel project; nothing runs on your computer.
    | `WORKER_BOARD_TOKEN` | A Vercel access token for your account, scoped to the team: <https://vercel.com/account/tokens>. Workers act on the board with it. |
    | `WORKER_VERCEL_ORG_ID` | The team that owns the agent's project: `orgId` in `.vercel/project.json`. |
    | `WORKER_GH_TOKEN` | A GitHub token with Contents and Pull requests read/write on the repos in `kiln.config.yaml`. |
-   | `WORKER_CLAUDE_CODE_OAUTH_TOKEN`, `WORKER_CLAUDE_CODE_OAUTH_TOKEN_<NAME>` | One per Claude subscription, from `claude setup-token` signed in to it. The bare one is subscription `main`; the others are named by their suffix (`_2` is `2`, `_VERIFIED` is `verified`). Only Claude machines get them; see Subscriptions below. |
+   | `INFERENCE_BASE_URL`, `INFERENCE_API_KEY` | Not `WORKER_`-prefixed: the agent's model uses them too. The Anthropic-compatible endpoint Claude jobs run on; only Claude machines get them. See Inference below. |
    | `WORKER_AI_GATEWAY_API_KEY` | Only if you enable OpenCode (`enabledHarnesses`): an AI Gateway key for its per-token models. Only OpenCode machines get it. |
    | `WORKER_HARNESS_GH_TOKEN` | Optional. A read-only GitHub token for the coding CLI; see below. |
    | `WORKER_KILN_GIT_NAME`, `WORKER_KILN_GIT_EMAIL` | Optional commit identity. Default: `<agent name> (<harness>)`. |
@@ -55,17 +54,9 @@ pnpm workers:logs <job id>       # a running machine's worker log
 
 Machines are deleted with their jobs, so the logs of a finished job are gone; its thread on the board (`pnpm exec vb read <job id>`) keeps the report and the output's tail.
 
-## Subscriptions
+## Inference
 
-With `INFERENCE_BASE_URL` and `INFERENCE_API_KEY` set on the agent's Vercel project, Claude jobs skip all of this: each runs Claude Code against that endpoint (as `ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY`, the host without `/v1`), no subscription is chosen or recorded, and `machineLimits.claude` caps how many run at once. The worker gets the key in its settings file and the CLI gets it as `ANTHROPIC_API_KEY`, as it gets a subscription's token otherwise.
-
-kiln routes Claude jobs across every subscription it has a token for, and never changes a job's model.
-
-- **Sticky.** A job runs on one subscription until that subscription runs out, so its prompt cache stays warm. Subscriptions fill in order: `main`, then by name. A later subscription's 5-hour window starts only when the ones before it are busy or out.
-- **Learning limits.** Claude Code reports usage on every run (`rate_limit_event`): each window's use, its reset, and whether it is exhausted. The worker writes this to the subscription's record on the board, a message in channel `kiln-accounts` labeled `usage.<window>`, `reset.<window>`, and `bench.<scope>`. Tokens never go there. A 5-hour or weekly window that runs out benches the subscription for every model. A model's own weekly window, such as Fable's on verified accounts, benches it for that model only.
-- **Mid-job.** When a run's subscription runs out, the worker stops it, benches the subscription, and runs `claude -p --resume <session>` on the next subscription that can run the job's model, on the same machine. The thread gets a line saying so. The first turn after a switch rebuilds the prompt cache, and Claude drops reasoning made under the other account. The job's work and conversation carry over.
-- **All out.** With no subscription left for the model, the worker pushes the work, labels the job `waiting` with the earliest reset, and hands it back. The agent tells the thread once. The job relaunches at the reset on the same model, unless someone cancels it and starts it again on another.
-- The worker gets every token that can run the job, because it switches without the agent. The coding CLI gets only the one in use, as `CLAUDE_CODE_OAUTH_TOKEN`.
+Claude jobs run Claude Code against the deployment's inference endpoint, `INFERENCE_BASE_URL` and `INFERENCE_API_KEY` on the agent's Vercel project. The agent puts both in a Claude machine's settings file; the worker hands them to Claude Code as `ANTHROPIC_BASE_URL` (the host without `/v1`) and `ANTHROPIC_API_KEY`, and the machine's log records the endpoint's host at `job.harness`. `machineLimits.claude` caps how many run at once. Without both settings, Claude jobs fail at once with the reason, and a worker refuses to start (`config.invalid`). A job's model never changes after it starts.
 
 ## Repo secrets
 
@@ -125,5 +116,3 @@ Agent logs (`pnpm exec vercel logs`) carry the `machines.*` events. A machine's 
 | A job failed with `invalid_json_schema` | The model's provider refused one of the repo's MCP tool schemas. OpenAI models reject regex lookaround, which zod's `.email()` produces. Run that repo's jobs on claude (`defaults` in `kiln.config.yaml`), or loosen the schema in the MCP server. |
 | `config.invalid` in a machine's log | A worker setting is missing or malformed; the field is named. |
 | `job.unavailable` in a machine's log | Another machine had the job, or it was canceled before this one came up. Harmless. |
-| `job.subscription_switched` in a machine's log | Its subscription ran out; the job resumed on the next one. |
-| `job.waiting`, or a job labeled `waiting` | Every subscription that can run its model is out; it starts again at the reset. `list_subscriptions` in Slack shows usage. |

@@ -1,10 +1,10 @@
 # kiln
 
-kiln runs an AI teammate in Slack. It thinks through ideas with you, keeps one drive of notes and files across every channel and DM, and hands work on your repos to coding agents running on your own subscriptions and keys. You name it; out of the box it is eve.
+kiln runs an AI teammate in Slack. It thinks through ideas with you, keeps one drive of notes and files across every channel and DM, and hands work on your repos to coding agents running on your own inference endpoint. You name it; out of the box it is eve.
 
 ```
 Slack ──> agent (eve on Vercel) ──start_job──> Vercel Board "jobs" <──claim── one boat.dev machine per job
-  ^          drive, skills, tools   │                 │                         Claude Code on your subscriptions
+  ^          drive, skills, tools   │                 │                         Claude Code on your endpoint     
   │                                 └─ launches ──────┼───────────────────────> the repo's secrets only
   │                                                   │ report=pending          clone, run, push, draft PR, files
   └───── job-reports schedule, every minute ──────────┘                         deleted when the job settles
@@ -49,15 +49,13 @@ Say the model in Slack, or don't:
 | "add a christmas theme to the website" | a change: the repo's default, else `claude opus/high`, the implementer |
 | "figure out why CI is slow" | an investigation: the repo's default, else `claude sonnet/high`, the researcher |
 | "opus at max effort" | `claude opus/max` |
-| "deepseek v4.1 flash" | nothing: the agent says per-token models are off and offers a subscription model |
+| "deepseek v4.1 flash" | nothing: the agent says that harness is off and offers a Claude model |
 
-**Workers run on subscriptions only.** `enabledHarnesses` in [lib/config.ts](lib/config.ts) lists the coding CLIs workers may use, and out of the box that is Claude Code alone. OpenCode, which runs AI Gateway models billed per token, is built in but switched off. Codex joins once its ChatGPT login can be lent to per-job machines. The agent itself runs on AI Gateway (`KILN_MODEL`), which is the only per-token spend.
+**Everything runs on your inference endpoint.** Set `INFERENCE_BASE_URL` and `INFERENCE_API_KEY` to an Anthropic-compatible endpoint: the agent's model and the workers' Claude Code both run on it. `enabledHarnesses` in [lib/config.ts](lib/config.ts) lists the coding CLIs workers may use, and out of the box that is Claude Code alone; OpenCode is built in but switched off, and Codex joins once its ChatGPT login can be lent to per-job machines. Without an endpoint, as in evals and local development, the agent runs on AI Gateway (`KILN_MODEL`) and Claude jobs can't start. The cheap model that screens channel messages and voice-note transcription always use AI Gateway, through the Vercel project's OIDC login.
 
-**Or on your own endpoint.** Set `INFERENCE_BASE_URL` and `INFERENCE_API_KEY` to an Anthropic-compatible endpoint and both the agent and the workers' Claude Code use it: no AI Gateway for the agent's model, no subscriptions for jobs. The cheap model that screens channel messages and voice-note transcription stay on AI Gateway.
 
 What you ask for wins over the repo's defaults for that kind of job, which win over the global ones. Once a job starts, its harness and model are fixed.
 
-**Subscriptions.** Give kiln several Claude subscriptions and it routes between them. A job sticks to one subscription, keeping its prompt cache warm, until that subscription runs out of usage. Then the worker resumes the same session on the next subscription that can run the job's model. kiln learns each subscription's limits from what Claude Code reports, including 5-hour windows, weekly windows, and per-model weekly windows. When every subscription that can run the model is out, the job waits for the earliest reset, and the agent tells the thread so you can wait or restart it on another model.
 
 ## Configure it
 
@@ -66,8 +64,7 @@ What you ask for wins over the repo's defaults for that kind of job, which win o
 | The agent's name | `name` in `kiln.config.yaml` (default `eve`), its Slack app, and the first line of its `AGENTS.md` | `pnpm run deploy`, then update `AGENTS.md`; the drive keeps its files |
 | Repos, projects, their default models, and their MCP servers | `kiln.config.yaml`, gitignored; copy [kiln.config.example.yaml](kiln.config.example.yaml) | `pnpm run deploy` |
 | Global default models | `defaultSelection` in [lib/config.ts](lib/config.ts) | `pnpm run deploy` |
-| How many jobs run at once per subscription or harness, and machine size | `jobsPerSubscription`, `machineLimits`, and `machineType` in [lib/config.ts](lib/config.ts) | `pnpm run deploy` |
-| Claude subscriptions | `WORKER_CLAUDE_CODE_OAUTH_TOKEN` and `WORKER_CLAUDE_CODE_OAUTH_TOKEN_<NAME>` on the Vercel project | `pnpm run deploy` |
+| How many jobs run at once per harness, and machine size | `machineLimits` and `machineType` in [lib/config.ts](lib/config.ts) | `pnpm run deploy` |
 | The agent's identity, rules, and what it knows about people | `AGENTS.md` in its drive (Blob, `kiln/drive/`); the starter for a new drive is [lib/agents-starter.ts](lib/agents-starter.ts) | nothing: read fresh every turn |
 | The agent's skills | [agent/skills/](agent/skills) | `pnpm run deploy` |
 | The workers' house rules | [worker/instructions.md](worker/instructions.md) | `pnpm run deploy` |
@@ -92,12 +89,11 @@ Third-party skills are vendored unmodified under their own licenses; [skills/ven
 | Agent setting | Default | |
 |---|---|---|
 | `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET` | required | The Slack app's credentials, or `SLACK_CONNECTOR` for a Vercel Connect connector. |
-| `INFERENCE_BASE_URL`, `INFERENCE_API_KEY` | unset | Your own Anthropic-compatible endpoint, with or without `/v1`. When set, the agent's model runs on it instead of AI Gateway, and Claude Code jobs run on it instead of the Claude subscriptions, up to `machineLimits.claude` at once. The key goes as `x-api-key`. Set both or neither. |
+| `INFERENCE_BASE_URL`, `INFERENCE_API_KEY` | unset | Your Anthropic-compatible endpoint, with or without `/v1`: the agent's model and every Claude Code job run on it, up to `machineLimits.claude` jobs at once. The key goes as `x-api-key`. Required for jobs; set both or neither. |
 | `KILN_MODEL` | `anthropic/claude-fable-5.2` | The agent's own model: an AI Gateway ID, or on your inference endpoint its model ID (default `claude-fable-5-2`). No key is needed on Vercel for AI Gateway. |
 | `KILN_REASONING` | `high` | Its reasoning level: `low`, `medium`, `high`, or `xhigh`. |
-| `KILN_MODEL_URL`, `KILN_MODEL_KEY` | unset | Any OpenAI-compatible endpoint instead of AI Gateway, such as OpenRouter. |
 | `KILN_GH_TOKEN` | `WORKER_GH_TOKEN` | The agent's GitHub token, for `gh` in its sandbox: PRs, CI, merging. Added at the sandbox firewall; it never enters the sandbox. |
-| `KILN_TRANSCRIPTION_MODEL` | `openai/gpt-4o-mini-transcribe` | The AI Gateway model that transcribes voice notes. Always AI Gateway, even with `KILN_MODEL_URL`. |
+| `KILN_TRANSCRIPTION_MODEL` | `openai/gpt-4o-mini-transcribe` | The AI Gateway model that transcribes voice notes. Always AI Gateway, even with `INFERENCE_BASE_URL`. |
 | `BOAT_API_KEY` | required for jobs | Launches and deletes job machines and writes repo secrets. |
 | `WORKER_*` | required for jobs | The workers' credentials, passed to each machine without the prefix. See [docs/workers.md](docs/workers.md). |
 | `KILN_WORKER_CODE` | written by `pnpm run deploy` | The kiln commit job machines run. |
@@ -146,7 +142,7 @@ pnpm eval         # the agent's real model on scripted conversations; spends tok
 - Board is experimental; its API and limits may change.
 - A job's result reaches Slack within a minute of settling.
 - A job waits about 20 seconds for its machine before it starts.
-- Each Claude subscription runs two jobs at a time (`jobsPerSubscription`). Codex and OpenCode are off (`enabledHarnesses`).
-- A job whose every subscription is out of usage for its model waits for the earliest reset; it never moves to another model on its own.
+- Three Claude jobs run at a time (`machineLimits`). Codex and OpenCode are off (`enabledHarnesses`).
+- A job's model never changes after it starts.
 - Reactions on the agent's messages don't reach it.
 - One repo or project per job. A project's repos are cloned side by side; each one the job changes gets its own draft PR.

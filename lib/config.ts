@@ -3,7 +3,7 @@
 // MCP servers, are its own business: they live in kiln.config.yaml (see
 // lib/deployment.ts), never here.
 
-/** claude and codex run on subscriptions; opencode runs AI Gateway models on the team's credits. */
+/** claude runs on the deployment's inference endpoint; codex needs a ChatGPT login; opencode runs AI Gateway models. */
 export const HARNESSES = ["claude", "codex", "opencode"] as const;
 export type Harness = (typeof HARNESSES)[number];
 
@@ -27,9 +27,9 @@ export interface Selection {
 }
 
 /**
- * The harnesses workers may run. Subscriptions only: Claude Code on the deployment's Claude subscriptions.
- * opencode runs AI Gateway models billed per token, so it is off; add it here to allow that. Codex joins
- * once its login can be lent to per-job machines.
+ * The harnesses workers may run: Claude Code, on the deployment's inference endpoint (INFERENCE_*).
+ * opencode runs AI Gateway models on WORKER_AI_GATEWAY_API_KEY, so it is off; add it here to allow that.
+ * Codex joins once its login can be lent to per-job machines.
  */
 export const enabledHarnesses: readonly Harness[] = ["claude"];
 
@@ -46,16 +46,7 @@ export const defaultModels: Readonly<Record<Harness, string | undefined>> = {
   opencode: "openai/gpt-6-luna-fast",
 };
 
-/**
- * Jobs that may run at once on one subscription. Each Claude subscription runs this many; a job that
- * exhausts its subscription moves to another one with the same model, never to another model.
- */
-export const jobsPerSubscription = 2;
-
-/**
- * Jobs that may run at once on a harness billed per token, each on its own boat machine. claude counts
- * only when it runs on the deployment's inference endpoint; on subscriptions, jobsPerSubscription limits it.
- */
+/** Jobs that may run at once on each harness, each on its own boat machine. */
 export const machineLimits: Readonly<Partial<Record<Harness, number>>> = { opencode: 3, claude: 3 };
 
 /** boat machine size for jobs. A Next.js dev build of a large app needs more than small's 4 GB. */

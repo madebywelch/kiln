@@ -39,7 +39,6 @@ const seen = {
   BOARD_TOKEN: process.env.BOARD_TOKEN ?? null,
   OPENCODE_CONFIG_CONTENT: process.env.OPENCODE_CONFIG_CONTENT ?? null,
   CLAUDE_CODE_OAUTH_TOKEN: process.env.CLAUDE_CODE_OAUTH_TOKEN ?? null,
-  KILN_SUBSCRIPTIONS: process.env.KILN_SUBSCRIPTIONS ?? null,
   ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL ?? null,
   ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? null,
   INFERENCE_API_KEY: process.env.INFERENCE_API_KEY ?? null,
@@ -55,18 +54,7 @@ if (process.env.FAKE_RECORD) {
 
 const line = (event) => process.stdout.write(`${JSON.stringify(event)}\n`);
 const SESSION = "ses-claude-1";
-const RESETS_AT = 1_900_000_000;
 if (!isCodex && !isOpencode) line({ type: "system", subtype: "init", session_id: SESSION });
-
-/** Claude Code saying the subscription is out, then waiting, as it may instead of exiting. */
-function exhaust() {
-  line({
-    type: "rate_limit_event",
-    rate_limit_info: { status: "rejected", resetsAt: RESETS_AT, rateLimitType: "five_hour", utilization: 1 },
-    session_id: SESSION,
-  });
-  setTimeout(() => process.exit(0), 60_000);
-}
 
 function finish(report) {
   if (isOpencode) {
@@ -82,16 +70,6 @@ function finish(report) {
     writeFileSync(args[args.indexOf("-o") + 1], `${report}\n`);
     process.stdout.write("codex: done\n");
   } else {
-    line({
-      type: "rate_limit_event",
-      rate_limit_info: {
-        status: "allowed",
-        resetsAt: RESETS_AT,
-        rateLimitType: "seven_day",
-        utilization: 0.42,
-      },
-      session_id: SESSION,
-    });
     line({ type: "result", is_error: false, result: report, session_id: SESSION });
   }
   process.exit(0);
@@ -162,20 +140,6 @@ switch (mode) {
       `${JSON.stringify({ type: "result", is_error: true, result: "usage limit reached" })}\n`,
     );
     process.exit(0);
-    break;
-  case "exhausted-first":
-    // The first subscription runs out mid-job; the next one resumes the session and finishes.
-    if (process.env.CLAUDE_CODE_OAUTH_TOKEN === "sub-a") {
-      writeFileSync(join(cwd, "theme.css"), "body { background: white; }\n");
-      exhaust();
-    } else {
-      writeFileSync(join(cwd, "theme.css"), "body { background: snow; }\n");
-      finish("Added snow to the landing page.");
-    }
-    break;
-  case "exhausted-all":
-    writeFileSync(join(cwd, "draft.css"), "/* half done */\n");
-    exhaust();
     break;
   case "noisy-fail": {
     // What OpenCode printed when a model rejected an MCP tool's schema: noise on stderr, the cause on stdout.

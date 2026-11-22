@@ -75,12 +75,10 @@ describe("resolveSelection", () => {
     });
   });
 
-  it("runs workers on subscriptions only by default, refusing per-token models with the reason", () => {
+  it("runs workers on Claude Code only by default, refusing other harnesses' models with the reason", () => {
     expect(() =>
       resolveSelection("web", "investigate", { model: "deepseek/deepseek-v4.1-flash" }, registry),
-    ).toThrow(
-      /opencode \(deepseek\/deepseek-v4.1-flash\) is off: workers run on subscriptions only \(claude\)/,
-    );
+    ).toThrow(/opencode \(deepseek\/deepseek-v4.1-flash\) is off: workers run claude only/);
     expect(() => resolveSelection("web", "change", { harness: "codex" }, registry)).toThrow(/codex is off/);
     expect(() => resolveSelection("api", "change", {}, registry)).toThrow(/codex .* is off/);
     expect(resolveSelection("web", "investigate", {}, registry)).toEqual({

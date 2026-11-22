@@ -1,12 +1,10 @@
 import { type Board, board } from "@vercel/board";
 import { local } from "@vercel/board/backend-local";
 import { beforeEach, describe, expect, it } from "vitest";
-import { ledger } from "../lib/accounts.ts";
 import { postJob } from "../lib/board-jobs.ts";
 import { Boat } from "../lib/boat.ts";
 import { type JobSpec, REPORT_LABEL, REPORT_PENDING } from "../lib/jobs.ts";
 import {
-  ACCOUNT_LABEL,
   FAILED_STARTS_LABEL,
   harnessIssue,
   LAUNCHES_LABEL,
@@ -15,11 +13,9 @@ import {
   launchMachine,
   MAX_FAILED_STARTS,
   type MachineDeps,
-  NOTIFIED_LABEL,
   reconcileMachines,
   STARTUP_GRACE_MS,
   setupScript,
-  WAITING_LABEL,
   WORKER_SETTINGS_PATH,
   workerCode,
   workerSettings,
@@ -31,7 +27,8 @@ const env = {
   WORKER_BOARD_TOKEN: "board",
   WORKER_VERCEL_ORG_ID: "team_x",
   WORKER_GH_TOKEN: "ghp_push",
-  WORKER_CLAUDE_CODE_OAUTH_TOKEN: "claude-sub",
+  INFERENCE_BASE_URL: "https://llm.example.com",
+  INFERENCE_API_KEY: "sk-endpoint",
   WORKER_AI_GATEWAY_API_KEY: "gateway",
   UNRELATED: "not for workers",
   KILN_CONFIG: JSON.stringify({
@@ -90,7 +87,7 @@ describe("launchConfig", () => {
       GH_TOKEN: "ghp_push",
       AI_GATEWAY_API_KEY: "gateway",
     });
-    expect(config.subscriptions.claude).toEqual([{ id: "main", token: "claude-sub" }]);
+    expect(config.inference).toEqual({ baseURL: "https://llm.example.com", apiKey: "sk-endpoint" });
     expect(config.jobTimeoutMinutes).toBe(180);
   });
 });
@@ -118,14 +115,10 @@ describe("workerCode", () => {
 
 describe("workerSettings", () => {
   it("gives each machine its own harness's credential and not another's", () => {
-    const subscriptions = [
-      { id: "2", token: "second", record: "r2" },
-      { id: "main", token: "claude-sub", record: "rm" },
-    ];
-    const claude = workerSettings("msg_1", "claude", config, subscriptions);
-    expect(JSON.parse(claude.KILN_SUBSCRIPTIONS ?? "[]")).toEqual(subscriptions);
+    const claude = workerSettings("msg_1", "claude", config);
     expect(claude).toMatchObject({
-      CLAUDE_CODE_OAUTH_TOKEN: "second",
+      INFERENCE_BASE_URL: "https://llm.example.com",
+      INFERENCE_API_KEY: "sk-endpoint",
       KILN_JOB_ID: "msg_1",
       WORKER_HARNESS: "claude",
       BOARD_PROFILE: "claude",
@@ -133,7 +126,7 @@ describe("workerSettings", () => {
     expect(claude.AI_GATEWAY_API_KEY).toBeUndefined();
     const opencode = workerSettings("msg_1", "opencode", config);
     expect(opencode.AI_GATEWAY_API_KEY).toBe("gateway");
-    expect(opencode.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+    expect(opencode.INFERENCE_API_KEY).toBeUndefined();
   });
 
   it("gives a job's machine its own repo and that repo's MCP servers, and no other repo's", () => {
@@ -152,7 +145,7 @@ describe("workerSettings", () => {
         mcpServers: { linear: { url: "https://mcp.linear.app/mcp" }, other: { command: "x" } },
       }),
     }) as LaunchConfig;
-    const settings = workerSettings("msg_1", "opencode", withMcp, [], "web");
+    const settings = workerSettings("msg_1", "opencode", withMcp, "web");
     expect(JSON.parse(settings.KILN_REPO ?? "{}")).toEqual({
       key: "web",
       repos: [{ key: "web", github: "acme/web", baseBranch: "dev" }],
@@ -187,7 +180,7 @@ describe("workerSettings", () => {
         mcpServers: { linear: { url: "https://mcp.linear.app/mcp" } },
       }),
     }) as LaunchConfig;
-    const settings = workerSettings("msg_1", "claude", project, [], "shop");
+    const settings = workerSettings("msg_1", "claude", project, "shop");
     expect(JSON.parse(settings.KILN_REPO ?? "{}")).toEqual({
       key: "shop",
       repos: [
@@ -199,42 +192,14 @@ describe("workerSettings", () => {
     expect(settings.KILN_AGENT_NAME).toBe("Mabel");
   });
 
-  it("runs Claude jobs on the inference endpoint when it is set: no subscription needed, the endpoint in their settings", () => {
-    const onEndpoint = launchConfig({
-      ...env,
-      WORKER_CLAUDE_CODE_OAUTH_TOKEN: "",
-      INFERENCE_BASE_URL: "https://llm.example.com",
-      INFERENCE_API_KEY: "sk-endpoint",
-    }) as LaunchConfig;
-    expect(harnessIssue("claude", onEndpoint)).toBeNull();
-    const settings = workerSettings("msg_1", "claude", onEndpoint, [], "web");
-    expect(settings).toMatchObject({
-      INFERENCE_BASE_URL: "https://llm.example.com",
-      INFERENCE_API_KEY: "sk-endpoint",
-    });
-    expect(settings.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
-    expect(workerSettings("msg_1", "opencode", onEndpoint, [], "web").INFERENCE_API_KEY).toBeUndefined();
-    expect(launchConfig({ ...env, INFERENCE_BASE_URL: "https://llm.example.com" })).toMatch(
+  it("refuses half an inference endpoint rather than run Claude jobs without one", () => {
+    expect(launchConfig({ ...env, INFERENCE_API_KEY: "" })).toMatch(
       /INFERENCE_BASE_URL is set without INFERENCE_API_KEY/,
     );
   });
 
-  it("launches Claude jobs on the endpoint up to machineLimits, never consulting a subscription", async () => {
-    const onEndpoint = launchConfig({
-      ...env,
-      INFERENCE_BASE_URL: "https://llm.example.com",
-      INFERENCE_API_KEY: "sk-endpoint",
-    }) as LaunchConfig;
-    for (let index = 0; index < 4; index++) await postJob(team, { ...spec, title: `Job ${index}` });
-    const result = await reconcileMachines({ ...deps, config: onEndpoint });
-    expect(result.launched).toHaveLength(3);
-    expect(result.waiting).toHaveLength(1);
-    const launched = fake.machines.filter((machine) => machine.labels?.harness === "claude");
-    expect(launched.every((machine) => !machine.labels?.subscription)).toBe(true);
-  });
-
   it("says why a harness can't run", () => {
-    expect(harnessIssue("opencode", config)).toMatch(/opencode is off: workers run on subscriptions only/);
+    expect(harnessIssue("opencode", config)).toMatch(/opencode is off: workers run Claude Code only/);
     expect(harnessIssue("codex", everyHarness)).toMatch(/can't run codex jobs/);
     const noGateway = {
       ...(launchConfig({ ...env, WORKER_AI_GATEWAY_API_KEY: "" }) as LaunchConfig),
@@ -242,8 +207,12 @@ describe("workerSettings", () => {
     };
     expect(harnessIssue("opencode", noGateway)).toMatch(/WORKER_AI_GATEWAY_API_KEY/);
     expect(harnessIssue("claude", config)).toBeNull();
-    const noClaude = launchConfig({ ...env, WORKER_CLAUDE_CODE_OAUTH_TOKEN: "" }) as LaunchConfig;
-    expect(harnessIssue("claude", noClaude)).toMatch(/WORKER_CLAUDE_CODE_OAUTH_TOKEN/);
+    const noEndpoint = launchConfig({
+      ...env,
+      INFERENCE_BASE_URL: "",
+      INFERENCE_API_KEY: "",
+    }) as LaunchConfig;
+    expect(harnessIssue("claude", noEndpoint)).toMatch(/INFERENCE_BASE_URL and INFERENCE_API_KEY/);
   });
 });
 
@@ -259,9 +228,7 @@ describe("setupScript", () => {
 describe("launchMachine", () => {
   it("starts a machine in the repo's secrets-only environment, with the job's settings in a file", async () => {
     const job = await postJob(team, spec);
-    const { machine } = await launchMachine(deps, job.message, [
-      { id: "main", token: "claude-sub", record: "r" },
-    ]);
+    const { machine } = await launchMachine(deps, job.message);
     expect(machine?.id).toBe("bx_2");
 
     const [launched] = fake.machines;
@@ -273,7 +240,7 @@ describe("launchMachine", () => {
     expect(settings).toMatchObject({
       KILN_JOB_ID: job.id,
       GH_TOKEN: "ghp_push",
-      CLAUDE_CODE_OAUTH_TOKEN: "claude-sub",
+      INFERENCE_API_KEY: "sk-endpoint",
     });
     expect(settings.UNRELATED).toBeUndefined();
 
@@ -284,7 +251,7 @@ describe("launchMachine", () => {
       passSandboxCredentials: false,
       passAgentsCredentials: false,
     });
-    expect((await message(job.id)).labels).toMatchObject({ [LAUNCHES_LABEL]: "1", [ACCOUNT_LABEL]: "main" });
+    expect((await message(job.id)).labels).toMatchObject({ [LAUNCHES_LABEL]: "1" });
   });
 
   it("gives two launches of the same job one machine", async () => {
@@ -321,10 +288,11 @@ describe("launchMachine", () => {
 });
 
 describe("reconcileMachines", () => {
-  it("launches a machine for each ready job, two per subscription", async () => {
+  it("launches a machine for each ready job, up to each harness's limit", async () => {
     const first = await postJob(team, spec);
     const second = await postJob(team, { ...spec, title: "More snow" });
     const third = await postJob(team, { ...spec, title: "Even more snow" });
+    const fourth = await postJob(team, { ...spec, title: "Snow everywhere" });
     const research = await postJob(team, {
       ...spec,
       kind: "investigate",
@@ -332,85 +300,27 @@ describe("reconcileMachines", () => {
       model: "openai/gpt-6-luna-fast",
     });
     const result = await reconcileMachines(deps);
-    expect(result.launched.sort()).toEqual([first.id, second.id, research.id].sort());
-    expect(result.waiting).toEqual([third.id]); // main runs two at a time
-    expect(fake.machines).toHaveLength(3);
+    expect(result.launched.sort()).toEqual([first.id, second.id, third.id, research.id].sort());
+    expect(result.waiting).toEqual([fourth.id]); // claude runs three at a time
+    expect(fake.machines).toHaveLength(4);
 
     // Nothing changes on the next pass while those run.
     const again = await reconcileMachines(deps);
     expect(again.launched).toEqual([]);
-    expect(fake.machines).toHaveLength(3);
-  });
-
-  it("fills one subscription before starting the next", async () => {
-    const two = { ...deps, config: launchConfig({ ...env, WORKER_CLAUDE_CODE_OAUTH_TOKEN_2: "second" }) };
-    const jobs = [];
-    for (const title of ["a", "b", "c"]) jobs.push(await postJob(team, { ...spec, title }));
-    await reconcileMachines(two);
-    const accounts = await Promise.all(
-      jobs.map(async (job) => (await message(job.id)).labels[ACCOUNT_LABEL]),
-    );
-    expect(accounts).toEqual(["main", "main", "2"]);
-    const settings = JSON.parse(fake.machines[0]?.files[0]?.content ?? "{}");
-    expect(JSON.parse(settings.KILN_SUBSCRIPTIONS).map((s: { id: string }) => s.id)).toEqual(["main", "2"]);
-  });
-
-  it("waits for usage when every subscription is out for the job's model, tells the thread once, and starts at the reset", async () => {
-    const nowSeconds = Math.floor(now / 1000);
-    const states = await ledger(team, "claude", ["main"]);
-    await team.label(states.get("main")?.record ?? "", { set: { "bench.all": String(nowSeconds + 600) } });
-    const told: number[] = [];
-    const notifying = { ...deps, notify: async (_job: unknown, until: number) => told.push(until) };
-    const job = await postJob(team, spec);
-
-    const result = await reconcileMachines(notifying);
-    expect(result.exhausted).toEqual([{ job: job.id, until: nowSeconds + 600 }]);
-    await reconcileMachines(notifying);
-    expect(told).toEqual([nowSeconds + 600]);
-    expect((await message(job.id)).labels).toMatchObject({
-      [WAITING_LABEL]: String(nowSeconds + 600),
-      [NOTIFIED_LABEL]: String(nowSeconds + 600),
-    });
-    expect(fake.machines).toHaveLength(0);
-
-    now += 601_000;
-    const after = await reconcileMachines(notifying);
-    expect(after.launched).toEqual([job.id]);
-    expect((await message(job.id)).labels[WAITING_LABEL]).toBeUndefined();
-  });
-
-  it("keeps running other models on a subscription whose limit for one model ran out", async () => {
-    const states = await ledger(team, "claude", ["main"]);
-    await team.label(states.get("main")?.record ?? "", {
-      set: { "bench.opus": String(Math.floor(now / 1000) + 600) },
-    });
-    const opus = await postJob(team, spec);
-    const sonnet = await postJob(team, { ...spec, model: "sonnet", title: "Sonnet snow" });
-    const result = await reconcileMachines(deps);
-    expect(result.exhausted.map((e) => e.job)).toEqual([opus.id]);
-    expect(result.launched).toEqual([sonnet.id]);
-  });
-
-  it("deletes the machine of a job its worker handed back to wait for usage", async () => {
-    const job = await postJob(team, spec);
-    await reconcileMachines(deps);
-    const claim = await team.as("claude").tasks.claim(job.id, { lease: 60 });
-    await team.label(job.id, { set: { [WAITING_LABEL]: String(Math.floor(now / 1000) + 600) } });
-    await claim.release();
-    const result = await reconcileMachines(deps);
-    expect(result.deleted).toEqual([{ machine: "bx_2", job: job.id, why: "its job is waiting for usage" }]);
+    expect(fake.machines).toHaveLength(4);
   });
 
   it("launches nothing for a job someone other than the agent posted", async () => {
     await postJob(team.as("intruder"), spec);
     const result = await reconcileMachines(deps);
-    expect(result).toEqual({ launched: [], deleted: [], failed: [], waiting: [], exhausted: [] });
+    expect(result).toEqual({ launched: [], deleted: [], failed: [], waiting: [] });
     expect(fake.machines).toHaveLength(0);
   });
 
   it("deletes the machine once its job is over, and starts the next job", async () => {
     const first = await postJob(team, spec);
     await postJob(team, { ...spec, title: "More snow" });
+    await postJob(team, { ...spec, title: "Much snow" });
     const second = await postJob(team, { ...spec, title: "Most snow" });
     await reconcileMachines(deps);
     const claim = await team.as("claude").tasks.claim(first.id, { lease: 60 });

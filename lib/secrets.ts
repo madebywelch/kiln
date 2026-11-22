@@ -24,6 +24,8 @@ export function environmentName(repoKey: string): string {
  */
 const RESERVED = new Set([
   "AI_GATEWAY_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_BASE_URL",
   "BOARD_PROFILE",
   "BOARD_TOKEN",
   "BOARD_URL",
@@ -32,6 +34,8 @@ const RESERVED = new Set([
   "GITHUB_TOKEN",
   "HARNESS_GH_TOKEN",
   "HOME",
+  "INFERENCE_API_KEY",
+  "INFERENCE_BASE_URL",
   "JOB_TIMEOUT_MINUTES",
   "LD_LIBRARY_PATH",
   "LD_PRELOAD",

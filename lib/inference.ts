@@ -1,7 +1,7 @@
 // A deployment's own inference endpoint, Anthropic-compatible, from
 // INFERENCE_BASE_URL and INFERENCE_API_KEY on the agent's Vercel project. When
-// set, it replaces AI Gateway for the agent's own model, and Claude Code jobs
-// run against it instead of the Claude subscriptions. The key goes as x-api-key,
+// set, the agent's own model and every Claude Code job run on it; without it the
+// agent falls back to AI Gateway and Claude jobs can't start. The key goes as x-api-key,
 // as Anthropic's API and Claude Code send it.
 
 export interface Inference {

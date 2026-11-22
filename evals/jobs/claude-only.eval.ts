@@ -3,7 +3,7 @@ import { stubs } from "../stubs.ts";
 
 export default defineEval({
   description:
-    "A request for a per-token model is refused with a subscription model offered, not quietly swapped.",
+    "A request for a model on a harness that is off is refused with a Claude model offered, not quietly swapped.",
   async test(t) {
     const session = await t.session({ stubs });
     const turn = await session.send(

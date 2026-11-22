@@ -63,7 +63,7 @@ export interface SelectionRequest {
 /**
  * Which harness serves a model name, or undefined when the name says nothing.
  * An AI Gateway ID (provider/model) runs on OpenCode, and so does a model no
- * subscription covers.
+ * other harness serves.
  */
 export function inferHarness(model: string): Harness | undefined {
   const name = model.toLowerCase();
@@ -134,7 +134,7 @@ export function resolveSelection(
   }
   if (!enabled.includes(selection.harness)) {
     throw new JobError(
-      `${selection.harness}${selection.model ? ` (${selection.model})` : ""} is off: workers run on subscriptions only (${enabled.join(", ")}); enabledHarnesses in lib/config.ts`,
+      `${selection.harness}${selection.model ? ` (${selection.model})` : ""} is off: workers run ${enabled.join(", ")} only; enabledHarnesses in lib/config.ts`,
     );
   }
   checkModel(selection.harness, selection.model);

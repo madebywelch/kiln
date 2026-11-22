@@ -17,8 +17,6 @@ import { type Exec, exec, run } from "./exec.ts";
 import { CLAIM_LOST, harnessEnv, type Logger, type OpenPullRequest, runJob, SHUTDOWN } from "./job.ts";
 import { installSkills, skillTargets } from "./skills.ts";
 
-const Subscriptions = z.array(z.object({ id: z.string(), token: z.string(), record: z.string() }));
-
 const Config = z
   .object({
     BOARD_PROFILE: z
@@ -49,7 +47,7 @@ const Config = z
         ctx.addIssue({ code: "custom", message: "not {key, repos: [{key, github, baseBranch}]}" });
         return z.NEVER;
       }),
-    /** The deployment's inference endpoint, for a Claude job that runs on it instead of a subscription. */
+    /** The deployment's inference endpoint, which a Claude job runs on. */
     INFERENCE_BASE_URL: z.string().optional(),
     INFERENCE_API_KEY: z.string().optional(),
     /** The repo's MCP servers, as JSON from the agent. */
@@ -69,42 +67,20 @@ const Config = z
         ctx.addIssue({ code: "custom", message: "not a map of MCP servers" });
         return z.NEVER;
       }),
-    /** For a Claude job, the subscriptions it may use, in the order to try them: JSON from the agent. */
-    KILN_SUBSCRIPTIONS: z
-      .string()
-      .optional()
-      .transform((value, ctx) => {
-        if (!value) return [];
-        let json: unknown;
-        try {
-          json = JSON.parse(value);
-        } catch {
-          json = undefined;
-        }
-        const parsed = Subscriptions.safeParse(json);
-        if (parsed.success) return parsed.data;
-        ctx.addIssue({ code: "custom", message: "not a list of {id, token, record}" });
-        return z.NEVER;
-      }),
     WORK_DIR: z.string().default("/work"),
     JOB_TIMEOUT_MINUTES: z.coerce.number().int().positive().default(180),
     /** Commit identity. Not GIT_AUTHOR_*: git reads those itself, and an empty one breaks every commit. */
     KILN_GIT_NAME: z.string().optional(),
     KILN_GIT_EMAIL: z.string().optional(),
-    /** Claude Code's subscription login, from `claude setup-token`. */
-    CLAUDE_CODE_OAUTH_TOKEN: z.string().optional(),
     /** OpenCode's AI Gateway key, from the Vercel dashboard (AI Gateway, API keys). */
     AI_GATEWAY_API_KEY: z.string().optional(),
   })
   .refine(
-    (config) =>
-      config.WORKER_HARNESS !== "claude" ||
-      config.CLAUDE_CODE_OAUTH_TOKEN ||
-      (config.INFERENCE_BASE_URL && config.INFERENCE_API_KEY),
+    (config) => config.WORKER_HARNESS !== "claude" || (config.INFERENCE_BASE_URL && config.INFERENCE_API_KEY),
     {
-      path: ["CLAUDE_CODE_OAUTH_TOKEN"],
+      path: ["INFERENCE_BASE_URL"],
       message:
-        "a claude worker needs CLAUDE_CODE_OAUTH_TOKEN (run `claude setup-token` with its subscription), or INFERENCE_BASE_URL and INFERENCE_API_KEY for the deployment's endpoint",
+        "a claude worker needs INFERENCE_BASE_URL and INFERENCE_API_KEY: the deployment's inference endpoint",
     },
   )
   .refine((config) => config.WORKER_HARNESS !== "opencode" || config.AI_GATEWAY_API_KEY, {
@@ -205,7 +181,6 @@ async function work(config: Config, team: Board, shutdown: AbortSignal, guidance
       guidance,
       signal: job.signal,
       log,
-      subscriptions: config.KILN_SUBSCRIPTIONS,
       ...(config.INFERENCE_BASE_URL && config.INFERENCE_API_KEY
         ? { inference: { baseURL: config.INFERENCE_BASE_URL, apiKey: config.INFERENCE_API_KEY } }
         : {}),

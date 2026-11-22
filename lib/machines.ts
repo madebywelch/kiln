@@ -1,21 +1,12 @@
 // One fresh boat machine per job. The agent launches a machine when it starts a
 // job and, every minute, reconciles: a machine for each ready job, within each
-// subscription's or harness's limit, and no machine for a job that is over. A
+// harness's limit, and no machine for a job that is over. A
 // machine lives from its job's start to its settle, plus at most a minute; idle,
 // kiln costs nothing.
 
 import type { Board, MessageView } from "@vercel/board";
-import {
-  type AccountState,
-  benchedUntil,
-  chooseSubscription,
-  claudeSubscriptions,
-  ledger,
-  type Subscription,
-  type WorkerSubscription,
-} from "./accounts.ts";
 import { type Boat, BoatError, type Machine } from "./boat.ts";
-import { enabledHarnesses, type Harness, jobsPerSubscription, machineLimits, machineType } from "./config.ts";
+import { enabledHarnesses, type Harness, machineLimits, machineType } from "./config.ts";
 import {
   DEFAULT_AGENT_NAME,
   type Deployment,
@@ -34,12 +25,6 @@ export const LAUNCHES_LABEL = "launches";
 /** Board label counting the machines that never got a job's worker running. */
 export const FAILED_STARTS_LABEL = "failed_starts";
 export const MAX_FAILED_STARTS = 3;
-/** Board label naming the subscription a job runs on. The worker changes it when it moves the job. */
-export const ACCOUNT_LABEL = "account";
-/** Board label on a job waiting for usage: when (unix seconds) the earliest subscription that can run it resets. */
-export const WAITING_LABEL = "waiting";
-/** Board label recording the reset the job's thread was told about, so it is told once. */
-export const NOTIFIED_LABEL = "waiting_notified";
 /** A machine whose job is still unclaimed after this long never got its worker running. */
 export const STARTUP_GRACE_MS = 10 * 60_000;
 
@@ -63,9 +48,7 @@ export interface LaunchConfig {
   readonly enabled: readonly Harness[];
   /** This deployment's repos and their MCP servers, from KILN_CONFIG. */
   readonly deployment: Deployment;
-  /** The subscriptions each subscription harness's jobs run on, in fill order. */
-  readonly subscriptions: Readonly<Partial<Record<Harness, readonly Subscription[]>>>;
-  /** The deployment's inference endpoint: when set, Claude jobs run on it instead of the subscriptions. */
+  /** The deployment's inference endpoint, which Claude jobs run on. */
   readonly inference?: Inference | undefined;
   /** Minutes a job may run; the machine's own deadline is this plus a margin. */
   readonly jobTimeoutMinutes: number;
@@ -91,13 +74,12 @@ export function workerCode(env: Readonly<Record<string, string | undefined>>): s
 
 /**
  * Reads the launch configuration from the agent's environment: the worker code (see workerCode),
- * every `WORKER_<NAME>` variable, passed to workers as `<NAME>`, and the Claude subscriptions,
- * `WORKER_CLAUDE_CODE_OAUTH_TOKEN[_<NAME>]`, which go only to the jobs that use them.
+ * every `WORKER_<NAME>` variable, passed to workers as `<NAME>`, and the inference endpoint
+ * (INFERENCE_BASE_URL and INFERENCE_API_KEY), which goes only to Claude jobs.
  */
 export function launchConfig(env: Readonly<Record<string, string | undefined>>): LaunchConfig | string {
   const settings: Record<string, string> = {};
   for (const [key, value] of Object.entries(env)) {
-    if (key.startsWith(`${ENV_PREFIX}CLAUDE_CODE_OAUTH_TOKEN`)) continue;
     if (key.startsWith(ENV_PREFIX) && value) settings[key.slice(ENV_PREFIX.length)] = value;
   }
   const code = workerCode(env);
@@ -116,7 +98,6 @@ export function launchConfig(env: Readonly<Record<string, string | undefined>>):
     deployment,
     code: code as string,
     settings,
-    subscriptions: { claude: claudeSubscriptions(env) },
     jobTimeoutMinutes: Number(settings.JOB_TIMEOUT_MINUTES) || 180,
   };
 }
@@ -124,17 +105,15 @@ export function launchConfig(env: Readonly<Record<string, string | undefined>>):
 /** Why a harness can't run jobs at all, or null when it can. */
 export function harnessIssue(harness: Harness, config: LaunchConfig): string | null {
   if (!config.enabled.includes(harness)) {
-    return `${harness} is off: workers run on subscriptions only (enabledHarnesses in lib/config.ts)`;
+    return `${harness} is off: workers run Claude Code only (enabledHarnesses in lib/config.ts)`;
   }
-  if (harness === "claude" && config.inference) {
+  if (harness === "claude") {
+    if (!config.inference) {
+      return "claude jobs need INFERENCE_BASE_URL and INFERENCE_API_KEY on the agent's Vercel project";
+    }
     return (machineLimits.claude ?? 0) < 1
       ? "claude jobs are switched off in lib/config.ts (machineLimits)"
       : null;
-  }
-  if (harness === "claude") {
-    return (config.subscriptions.claude ?? []).length > 0
-      ? null
-      : `claude jobs need ${ENV_PREFIX}CLAUDE_CODE_OAUTH_TOKEN on the agent's Vercel project`;
   }
   const credential = KEY_CREDENTIAL[harness];
   // Codex signs in with a ChatGPT login whose refresh token rotates on use; a copy handed to
@@ -149,13 +128,12 @@ export function harnessIssue(harness: Harness, config: LaunchConfig): string | n
 
 /**
  * The worker's settings for one job: the shared ones, its harness's credential, and the job. A Claude
- * job gets the subscriptions it may use, in the order to try them, the chosen one first.
+ * job gets the inference endpoint.
  */
 export function workerSettings(
   jobId: string,
   harness: Harness,
   config: LaunchConfig,
-  subscriptions: readonly WorkerSubscription[] = [],
   repo?: string,
 ): Record<string, string> {
   const servers = repo ? serversFor(config.deployment, repo) : {};
@@ -164,12 +142,8 @@ export function workerSettings(
   const shared = Object.fromEntries(
     Object.entries(config.settings).filter(([name]) => !KEY_CREDENTIALS.has(name) || name === own),
   );
-  const first = subscriptions[0];
   return {
     ...shared,
-    ...(first
-      ? { CLAUDE_CODE_OAUTH_TOKEN: first.token, KILN_SUBSCRIPTIONS: JSON.stringify(subscriptions) }
-      : {}),
     ...(harness === "claude" && config.inference
       ? { INFERENCE_BASE_URL: config.inference.baseURL, INFERENCE_API_KEY: config.inference.apiKey }
       : {}),
@@ -224,8 +198,6 @@ export interface MachineDeps {
   readonly config: LaunchConfig | string;
   readonly log: Log;
   readonly now?: () => number;
-  /** Tells a job's thread it is waiting for usage until `until` (unix seconds). */
-  readonly notify?: (job: MessageView, until: number) => Promise<unknown>;
 }
 
 const shortId = (jobId: string) =>
@@ -244,12 +216,10 @@ async function failJob(team: Board, id: string, reason: string): Promise<void> {
 /**
  * Starts a machine for a ready job. Two launches of the same job at once get the same machine: the
  * idempotency key is the job and its launch count, and boat returns the first machine for a repeat key.
- * A Claude job runs on `subscriptions`, the chosen one first.
  */
 export async function launchMachine(
   deps: MachineDeps,
   job: MessageView,
-  subscriptions: readonly WorkerSubscription[] = [],
 ): Promise<{ machine?: Machine; failed?: string }> {
   const { team, boat, config, log } = deps;
   const spec: JobSpec = decodeJob(job);
@@ -272,12 +242,8 @@ export async function launchMachine(
     return { failed: reason };
   }
   const launches = Number(job.labels[LAUNCHES_LABEL] ?? 0);
-  const account = subscriptions[0]?.id;
-  // Before the machine exists, so the next pass doesn't take it for a machine whose job went back to waiting.
-  await team.label(job.id, {
-    set: { [LAUNCHES_LABEL]: String(launches + 1), ...(account ? { [ACCOUNT_LABEL]: account } : {}) },
-    unset: [WAITING_LABEL, NOTIFIED_LABEL],
-  });
+  // Before the machine exists, so a second pass at once reuses its idempotency key rather than launching another.
+  await team.label(job.id, { set: { [LAUNCHES_LABEL]: String(launches + 1) } });
   const environment = await repoEnvironment(boat, spec.repo, log);
   const machine = await boat.createMachine({
     name: `kiln-${spec.harness}-${shortId(job.id)}`,
@@ -288,7 +254,7 @@ export async function launchMachine(
     files: [
       {
         path: WORKER_SETTINGS_PATH,
-        content: JSON.stringify(workerSettings(job.id, spec.harness, config, subscriptions, spec.repo)),
+        content: JSON.stringify(workerSettings(job.id, spec.harness, config, spec.repo)),
       },
     ],
     setupScript: setupScript(config.code),
@@ -298,7 +264,6 @@ export async function launchMachine(
     job: job.id,
     machine: machine.id,
     harness: spec.harness,
-    ...(account ? { subscription: account } : {}),
     environment: environmentName(spec.repo),
     launch: launches + 1,
   });
@@ -309,10 +274,8 @@ export interface ReconcileResult {
   readonly launched: string[];
   readonly deleted: { readonly machine: string; readonly job: string; readonly why: string }[];
   readonly failed: string[];
-  /** Jobs held back by a limit: a busy subscription or harness. */
+  /** Jobs held back by a harness's limit. */
   readonly waiting: string[];
-  /** Jobs whose every usable subscription is out of usage, with the earliest reset (unix seconds). */
-  readonly exhausted: { readonly job: string; readonly until: number }[];
 }
 
 /**
@@ -346,8 +309,6 @@ function deleteReason(
   if (!job) return { why: "its job is over", failedStart: false };
   const state = job.task?.state;
   if (state === "blocked") return { why: "its job is waiting for an answer", failedStart: false };
-  if (state === "ready" && job.labels[WAITING_LABEL])
-    return { why: "its job is waiting for usage", failedStart: false };
   if (machine.setupStatus === "failed") {
     return { why: `setup failed: ${machine.setupError ?? "no error given"}`, failedStart: true };
   }
@@ -359,10 +320,9 @@ function deleteReason(
 
 /** Brings the machines in line with the jobs: one per ready or running job, none for anything else. */
 export async function reconcileMachines(deps: MachineDeps): Promise<ReconcileResult> {
-  const { team, boat, config, log } = deps;
+  const { team, boat, log } = deps;
   const now = (deps.now ?? Date.now)();
-  const nowSeconds = Math.floor(now / 1000);
-  const result: ReconcileResult = { launched: [], deleted: [], failed: [], waiting: [], exhausted: [] };
+  const result: ReconcileResult = { launched: [], deleted: [], failed: [], waiting: [] };
   const [jobs, machines] = await Promise.all([openJobs(team), boat.machines(MACHINE_LABEL)]);
 
   const live: Machine[] = [];
@@ -393,54 +353,18 @@ export async function reconcileMachines(deps: MachineDeps): Promise<ReconcileRes
 
   const covered = new Set(live.map((machine) => machine.labels?.job));
   const running = (harness: string) => live.filter((machine) => machine.labels?.harness === harness).length;
-  // Jobs on each subscription: running, or with a machine coming up.
-  const load = new Map<string, number>();
-  for (const job of jobs.values()) {
-    const account = job.labels[ACCOUNT_LABEL];
-    const active = job.task?.state === "claimed" || (job.task?.state === "ready" && covered.has(job.id));
-    if (account && active) load.set(account, (load.get(account) ?? 0) + 1);
-  }
-  const claude = typeof config === "string" ? [] : (config.subscriptions.claude ?? []);
-  let states: Map<string, AccountState> | undefined;
-
   const ready = [...jobs.values()]
     .filter((job) => job.task?.state === "ready" && !covered.has(job.id))
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   for (const job of ready) {
     const spec = decodeJob(job);
     try {
-      let subscriptions: WorkerSubscription[] = [];
-      const onEndpoint =
-        spec.harness === "claude" && typeof config !== "string" && config.inference !== undefined;
-      if (spec.harness === "claude" && claude.length > 0 && !onEndpoint) {
-        states ??= await ledger(
-          team,
-          "claude",
-          claude.map((s) => s.id),
-        );
-        const order = claude.map((s) => s.id);
-        const choice = chooseSubscription(order, states, load, spec.model, jobsPerSubscription, nowSeconds);
-        if (choice.kind === "busy") {
-          result.waiting.push(job.id);
-          continue;
-        }
-        if (choice.kind === "exhausted") {
-          await waitForUsage(deps, job, choice.until);
-          result.exhausted.push({ job: job.id, until: choice.until });
-          continue;
-        }
-        if (choice.kind === "chosen") {
-          subscriptions = workerSubscriptions(claude, states, choice.id, spec.model, nowSeconds);
-          load.set(choice.id, (load.get(choice.id) ?? 0) + 1);
-        }
-      } else if (spec.harness !== "claude" || onEndpoint) {
-        const limit = machineLimits[spec.harness] ?? 0;
-        if (limit > 0 && running(spec.harness) >= limit) {
-          result.waiting.push(job.id);
-          continue;
-        }
+      const limit = machineLimits[spec.harness] ?? 0;
+      if (limit > 0 && running(spec.harness) >= limit) {
+        result.waiting.push(job.id);
+        continue;
       }
-      const { machine, failed } = await launchMachine(deps, job, subscriptions);
+      const { machine, failed } = await launchMachine(deps, job);
       if (machine) {
         live.push(machine);
         result.launched.push(job.id);
@@ -452,38 +376,4 @@ export async function reconcileMachines(deps: MachineDeps): Promise<ReconcileRes
     }
   }
   return result;
-}
-
-/**
- * The subscriptions a Claude job may use, in the order to try them: the chosen one, then every other
- * one that can run the job's model now. The worker moves the job down this list as each runs out.
- */
-function workerSubscriptions(
-  all: readonly Subscription[],
-  states: ReadonlyMap<string, AccountState>,
-  chosen: string,
-  model: string | undefined,
-  nowSeconds: number,
-): WorkerSubscription[] {
-  const usable = all.filter((s) => {
-    const state = states.get(s.id);
-    return s.id === chosen || (state !== undefined && benchedUntil(state, model, nowSeconds) === null);
-  });
-  usable.sort((a, b) => (a.id === chosen ? -1 : b.id === chosen ? 1 : 0));
-  return usable.map((s) => ({ ...s, record: states.get(s.id)?.record ?? "" }));
-}
-
-/** Marks a job as waiting for usage and tells its thread once per reset. */
-async function waitForUsage(deps: MachineDeps, job: MessageView, until: number): Promise<void> {
-  const { team, log } = deps;
-  if (job.labels[WAITING_LABEL] !== String(until)) {
-    await team.label(job.id, { set: { [WAITING_LABEL]: String(until) } });
-  }
-  if (job.labels[NOTIFIED_LABEL] === String(until) || !deps.notify) return;
-  try {
-    await deps.notify(job, until);
-    await team.label(job.id, { set: { [NOTIFIED_LABEL]: String(until) } });
-  } catch (error) {
-    log("machines.notify_failed", { job: job.id, error: String(error) });
-  }
 }

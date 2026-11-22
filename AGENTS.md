@@ -18,11 +18,9 @@ kiln runs an AI teammate in Slack (the agent) and the coding workers it hands re
 | project | Repos cloned side by side for every job on it (`projects` in `kiln.config.yaml`; `projectsOf` in `lib/deployment.ts`). A repo in no project is a project of its own. Jobs, defaults, MCP servers, and secrets are keyed by project; the job's `repo` label holds the project's key. |
 | job | A Vercel Board task in the `jobs` channel, labeled `kiln=job`. The brief is its text; repo, kind, harness, model, effort, and Slack origin are labels. |
 | kind | `change` (branch `kiln/<id>-<title>` and a draft PR) or `investigate` (a report, no changes). |
-| harness | The coding CLI a job runs on: `claude`, `codex`, or `opencode`. Workers may use only those in `enabledHarnesses` (`lib/config.ts`): subscriptions only, so `claude` today. |
+| harness | The coding CLI a job runs on: `claude`, `codex`, or `opencode`. Workers may use only those in `enabledHarnesses` (`lib/config.ts`): `claude` today, on the inference endpoint. |
 | selection | A job's harness, model, and effort, resolved by `resolveSelection`: request, then repo default for the kind, then global default. Fixed for the job's life. |
-| subscription | One Claude login a job runs on (`WORKER_CLAUDE_CODE_OAUTH_TOKEN[_<NAME>]`). A job sticks to one until it runs out, then moves to the next that can run its model, never to another model. |
-| inference endpoint | `INFERENCE_BASE_URL` and `INFERENCE_API_KEY` (`lib/inference.ts`): an Anthropic-compatible endpoint that, when set, runs the agent's model instead of AI Gateway and Claude jobs instead of subscriptions. Both or neither. |
-| ledger | Each subscription's record in Board channel `kiln-accounts`: usage, resets, and benches as labels (`lib/accounts.ts`). |
+| inference endpoint | `INFERENCE_BASE_URL` and `INFERENCE_API_KEY` (`lib/inference.ts`): the Anthropic-compatible endpoint the agent's model and every Claude job run on. Both or neither; jobs need it. Without it the agent falls back to AI Gateway, for evals and local development. |
 | machine | A fresh boat machine per job, labeled `kiln=worker` and `job=<id>`. The agent launches it with the job and deletes it after the job settles. |
 | worker | The process on a machine: claims its job by ID, runs it, exits. |
 | repo secrets | A repo's or project's environment variables, in boat environment `kiln-<key>`, which passes secrets and nothing else. Set through a Slack form, never through the model. |

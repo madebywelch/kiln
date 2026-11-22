@@ -4,7 +4,7 @@ import { defineTool } from "eve/tools";
 import { z } from "zod";
 
 // An AI Gateway transcription model. Transcription always goes through AI
-// Gateway, even when KILN_MODEL_URL points the agent's own model elsewhere.
+// Gateway, even when INFERENCE_BASE_URL points the agent's own model elsewhere.
 const DEFAULT_MODEL = "openai/gpt-4o-mini-transcribe";
 // Where eve saves inbound files. The tool reads nothing else.
 const ATTACHMENTS_DIR = "/workspace/.eve/attachments/";

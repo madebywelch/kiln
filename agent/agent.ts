@@ -1,19 +1,17 @@
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { defineAgent } from "eve";
 import { defineDynamic } from "eve/models";
 import { inferenceFrom } from "../lib/inference.ts";
 import { inferenceModel } from "./lib/inference.ts";
 
 // The agent's own model, for conversation and judgment. The coding work runs on
-// the workers' subscriptions, chosen per job, not on this model. One of three
-// routes, picked by which settings are present:
+// workers, not on this model. One of two routes, picked by which settings are
+// present:
 //
 // - INFERENCE_BASE_URL and INFERENCE_API_KEY: the deployment's Anthropic-compatible
 //   endpoint (lib/inference.ts), with KILN_MODEL as its model ID (default
 //   claude-fable-5-2). Workers' Claude Code jobs use it too.
-// - KILN_MODEL_URL and KILN_MODEL_KEY: an OpenAI-compatible endpoint (OpenRouter,
-//   a local server), with KILN_MODEL as its model name.
-// - Neither: AI Gateway, with KILN_MODEL as a Gateway model ID.
+// - Neither, as in evals and local development: AI Gateway, with KILN_MODEL as a
+//   Gateway model ID.
 //
 // KILN_REASONING sets the reasoning level on every route.
 const DEFAULT_MODEL = "anthropic/claude-fable-5.2";
@@ -41,15 +39,6 @@ export default defineAgent({
         modelContextWindowTokens: CUSTOM_CONTEXT_WINDOW,
       };
     }
-    const id = process.env.KILN_MODEL || DEFAULT_MODEL;
-    const url = process.env.KILN_MODEL_URL;
-    if (!url) return { model: id, reasoning: reasoning() };
-    const provider = createOpenAICompatible({
-      name: "kiln",
-      baseURL: url,
-      apiKey: process.env.KILN_MODEL_KEY,
-      includeUsage: true,
-    });
-    return { model: provider(id), modelContextWindowTokens: CUSTOM_CONTEXT_WINDOW };
+    return { model: process.env.KILN_MODEL || DEFAULT_MODEL, reasoning: reasoning() };
   }),
 });

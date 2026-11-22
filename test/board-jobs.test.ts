@@ -10,7 +10,6 @@ import {
   reportMessage,
   resumeAfterSecrets,
   sweepReports,
-  waitingMessage,
 } from "../lib/board-jobs.ts";
 import { JOBS_CHANNEL, type JobSpec, REPORT_LABEL, REPORT_PENDING } from "../lib/jobs.ts";
 
@@ -302,8 +301,6 @@ describe("reportMessage", () => {
     question: "Which color?",
     createdAt: "",
     origin: undefined,
-    subscription: null,
-    waitingUntil: null,
     secretsNeeded: null,
   };
 
@@ -311,13 +308,6 @@ describe("reportMessage", () => {
     const message = reportMessage(job, "");
     expect(message).toContain("The worker asks: Which color?");
     expect(message).toContain("answer_job");
-  });
-
-  it("tells the agent a waiting job keeps its model and the choice is the person's", () => {
-    const message = waitingMessage({ ...job, state: "ready", question: null }, 1_900_000_000);
-    expect(message).toContain("2030-03-17T17:46:40.000Z");
-    expect(message).toContain("on the same model");
-    expect(message).toContain("Never choose another model yourself");
   });
 
   it("tells the agent to ask for each missing secret with the job, and that saving resumes it", () => {

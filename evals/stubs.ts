@@ -44,13 +44,6 @@ export const stubsFor = (runsOn: string): ToolStub[] => [
   { id: "drive-search", tool: "drive_search", outcome: { response: { hits: [] } } },
   { id: "drive-share", tool: "drive_share", outcome: { response: { shared: "x", bytes: 1 } } },
   {
-    id: "list-subscriptions",
-    tool: "list_subscriptions",
-    outcome: {
-      response: { fillOrder: ["main"], subscriptions: [{ name: "main", windows: {}, outOfUsage: {} }] },
-    },
-  },
-  {
     id: "transcribe",
     tool: "transcribe_audio",
     outcome: { response: { transcript: "Can you add a dark mode toggle to the website?" } },

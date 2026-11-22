@@ -91,7 +91,10 @@ function startWorker(
   jobId: string,
   mode: string,
   record?: string,
-  login: Record<string, string> = { CLAUDE_CODE_OAUTH_TOKEN: "test" },
+  endpoint: Record<string, string> = {
+    INFERENCE_BASE_URL: "https://llm.example.com",
+    INFERENCE_API_KEY: "sk-endpoint",
+  },
 ): { child: ChildProcess; logs: () => string } {
   let output = "";
   const env: NodeJS.ProcessEnv = {
@@ -103,7 +106,7 @@ function startWorker(
     KILN_JOB_ID: jobId,
     KILN_REPO: JSON.stringify({ key: "web", repos: [{ key: "web", github: "acme/web" }] }),
     GH_TOKEN: "test",
-    ...login,
+    ...endpoint,
     WORK_DIR: join(root, "work"),
     FAKE_MODE: mode,
     ...(record ? { FAKE_RECORD: record } : {}),
@@ -111,8 +114,6 @@ function startWorker(
     GIT_CONFIG_KEY_0: `url.${remote}.insteadOf`,
     GIT_CONFIG_VALUE_0: "https://github.com/acme/web.git",
   };
-  // Unset, not empty, as on a machine the agent launched on the endpoint.
-  if (!login.CLAUDE_CODE_OAUTH_TOKEN) delete env.CLAUDE_CODE_OAUTH_TOKEN;
   const child = spawn(process.execPath, [join(repoRoot, "worker", "main.ts")], {
     cwd: repoRoot,
     env,
@@ -173,7 +174,7 @@ it("claims its job, opens a PR, settles it for the agent's report, and exits", a
   expect(worker.logs()).toContain('"event":"worker.done"');
 }, 60_000);
 
-it("runs a Claude job on the inference endpoint with no subscription token, as the agent launches it", async () => {
+it("runs a Claude job on the inference endpoint, as the agent launches it", async () => {
   const job = await postJob(team, { ...spec, title: "Snow on the endpoint" });
   const record = join(root, "record-endpoint.json");
   const worker = startWorker(job.id, "change", record, {
@@ -189,7 +190,6 @@ it("runs a Claude job on the inference endpoint with no subscription token, as t
   expect(seen).toMatchObject({
     ANTHROPIC_BASE_URL: "https://llm.example.com",
     ANTHROPIC_API_KEY: "sk-endpoint",
-    CLAUDE_CODE_OAUTH_TOKEN: null,
     INFERENCE_API_KEY: null,
   });
   expect(await exited(worker.child)).toBe(0);
