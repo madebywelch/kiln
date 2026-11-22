@@ -1,7 +1,8 @@
-// The agent's sandbox: eve's git image (Ubuntu, Node, Python 3, git, the GitHub
-// CLI, jq, curl) plus the tools for working on files people drop in Slack:
-// ImageMagick for images and favicons, zip and unzip for archives, and file to
-// tell what a file is. Installed once when eve builds the template.
+// The agent's sandbox: eve's default image (Ubuntu, Node, Python 3, git, jq,
+// curl) plus the GitHub CLI and the tools for working on files people drop in
+// Slack: ImageMagick for images and favicons, zip and unzip for archives, and
+// file to tell what a file is. Installed once when eve builds the template.
+// (eve's git image, with gh preinstalled, isn't published to Vercel Sandbox.)
 //
 // GitHub: on Vercel, the sandbox firewall adds the token to every request to
 // api.github.com and github.com, so `gh` and `git` work as the token's owner
@@ -12,10 +13,8 @@
 // `gh` is unauthenticated there.
 
 import { DefaultSandbox, defineSandbox, type SandboxNetworkPolicy } from "eve/sandbox";
-import { DEFAULT_EVE_GIT_SANDBOX_IMAGE } from "eve/sandbox/docker";
-import { VERCEL_EVE_GIT_SANDBOX_IMAGE } from "eve/sandbox/vercel";
 
-const PACKAGES = ["imagemagick", "zip", "unzip", "file"];
+const PACKAGES = ["gh", "imagemagick", "zip", "unzip", "file"];
 /** What the sandbox's GH_TOKEN says; the firewall swaps in the real token. */
 export const GH_TOKEN_PLACEHOLDER = "added-by-the-sandbox-firewall";
 
@@ -42,11 +41,7 @@ export const environment = DefaultSandbox.environment({
     const result = await sandbox.run({ command });
     if (result.exitCode !== 0) throw new Error(`Sandbox setup failed: ${result.stderr || result.stdout}`);
   },
-  docker: { image: DEFAULT_EVE_GIT_SANDBOX_IMAGE },
-  vercel: {
-    image: VERCEL_EVE_GIT_SANDBOX_IMAGE,
-    ...(token ? { env: { GH_TOKEN: GH_TOKEN_PLACEHOLDER }, networkPolicy: githubPolicy(token) } : {}),
-  },
+  vercel: token ? { env: { GH_TOKEN: GH_TOKEN_PLACEHOLDER }, networkPolicy: githubPolicy(token) } : {},
 });
 
 export default defineSandbox(() => environment.open());
