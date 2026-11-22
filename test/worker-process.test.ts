@@ -73,8 +73,12 @@ beforeAll(async () => {
     { cwd: root, stdio: "ignore" },
   );
   process.env.BOARD_URL = boardUrl;
-  team = board();
-  await until("the board to answer", async () => (await team.me()).actor);
+  // A new client each try: one that asked before vb serve wrote its token file keeps
+  // the credential it fell back to, which on CI (no Vercel login) is none.
+  team = await until("the board to answer", async () => {
+    const fresh = board();
+    return (await fresh.me()).actor ? fresh : undefined;
+  });
 }, 60_000);
 
 afterAll(async () => {
