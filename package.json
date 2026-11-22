@@ -21,6 +21,7 @@
     "workers:logs": "node scripts/boat-workers.ts logs"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.107",
     "@ai-sdk/openai-compatible": "^3.0.94",
     "@vercel/blob": "2.9.0",
     "@vercel/board": "0.54.0",

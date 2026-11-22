@@ -52,8 +52,11 @@ export const defaultModels: Readonly<Record<Harness, string | undefined>> = {
  */
 export const jobsPerSubscription = 2;
 
-/** Jobs that may run at once on a harness billed per token, each on its own boat machine. */
-export const machineLimits: Readonly<Partial<Record<Harness, number>>> = { opencode: 3 };
+/**
+ * Jobs that may run at once on a harness billed per token, each on its own boat machine. claude counts
+ * only when it runs on the deployment's inference endpoint; on subscriptions, jobsPerSubscription limits it.
+ */
+export const machineLimits: Readonly<Partial<Record<Harness, number>>> = { opencode: 3, claude: 3 };
 
 /** boat machine size for jobs. A Next.js dev build of a large app needs more than small's 4 GB. */
 export const machineType = "default" as const;

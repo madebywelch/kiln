@@ -199,6 +199,40 @@ describe("workerSettings", () => {
     expect(settings.KILN_AGENT_NAME).toBe("Mabel");
   });
 
+  it("runs Claude jobs on the inference endpoint when it is set: no subscription needed, the endpoint in their settings", () => {
+    const onEndpoint = launchConfig({
+      ...env,
+      WORKER_CLAUDE_CODE_OAUTH_TOKEN: "",
+      INFERENCE_BASE_URL: "https://llm.example.com",
+      INFERENCE_API_KEY: "sk-endpoint",
+    }) as LaunchConfig;
+    expect(harnessIssue("claude", onEndpoint)).toBeNull();
+    const settings = workerSettings("msg_1", "claude", onEndpoint, [], "web");
+    expect(settings).toMatchObject({
+      INFERENCE_BASE_URL: "https://llm.example.com",
+      INFERENCE_API_KEY: "sk-endpoint",
+    });
+    expect(settings.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+    expect(workerSettings("msg_1", "opencode", onEndpoint, [], "web").INFERENCE_API_KEY).toBeUndefined();
+    expect(launchConfig({ ...env, INFERENCE_BASE_URL: "https://llm.example.com" })).toMatch(
+      /INFERENCE_BASE_URL is set without INFERENCE_API_KEY/,
+    );
+  });
+
+  it("launches Claude jobs on the endpoint up to machineLimits, never consulting a subscription", async () => {
+    const onEndpoint = launchConfig({
+      ...env,
+      INFERENCE_BASE_URL: "https://llm.example.com",
+      INFERENCE_API_KEY: "sk-endpoint",
+    }) as LaunchConfig;
+    for (let index = 0; index < 4; index++) await postJob(team, { ...spec, title: `Job ${index}` });
+    const result = await reconcileMachines({ ...deps, config: onEndpoint });
+    expect(result.launched).toHaveLength(3);
+    expect(result.waiting).toHaveLength(1);
+    const launched = fake.machines.filter((machine) => machine.labels?.harness === "claude");
+    expect(launched.every((machine) => !machine.labels?.subscription)).toBe(true);
+  });
+
   it("says why a harness can't run", () => {
     expect(harnessIssue("opencode", config)).toMatch(/opencode is off: workers run on subscriptions only/);
     expect(harnessIssue("codex", everyHarness)).toMatch(/can't run codex jobs/);

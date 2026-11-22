@@ -53,6 +53,8 @@ Say the model in Slack, or don't:
 
 **Workers run on subscriptions only.** `enabledHarnesses` in [lib/config.ts](lib/config.ts) lists the coding CLIs workers may use, and out of the box that is Claude Code alone. OpenCode, which runs AI Gateway models billed per token, is built in but switched off. Codex joins once its ChatGPT login can be lent to per-job machines. The agent itself runs on AI Gateway (`KILN_MODEL`), which is the only per-token spend.
 
+**Or on your own endpoint.** Set `INFERENCE_BASE_URL` and `INFERENCE_API_KEY` to an Anthropic-compatible endpoint and both the agent and the workers' Claude Code use it: no AI Gateway for the agent's model, no subscriptions for jobs. The cheap model that screens channel messages and voice-note transcription stay on AI Gateway.
+
 What you ask for wins over the repo's defaults for that kind of job, which win over the global ones. Once a job starts, its harness and model are fixed.
 
 **Subscriptions.** Give kiln several Claude subscriptions and it routes between them. A job sticks to one subscription, keeping its prompt cache warm, until that subscription runs out of usage. Then the worker resumes the same session on the next subscription that can run the job's model. kiln learns each subscription's limits from what Claude Code reports, including 5-hour windows, weekly windows, and per-model weekly windows. When every subscription that can run the model is out, the job waits for the earliest reset, and the agent tells the thread so you can wait or restart it on another model.
@@ -90,7 +92,8 @@ Third-party skills are vendored unmodified under their own licenses; [skills/ven
 | Agent setting | Default | |
 |---|---|---|
 | `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET` | required | The Slack app's credentials, or `SLACK_CONNECTOR` for a Vercel Connect connector. |
-| `KILN_MODEL` | `anthropic/claude-fable-5.2` | The agent's own model, an AI Gateway ID. No key is needed on Vercel. |
+| `INFERENCE_BASE_URL`, `INFERENCE_API_KEY` | unset | Your own Anthropic-compatible endpoint, with or without `/v1`. When set, the agent's model runs on it instead of AI Gateway, and Claude Code jobs run on it instead of the Claude subscriptions, up to `machineLimits.claude` at once. The key goes as `x-api-key`. Set both or neither. |
+| `KILN_MODEL` | `anthropic/claude-fable-5.2` | The agent's own model: an AI Gateway ID, or on your inference endpoint its model ID (default `claude-fable-5-2`). No key is needed on Vercel for AI Gateway. |
 | `KILN_REASONING` | `high` | Its reasoning level: `low`, `medium`, `high`, or `xhigh`. |
 | `KILN_MODEL_URL`, `KILN_MODEL_KEY` | unset | Any OpenAI-compatible endpoint instead of AI Gateway, such as OpenRouter. |
 | `KILN_GH_TOKEN` | `WORKER_GH_TOKEN` | The agent's GitHub token, for `gh` in its sandbox: PRs, CI, merging. Added at the sandbox firewall; it never enters the sandbox. |

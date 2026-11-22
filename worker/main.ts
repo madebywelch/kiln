@@ -49,6 +49,9 @@ const Config = z
         ctx.addIssue({ code: "custom", message: "not {key, repos: [{key, github, baseBranch}]}" });
         return z.NEVER;
       }),
+    /** The deployment's inference endpoint, for a Claude job that runs on it instead of a subscription. */
+    INFERENCE_BASE_URL: z.string().optional(),
+    INFERENCE_API_KEY: z.string().optional(),
     /** The repo's MCP servers, as JSON from the agent. */
     KILN_MCP_SERVERS: z
       .string()
@@ -196,6 +199,9 @@ async function work(config: Config, team: Board, shutdown: AbortSignal, guidance
       signal: job.signal,
       log,
       subscriptions: config.KILN_SUBSCRIPTIONS,
+      ...(config.INFERENCE_BASE_URL && config.INFERENCE_API_KEY
+        ? { inference: { baseURL: config.INFERENCE_BASE_URL, apiKey: config.INFERENCE_API_KEY } }
+        : {}),
       mcpServers: config.KILN_MCP_SERVERS,
       ...(config.KILN_REPO
         ? { registry: { [config.KILN_REPO.key]: { repos: config.KILN_REPO.repos } } }

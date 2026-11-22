@@ -23,6 +23,7 @@ import {
   projectsOf,
   serversFor,
 } from "./deployment.ts";
+import { type Inference, inferenceFrom } from "./inference.ts";
 import { decodeJob, JOBS_CHANNEL, type JobSpec, REPORT_LABEL, REPORT_PENDING } from "./jobs.ts";
 import { environmentName, repoEnvironment } from "./secrets.ts";
 
@@ -64,6 +65,8 @@ export interface LaunchConfig {
   readonly deployment: Deployment;
   /** The subscriptions each subscription harness's jobs run on, in fill order. */
   readonly subscriptions: Readonly<Partial<Record<Harness, readonly Subscription[]>>>;
+  /** The deployment's inference endpoint: when set, Claude jobs run on it instead of the subscriptions. */
+  readonly inference?: Inference | undefined;
   /** Minutes a job may run; the machine's own deadline is this plus a margin. */
   readonly jobTimeoutMinutes: number;
 }
@@ -105,7 +108,10 @@ export function launchConfig(env: Readonly<Record<string, string | undefined>>):
   if (missing.length > 0) return `set ${missing.join(", ")} on the agent's Vercel project`;
   const deployment = parseDeployment(env.KILN_CONFIG);
   if (typeof deployment === "string") return deployment;
+  const inference = inferenceFrom(env);
+  if (typeof inference === "string") return `${inference} on the agent's Vercel project`;
   return {
+    inference,
     enabled: enabledHarnesses,
     deployment,
     code: code as string,
@@ -119,6 +125,11 @@ export function launchConfig(env: Readonly<Record<string, string | undefined>>):
 export function harnessIssue(harness: Harness, config: LaunchConfig): string | null {
   if (!config.enabled.includes(harness)) {
     return `${harness} is off: workers run on subscriptions only (enabledHarnesses in lib/config.ts)`;
+  }
+  if (harness === "claude" && config.inference) {
+    return (machineLimits.claude ?? 0) < 1
+      ? "claude jobs are switched off in lib/config.ts (machineLimits)"
+      : null;
   }
   if (harness === "claude") {
     return (config.subscriptions.claude ?? []).length > 0
@@ -158,6 +169,9 @@ export function workerSettings(
     ...shared,
     ...(first
       ? { CLAUDE_CODE_OAUTH_TOKEN: first.token, KILN_SUBSCRIPTIONS: JSON.stringify(subscriptions) }
+      : {}),
+    ...(harness === "claude" && config.inference
+      ? { INFERENCE_BASE_URL: config.inference.baseURL, INFERENCE_API_KEY: config.inference.apiKey }
       : {}),
     ...(repo && project
       ? {
@@ -396,7 +410,9 @@ export async function reconcileMachines(deps: MachineDeps): Promise<ReconcileRes
     const spec = decodeJob(job);
     try {
       let subscriptions: WorkerSubscription[] = [];
-      if (spec.harness === "claude" && claude.length > 0) {
+      const onEndpoint =
+        spec.harness === "claude" && typeof config !== "string" && config.inference !== undefined;
+      if (spec.harness === "claude" && claude.length > 0 && !onEndpoint) {
         states ??= await ledger(
           team,
           "claude",
@@ -417,7 +433,7 @@ export async function reconcileMachines(deps: MachineDeps): Promise<ReconcileRes
           subscriptions = workerSubscriptions(claude, states, choice.id, spec.model, nowSeconds);
           load.set(choice.id, (load.get(choice.id) ?? 0) + 1);
         }
-      } else if (spec.harness !== "claude") {
+      } else if (spec.harness !== "claude" || onEndpoint) {
         const limit = machineLimits[spec.harness] ?? 0;
         if (limit > 0 && running(spec.harness) >= limit) {
           result.waiting.push(job.id);

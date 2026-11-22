@@ -40,6 +40,9 @@ const seen = {
   OPENCODE_CONFIG_CONTENT: process.env.OPENCODE_CONFIG_CONTENT ?? null,
   CLAUDE_CODE_OAUTH_TOKEN: process.env.CLAUDE_CODE_OAUTH_TOKEN ?? null,
   KILN_SUBSCRIPTIONS: process.env.KILN_SUBSCRIPTIONS ?? null,
+  ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL ?? null,
+  ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? null,
+  INFERENCE_API_KEY: process.env.INFERENCE_API_KEY ?? null,
 };
 if (process.env.FAKE_RECORD) {
   writeFileSync(process.env.FAKE_RECORD, JSON.stringify({ args, stdin, cwd, head, env: seen }));

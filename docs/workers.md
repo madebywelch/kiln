@@ -57,6 +57,8 @@ Machines are deleted with their jobs, so the logs of a finished job are gone; it
 
 ## Subscriptions
 
+With `INFERENCE_BASE_URL` and `INFERENCE_API_KEY` set on the agent's Vercel project, Claude jobs skip all of this: each runs Claude Code against that endpoint (as `ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY`, the host without `/v1`), no subscription is chosen or recorded, and `machineLimits.claude` caps how many run at once. The worker gets the key in its settings file and the CLI gets it as `ANTHROPIC_API_KEY`, as it gets a subscription's token otherwise.
+
 kiln routes Claude jobs across every subscription it has a token for, and never changes a job's model.
 
 - **Sticky.** A job runs on one subscription until that subscription runs out, so its prompt cache stays warm. Subscriptions fill in order: `main`, then by name. A later subscription's 5-hour window starts only when the ones before it are busy or out.

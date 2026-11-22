@@ -6,6 +6,7 @@ import { basename, dirname, join } from "node:path";
 import type { Attachment, Board, ClaimedTask } from "@vercel/board";
 import { benchedUntil, readLedger, usageLabels, type WorkerSubscription } from "../lib/accounts.ts";
 import { agentName, type McpServer, type RepoConfig } from "../lib/deployment.ts";
+import { type Inference, inferenceHost } from "../lib/inference.ts";
 import {
   decodeJob,
   describeSelection,
@@ -89,6 +90,8 @@ export interface JobDeps {
   readonly mcpServers?: Readonly<Record<string, McpServer>>;
   /** For a Claude job: the subscriptions it may use, in the order to try them. Empty: the CLI's own login. */
   readonly subscriptions?: readonly WorkerSubscription[];
+  /** The deployment's inference endpoint (INFERENCE_*): a Claude job runs on it instead of a subscription. */
+  readonly inference?: Inference;
 }
 
 /** Why the worker stopped a run itself: its subscription ran out. */
@@ -99,6 +102,7 @@ const CONTINUE_PROMPT =
 /** Credentials only the worker holds: its push token and its board login. */
 const WORKER_SECRETS = [
   "KILN_SUBSCRIPTIONS", // every subscription's token; the CLI gets only its own, as CLAUDE_CODE_OAUTH_TOKEN
+  "INFERENCE_API_KEY", // the CLI gets it as ANTHROPIC_API_KEY, for a Claude job on the endpoint
   "GH_TOKEN",
   "GITHUB_TOKEN",
   "HARNESS_GH_TOKEN",
@@ -335,7 +339,16 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string): Promise<
     inputs,
   );
   const reportFile = join(deps.workDir, "logs", `${id}.report.md`);
-  const subscriptions = spec.harness === "claude" ? (deps.subscriptions ?? []) : [];
+  const onEndpoint = spec.harness === "claude" && deps.inference !== undefined;
+  const subscriptions = spec.harness === "claude" && !onEndpoint ? (deps.subscriptions ?? []) : [];
+  // Claude Code's own settings for an Anthropic-compatible endpoint: the host without /v1, and the key.
+  const endpointEnv =
+    onEndpoint && deps.inference
+      ? {
+          ANTHROPIC_BASE_URL: inferenceHost(deps.inference.baseURL),
+          ANTHROPIC_API_KEY: deps.inference.apiKey,
+        }
+      : {};
   let current = 0;
   let session: string | undefined;
   let invocation: HarnessInvocation;
@@ -358,6 +371,7 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string): Promise<
       model: spec.model ?? "default",
       effort: spec.effort,
       ...(subscription ? { subscription: subscription.id } : {}),
+      ...(onEndpoint && deps.inference ? { endpoint: new URL(deps.inference.baseURL).host } : {}),
       ...(session ? { resumed: session } : {}),
     });
     const watch = spec.harness === "claude" ? new ClaudeWatch() : undefined;
@@ -372,6 +386,7 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string): Promise<
         env: {
           ...(deps.harnessEnv ?? harnessEnv(process.env)),
           ...invocation.env,
+          ...endpointEnv,
           ...(subscription ? { CLAUDE_CODE_OAUTH_TOKEN: subscription.token } : {}),
         },
         signal: runStop.signal,

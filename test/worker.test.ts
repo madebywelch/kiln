@@ -97,13 +97,22 @@ interface RunOptions {
   guidance?: string;
   mcpServers?: Record<string, McpServer>;
   subscriptions?: WorkerSubscription[];
+  inference?: { baseURL: string; apiKey: string };
 }
 
 interface Record_ {
   args: string[];
   stdin: string;
   head?: string;
-  env: { GH_TOKEN: string | null; BOARD_TOKEN: string | null; OPENCODE_CONFIG_CONTENT?: string | null };
+  env: {
+    GH_TOKEN: string | null;
+    BOARD_TOKEN: string | null;
+    OPENCODE_CONFIG_CONTENT?: string | null;
+    ANTHROPIC_BASE_URL?: string | null;
+    ANTHROPIC_API_KEY?: string | null;
+    INFERENCE_API_KEY?: string | null;
+    CLAUDE_CODE_OAUTH_TOKEN?: string | null;
+  };
 }
 
 async function work(
@@ -135,6 +144,7 @@ async function work(
     ...(options.guidance ? { guidance: options.guidance } : {}),
     ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
     ...(options.subscriptions ? { subscriptions: options.subscriptions } : {}),
+    ...(options.inference ? { inference: options.inference } : {}),
   });
   let record: Record_ = { args: [], stdin: "", env: { GH_TOKEN: null, BOARD_TOKEN: null } };
   try {
@@ -358,6 +368,26 @@ describe("project jobs", () => {
     expect(outcome.kind === "completed" && outcome.result).toBe(
       "Draft PR: https://github.com/acme/web/pull/7",
     );
+  });
+});
+
+describe("the inference endpoint", () => {
+  it("runs a Claude job on the endpoint instead of a subscription, with Claude Code's own settings", async () => {
+    await postJob(team, spec);
+    const { outcome, record } = await work({
+      mode: "change",
+      harnessEnv: harnessEnv({ ...process.env, INFERENCE_API_KEY: "sk-endpoint", GH_TOKEN: "ghp_write" }),
+      subscriptions: [{ id: "main", token: "oauth-main", record: "msg_ledger" }],
+      inference: { baseURL: "https://llm.example.com/v1/", apiKey: "sk-endpoint" },
+    });
+    expect(outcome).toMatchObject({ kind: "completed" });
+    expect(record.env).toMatchObject({
+      ANTHROPIC_BASE_URL: "https://llm.example.com",
+      ANTHROPIC_API_KEY: "sk-endpoint",
+      CLAUDE_CODE_OAUTH_TOKEN: null,
+      INFERENCE_API_KEY: null,
+      GH_TOKEN: null,
+    });
   });
 });
 

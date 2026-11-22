@@ -1,13 +1,21 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { defineAgent } from "eve";
 import { defineDynamic } from "eve/models";
+import { inferenceFrom } from "../lib/inference.ts";
+import { inferenceModel } from "./lib/inference.ts";
 
 // The agent's own model, for conversation and judgment. The coding work runs on
-// the workers' subscriptions, chosen per job, not on this model.
+// the workers' subscriptions, chosen per job, not on this model. One of three
+// routes, picked by which settings are present:
 //
-// KILN_MODEL is an AI Gateway model ID, and KILN_REASONING its reasoning level.
-// Set KILN_MODEL_URL to use any OpenAI-compatible endpoint instead (OpenRouter,
-// a local server), with KILN_MODEL_KEY as its key and KILN_MODEL as its model name.
+// - INFERENCE_BASE_URL and INFERENCE_API_KEY: the deployment's Anthropic-compatible
+//   endpoint (lib/inference.ts), with KILN_MODEL as its model ID (default
+//   claude-fable-5-2). Workers' Claude Code jobs use it too.
+// - KILN_MODEL_URL and KILN_MODEL_KEY: an OpenAI-compatible endpoint (OpenRouter,
+//   a local server), with KILN_MODEL as its model name.
+// - Neither: AI Gateway, with KILN_MODEL as a Gateway model ID.
+//
+// KILN_REASONING sets the reasoning level on every route.
 const DEFAULT_MODEL = "anthropic/claude-fable-5.2";
 const REASONING = ["provider-default", "none", "minimal", "low", "medium", "high", "xhigh"] as const;
 const DEFAULT_REASONING: (typeof REASONING)[number] = "high";
@@ -23,6 +31,16 @@ function reasoning(): (typeof REASONING)[number] {
 
 export default defineAgent({
   model: defineDynamic(() => {
+    const inference = inferenceFrom(process.env);
+    // Half a setting fails the turn, rather than quietly spending on AI Gateway.
+    if (typeof inference === "string") throw new Error(`${inference} on the agent's Vercel project`);
+    if (inference) {
+      return {
+        model: inferenceModel(inference, process.env.KILN_MODEL),
+        reasoning: reasoning(),
+        modelContextWindowTokens: CUSTOM_CONTEXT_WINDOW,
+      };
+    }
     const id = process.env.KILN_MODEL || DEFAULT_MODEL;
     const url = process.env.KILN_MODEL_URL;
     if (!url) return { model: id, reasoning: reasoning() };
