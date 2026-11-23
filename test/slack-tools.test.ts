@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { conversationContext, conversationLabel } from "../agent/lib/slack.ts";
+import { conversationContext, conversationLabel, markdownToMrkdwn } from "../agent/lib/slack.ts";
 import slackHistory from "../agent/tools/slack_history.ts";
 import slackPost from "../agent/tools/slack_post.ts";
 import slackReact from "../agent/tools/slack_react.ts";
@@ -127,15 +127,58 @@ describe("slack_upload", () => {
     expect(calls[2]?.body).toMatchObject({
       channel_id: "C0123",
       thread_ts: "1700000000.000100",
-      initial_comment: "Here it is",
     });
+    // Markdown, as the agent writes everywhere, in a block Slack renders.
+    expect(JSON.parse(String(calls[2]?.body.blocks))).toEqual([{ type: "markdown", text: "Here it is" }]);
+    expect(calls[2]?.body).not.toHaveProperty("initial_comment");
     expect(JSON.parse(String(calls[2]?.body.files))).toEqual([{ id: "F1", title: "plan.md" }]);
     expect(out).toMatchObject({ uploaded: "plan.md", bytes: 7 });
+  });
+
+  it("falls back to the comment in Slack's mrkdwn when Slack won't take blocks with a file", async () => {
+    replies["files.getUploadURLExternal"] = () => ({
+      ok: true,
+      upload_url: "https://files.example/u",
+      file_id: "F1",
+    });
+    replies["files.completeUploadExternal"] = (body) =>
+      body.blocks ? { ok: false, error: "invalid_blocks" } : { ok: true };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await run(slackUpload, {
+      filename: "a.png",
+      content: "x",
+      comment: "**Approve?** See [the PR](https://x.test/1)",
+    });
+    expect(calls.filter((call) => call.method === "files.completeUploadExternal")).toHaveLength(2);
+    expect(calls.at(-1)?.body).toMatchObject({ initial_comment: "*Approve?* See <https://x.test/1|the PR>" });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("slack.upload_blocks_refused"));
+    warn.mockRestore();
+  });
+
+  it("does not retry a share Slack refused for another reason", async () => {
+    replies["files.getUploadURLExternal"] = () => ({
+      ok: true,
+      upload_url: "https://files.example/u",
+      file_id: "F1",
+    });
+    replies["files.completeUploadExternal"] = () => ({ ok: false, error: "not_in_channel" });
+    await expect(run(slackUpload, { filename: "a.png", content: "x", comment: "hi" })).rejects.toThrow(
+      /not_in_channel/,
+    );
+    expect(calls.filter((call) => call.method === "files.completeUploadExternal")).toHaveLength(1);
   });
 
   it("refuses an empty file before calling Slack", async () => {
     await expect(run(slackUpload, { filename: "x.txt", content: "" })).rejects.toThrow(/empty/);
     expect(calls).toEqual([]);
+  });
+});
+
+describe("markdownToMrkdwn", () => {
+  it("turns the agent's Markdown into Slack's mrkdwn", () => {
+    expect(
+      markdownToMrkdwn("## Ready\n**Bold** and ~~gone~~, [docs](https://x.test/d)\n- one\n  * two"),
+    ).toBe("*Ready*\n*Bold* and ~gone~, <https://x.test/d|docs>\n• one\n  • two");
   });
 });
 

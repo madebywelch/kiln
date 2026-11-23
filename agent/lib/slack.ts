@@ -190,14 +190,41 @@ export async function uploadToSlack(input: {
   );
   const upload = await fetch(String(ticket.upload_url), { method: "POST", body: input.bytes });
   if (!upload.ok) throw new Error(`Slack refused the file upload: HTTP ${upload.status}`);
-  await slackApi(
-    "files.completeUploadExternal",
-    {
-      files: JSON.stringify([{ id: ticket.file_id, title: input.filename }]),
-      channel_id: input.channel,
-      ...(input.threadTs ? { thread_ts: input.threadTs } : {}),
-      ...(input.comment ? { initial_comment: input.comment } : {}),
-    },
-    input.teamId,
-  );
+  const share = (comment: Record<string, string>) =>
+    slackApi(
+      "files.completeUploadExternal",
+      {
+        files: JSON.stringify([{ id: ticket.file_id, title: input.filename }]),
+        channel_id: input.channel,
+        ...(input.threadTs ? { thread_ts: input.threadTs } : {}),
+        ...comment,
+      },
+      input.teamId,
+    );
+  if (!input.comment) {
+    await share({});
+    return;
+  }
+  // The comment is Markdown, as in slack_post, which a markdown block renders; initial_comment
+  // takes Slack's own mrkdwn and showed Markdown raw.
+  try {
+    await share({ blocks: JSON.stringify([{ type: "markdown", text: input.comment }]) });
+  } catch (error) {
+    if (!(error instanceof SlackApiError && REFUSED_BLOCKS.has(error.code))) throw error;
+    console.warn(JSON.stringify({ event: "slack.upload_blocks_refused", error: error.code }));
+    await share({ initial_comment: markdownToMrkdwn(input.comment) });
+  }
+}
+
+/** Errors Slack answers a share with when it won't take its comment as blocks. */
+const REFUSED_BLOCKS = new Set(["invalid_blocks", "invalid_blocks_format", "invalid_arguments"]);
+
+/** The Markdown the agent writes, in Slack's mrkdwn: bold, strikethrough, links, headings, and bullets. */
+export function markdownToMrkdwn(text: string): string {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, "*$1*")
+    .replace(/~~(.+?)~~/g, "~$1~")
+    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, "<$2|$1>")
+    .replace(/^#{1,6}\s+(.+)$/gm, "*$1*")
+    .replace(/^(\s*)[-*]\s+/gm, "$1• ");
 }
