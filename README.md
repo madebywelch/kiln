@@ -118,7 +118,7 @@ pnpm exec vb inspect             # the board's UI, served from your machine
 - Other people's messages reach the model as conversation, and its instructions say so. That is a soft boundary.
 - Coding CLIs run with permission prompts off, alone on their job's machine, without the worker's GitHub or Board credentials. Protect each repo's default branch: workers push only `<login>/*` branches, `<login>` being the account behind their `GH_TOKEN`, and never one that existed before their job.
 - A job's machine has its own repo's secrets and none of another repo's, and none of your boat, GitHub, or agent logins. The coding CLI can read its repo's secrets; that is what they are for.
-- Secret values go from a Slack form to boat. They never reach the agent's model, its logs, or the board. Anyone in the workspace can set them until `KILN_SECRET_ADMINS` lists who may.
+- Secret values go from a Slack form to boat. They never reach the agent's model, its logs, or the board. A worker hides them as `[NAME hidden]` in everything a job posts or keeps, and never pushes a commit that holds one. Anyone in the workspace can set them until `KILN_SECRET_ADMINS` lists who may.
 
 ## Develop it
 

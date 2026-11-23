@@ -33,6 +33,7 @@ import {
 } from "../lib/jobs.ts";
 import { type Exec, run } from "./exec.ts";
 import { type HarnessBins, harnessInvocation, MissingSecrets, resolveMcp } from "./harness.ts";
+import { type Mask, maskBytes, maskFiles, noMask } from "./mask.ts";
 
 export type Logger = (event: string, fields?: Record<string, unknown>) => void;
 
@@ -98,6 +99,10 @@ export interface JobDeps {
   readonly guidance?: string;
   /** The repo's MCP servers, from the agent (KILN_MCP_SERVERS). Their ${NAME}s come from the environment. */
   readonly mcpServers?: Readonly<Record<string, McpServer>>;
+  /** Hides the job's secrets in what it posts and keeps. Default: hides nothing. */
+  readonly mask?: Mask;
+  /** Where the coding CLI keeps its own logs and sessions, masked after each run along with the job's logs. */
+  readonly sessionLogs?: readonly string[];
   /** The deployment's inference endpoint (INFERENCE_*), which a Claude job runs on. */
   readonly inference?: Inference;
 }
@@ -306,6 +311,8 @@ export async function runJob(deps: JobDeps): Promise<Outcome> {
     }
   }
 
+  // However the run ended, so a kept machine never holds a secret in a log or the CLI's session.
+  await maskFiles(deps.mask ?? noMask, [dirname(logFile), ...(deps.sessionLogs ?? [])]);
   const keep = keepFor(outcome, progress);
   const collected =
     outcome.kind === "abandoned" || outcome.kind === "paused"
@@ -434,7 +441,9 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string, progress:
         task: id,
         signal,
       };
-      if (await pushWork(checkout.git, spec.title, checkout.startSha, branch, retry)) pushed.push(checkout);
+      const guard = deps.mask ?? noMask;
+      if (await pushWork(checkout.git, spec.title, checkout.startSha, branch, retry, guard))
+        pushed.push(checkout);
     }
     return pushed;
   };
@@ -551,7 +560,7 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string, progress:
         base: checkout.base,
         head: branch,
         title: spec.title,
-        body: written ?? clip(report, MAX_PR_BODY),
+        body: (deps.mask ?? noMask)(written ?? clip(report, MAX_PR_BODY)),
       }),
     );
   }
@@ -595,6 +604,7 @@ async function pushWork(
   startSha: string,
   branch: string,
   retry: { delaysMs: readonly number[]; log: Logger; task: string; signal: AbortSignal },
+  mask: Mask = noMask,
 ): Promise<boolean> {
   if ((await git(["status", "--porcelain"])) !== "") {
     await git(["add", "-A"]);
@@ -602,6 +612,13 @@ async function pushWork(
   }
   const ahead = Number(await git(["rev-list", "--count", `${startSha}..HEAD`]));
   if (ahead === 0) return false;
+  // A pushed secret is public to everyone who can read the repo, for good: never push one.
+  const leaked = mask.find(await git(["log", "-p", "--format=%B", `${startSha}..HEAD`]));
+  if (leaked.length > 0) {
+    throw new Error(
+      `the job's commits hold the value of ${leaked.join(", ")}, so nothing was pushed; remove it from the commits and retry`,
+    );
+  }
   // The branch belongs to this job, so overwriting it is safe.
   for (let attempt = 0; ; attempt++) {
     try {
@@ -820,6 +837,7 @@ async function settle(
   keep?: string,
 ): Promise<void> {
   const { board, claim, log } = deps;
+  const mask = deps.mask ?? noMask;
   const id = claim.task.id;
   try {
     if (outcome.kind === "abandoned") {
@@ -848,10 +866,11 @@ async function settle(
     }
     // A report too long for the job update travels whole as a file, ahead of the CLI's own.
     const report = outcome.kind === "blocked" ? "" : outcome.report;
-    const all =
+    const all = (
       report.length > REPORT_INLINE_CHARS
         ? [{ name: FULL_REPORT_FILE, bytes: new TextEncoder().encode(report) }, ...collected.artifacts]
-        : collected.artifacts;
+        : collected.artifacts
+    ).map((file) => ({ ...file, bytes: maskBytes(mask, file.bytes) }));
     const skipped = [
       ...collected.skipped,
       ...all
@@ -867,18 +886,35 @@ async function settle(
         skipped.push(`${artifactPath(artifact.name)} (its upload failed)`);
       }
     }
+    const text = mask(replyText(outcome, keep !== undefined, skipped));
+    const settled = mask(
+      clip(
+        outcome.kind === "completed"
+          ? outcome.result
+          : outcome.kind === "failed"
+            ? outcome.reason
+            : outcome.question,
+        MAX_SETTLE_CHARS,
+      ),
+    );
+    // Every mask has run by now, the logs' included: say which secrets showed up, so they can be judged.
+    const hidden = [...mask.hidden].sort();
+    if (hidden.length) log("secrets.hidden", { task: id, names: hidden });
+    const hiddenNote = hidden.length
+      ? `**Secrets hidden:** the value of ${hidden.join(", ")} appeared in this job's output and was replaced with \`[NAME hidden]\` in everything kiln keeps or posts.\n\n`
+      : "";
     await board.reply(id, {
-      text: replyText(outcome, keep !== undefined, skipped),
+      text: clip(`${hiddenNote}${text}`, MAX_REPLY_CHARS),
       ...(attachments.length ? { attachments } : {}),
     });
     await board.label(id, { set: { [REPORT_LABEL]: REPORT_PENDING } });
-    if (outcome.kind === "completed") await claim.complete(clip(outcome.result, MAX_SETTLE_CHARS));
-    else if (outcome.kind === "failed") await claim.fail(clip(outcome.reason, MAX_SETTLE_CHARS));
+    if (outcome.kind === "completed") await claim.complete(settled);
+    else if (outcome.kind === "failed") await claim.fail(settled);
     else {
       if (outcome.secrets?.length) {
         await board.label(id, { set: { [NEEDS_SECRETS_LABEL]: outcome.secrets.join(",") } });
       }
-      await claim.block(clip(outcome.question, MAX_SETTLE_CHARS), {
+      await claim.block(settled, {
         kind: outcome.secrets?.length ? NEEDS_SECRET_KIND : "needs_input",
       });
     }

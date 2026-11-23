@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, truncate, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Board, board, type ClaimedTask } from "@vercel/board";
@@ -41,6 +41,7 @@ import {
   SHUTDOWN,
   sinceLastRun,
 } from "../worker/job.ts";
+import { type Mask, secretMask } from "../worker/mask.ts";
 
 const FAKE = join(import.meta.dirname, "fixtures", "fake-harness.mjs");
 const registry: Record<string, RepoConfig> = { web: { github: "acme/web", description: "the website" } };
@@ -117,6 +118,8 @@ interface RunOptions {
   guidance?: string;
   mcpServers?: Record<string, McpServer>;
   inference?: { baseURL: string; apiKey: string };
+  mask?: Mask;
+  sessionLogs?: string[];
 }
 
 interface Record_ {
@@ -165,6 +168,8 @@ async function work(
     pushRetryDelaysMs: options.pushRetryDelaysMs ?? [],
     ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
     ...(options.inference ? { inference: options.inference } : {}),
+    ...(options.mask ? { mask: options.mask } : {}),
+    ...(options.sessionLogs ? { sessionLogs: options.sessionLogs } : {}),
   });
   let record: Record_ = { args: [], stdin: "", env: { GH_TOKEN: null, BOARD_TOKEN: null } };
   try {
@@ -661,6 +666,50 @@ describe("artifacts", () => {
     const report = (await team.thread(job.id, { limit: 10 })).replies.at(-1);
     expect(report?.attachments).toHaveLength(10);
     expect(report?.text).toMatch(/\*\*Files not attached:\*\* x09\.txt \(over the 10-file limit\)\./);
+  });
+});
+
+describe("secrets in a job's output", () => {
+  const DB_URL = "postgres://reader:s3cret-Passw0rd@db.internal:5432/app";
+  const secretRun = () => {
+    const env = { ...process.env, DB_URL };
+    return { harnessEnv: env, mask: secretMask(env, ["DB_URL"]) };
+  };
+
+  it("hides a printed secret in the update, the returned files, the logs, and the CLI's session, and says so", async () => {
+    const job = await postJob(team, { ...spec, kind: "investigate" });
+    const sessions = join(root, "sessions");
+    await mkdir(sessions, { recursive: true });
+    await writeFile(join(sessions, "s.jsonl"), `{"text":"${DB_URL}"}\n`);
+    const workDir = join(root, "work");
+    await work({ mode: "print-secret", workDir, sessionLogs: [sessions], ...secretRun() });
+    const report = (await team.thread(job.id, { limit: 10 })).replies.at(-1);
+    expect(report?.text).not.toContain("s3cret-Passw0rd");
+    expect(report?.text).toContain("Could not parse [DB_URL hidden].");
+    expect(report?.text).toMatch(/^\*\*Secrets hidden:\*\* the value of DB_URL appeared/);
+    const notes = await (await team.download(report?.attachments[0]?.id ?? "")).text();
+    expect(notes).toBe("url was [DB_URL hidden]\n");
+    expect(await readFile(join(sessions, "s.jsonl"), "utf8")).toBe('{"text":"[DB_URL hidden]"}\n');
+    for (const name of await readdir(join(workDir, "logs")))
+      expect(await readFile(join(workDir, "logs", name), "utf8")).not.toContain("s3cret-Passw0rd");
+  });
+
+  it("refuses to push commits that hold a secret, naming it but not its value", async () => {
+    await postJob(team, spec);
+    const { outcome } = await work({ mode: "commit-secret", ...secretRun() });
+    expect(outcome).toMatchObject({ kind: "failed" });
+    expect(outcome.kind === "failed" && outcome.reason).toMatch(
+      /commits hold the value of DB_URL, so nothing was pushed/,
+    );
+    expect(() => remoteFiles(BRANCH)).toThrow();
+    expect(pullRequests).toEqual([]);
+  });
+
+  it("adds no note when nothing was hidden", async () => {
+    const job = await postJob(team, { ...spec, kind: "investigate" });
+    await work({ mode: "nested-artifacts", ...secretRun() });
+    const report = (await team.thread(job.id, { limit: 10 })).replies.at(-1);
+    expect(report?.text).not.toContain("Secrets hidden");
   });
 });
 

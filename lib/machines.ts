@@ -7,7 +7,7 @@
 // other machine is deleted once its job settles.
 
 import type { Board, MessageView } from "@vercel/board";
-import { type Boat, BoatError, type Machine, STOPPED } from "./boat.ts";
+import { type Boat, BoatError, type Machine, STOPPED, variableNames } from "./boat.ts";
 import { enabledHarnesses, type Harness, keptMachineDays, machineLimits, machineType } from "./config.ts";
 import {
   DEFAULT_AGENT_NAME,
@@ -161,6 +161,7 @@ export function workerSettings(
   harness: Harness,
   config: LaunchConfig,
   repo?: string,
+  secretNames: readonly string[] = [],
 ): Record<string, string> {
   const servers = repo ? serversFor(config.deployment, repo) : {};
   const project = repo ? projectsOf(config.deployment)[repo] : undefined;
@@ -186,6 +187,8 @@ export function workerSettings(
         }
       : {}),
     KILN_AGENT_NAME: config.deployment.name ?? DEFAULT_AGENT_NAME,
+    // Names only: the worker hides these secrets' values in everything the job posts and keeps.
+    ...(secretNames.length > 0 ? { KILN_SECRET_NAMES: secretNames.join(",") } : {}),
     ...(Object.keys(servers).length > 0 ? { KILN_MCP_SERVERS: JSON.stringify(servers) } : {}),
     BOARD_PROFILE: harness,
     WORKER_HARNESS: harness,
@@ -302,7 +305,9 @@ export async function launchMachine(
       files: [
         {
           path: WORKER_SETTINGS_PATH,
-          content: JSON.stringify(workerSettings(job.id, spec.harness, config, spec.repo)),
+          content: JSON.stringify(
+            workerSettings(job.id, spec.harness, config, spec.repo, variableNames(environment.envContents)),
+          ),
         },
       ],
       setupScript: setupScript(config.code),
@@ -450,10 +455,13 @@ async function startResumed(deps: MachineDeps, config: LaunchConfig, machine: Ma
   );
   if (claimed !== "start") return;
   const spec = decodeJob(job);
+  const environment = await repoEnvironment(deps.boat, spec.repo, deps.log);
   await deps.boat.writeFile(
     machine.id,
     WORKER_SETTINGS_PATH,
-    JSON.stringify(workerSettings(job.id, spec.harness, config, spec.repo)),
+    JSON.stringify(
+      workerSettings(job.id, spec.harness, config, spec.repo, variableNames(environment.envContents)),
+    ),
   );
   await deps.boat.startCommand(machine.id, setupScript(config.code));
   deps.log("machines.worker_started", { job: job.id, machine: machine.id });

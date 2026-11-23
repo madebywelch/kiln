@@ -147,6 +147,15 @@ describe("workerSettings", () => {
     expect(opencode.INFERENCE_API_KEY).toBeUndefined();
   });
 
+  it("names the job's secrets for the worker to hide, never their values", () => {
+    expect(
+      workerSettings("msg_1", "claude", config, undefined, ["DATABASE_URL", "STRIPE_API_KEY"]),
+    ).toMatchObject({
+      KILN_SECRET_NAMES: "DATABASE_URL,STRIPE_API_KEY",
+    });
+    expect(workerSettings("msg_1", "claude", config).KILN_SECRET_NAMES).toBeUndefined();
+  });
+
   it("gives a job's machine its own repo and that repo's MCP servers, and no other repo's", () => {
     const withMcp = launchConfig({
       ...env,

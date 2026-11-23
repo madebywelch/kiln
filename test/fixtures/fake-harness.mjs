@@ -138,6 +138,18 @@ switch (mode) {
     // An investigation whose final message is the whole deliverable, longer than a job update carries.
     finish(`Findings.\n\n${"A finding worth reading. ".repeat(600)}\n\nThe proposal is at the end.`);
     break;
+  case "print-secret":
+    // Echoes a secret, as a script that reports a parse error with the whole URL does, and saves it in a file.
+    mkdirSync(join(cwd, ".kiln", "artifacts"), { recursive: true });
+    writeFileSync(join(cwd, ".kiln", "artifacts", "notes.txt"), `url was ${process.env.DB_URL}\n`);
+    finish(`Could not parse ${process.env.DB_URL}.`);
+    break;
+  case "commit-secret":
+    writeFileSync(join(cwd, "config.env"), `DATABASE_URL=${process.env.DB_URL}\n`);
+    execFileSync("git", ["add", "-A"], { cwd });
+    execFileSync("git", ["commit", "-q", "-m", "Add config"], { cwd });
+    finish("Added the config.");
+    break;
   case "long-report-many-files":
     // Ten files of its own, and a report long enough to travel as an eleventh.
     mkdirSync(join(cwd, ".kiln", "artifacts"), { recursive: true });
