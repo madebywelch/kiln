@@ -55,7 +55,7 @@ Everything lives in the agent's Vercel project; nothing runs on your computer.
 
 1. **A boat API key** with these actions: `sandbox.create`, `sandbox.read`, `sandbox.stop`, `sandbox.resume`, `sandbox.delete-own`, `environment.read`, `environment.write`, `exec`, and `file.write`. Stop, resume, exec, and file writes keep and continue a job's work; exec also serves `workers:logs`. Create it in the boat dashboard. Set it as `BOAT_API_KEY` on the Vercel project, and in `.env` for the status and logs commands.
 
-   Turn snapshots on for the account (boat dashboard, Account tab). Without them a stop erases a machine, so kiln launches machines without snapshots, logs `machines.snapshots_off`, and deletes a paused or failed job's machine instead of keeping its work: the job then starts over from its brief and thread.
+   Turn snapshots on and zero data retention off for the account (boat dashboard, Account tab). With zero data retention on, a stop erases the machine's data instead of keeping a snapshot, so the job starts over. Without snapshots a stop erases a machine, so kiln launches machines without snapshots, logs `machines.snapshots_off`, and deletes a paused or failed job's machine instead of keeping its work: the job then starts over from its brief and thread.
 2. **Worker settings** on the Vercel project. Each `WORKER_<NAME>` is passed to workers as `<NAME>`:
 
    | Setting | What it is |
