@@ -658,7 +658,12 @@ export function buildPrompt(
   const prFile = project
     ? `\`${PR_FILE}\` at ${root}, or \`.kiln/pr-<repo>.md\` (such as \`.kiln/pr-${repos[0]?.key}.md\`) for a repo whose pull request needs its own`
     : `\`${PR_FILE}\` at ${root}`;
-  const prRule = `- Write the pull request's description to ${prFile}: what changed and why, and how you verified it, for the repo's reviewers. It is the repo's, not this job's: leave out kiln, this job, its files, and \`.kiln/\`. It is never committed.`;
+  const prRule = [
+    `- Write the pull request's description to ${prFile}, for a reviewer deciding whether to merge. It is the repo's, not this job's: leave out kiln, this job, its files, and \`.kiln/\`. It is never committed.`,
+    "  - Follow the repo's pull request template or conventions when it has them. Otherwise: what changed and why in two or three sentences; then bullets only for what a reviewer needs that the diff doesn't show, such as a non-obvious decision, a change in behavior, or a risk; then how you verified it, one short bullet per check.",
+    "  - Under 250 words. A small change gets a few lines.",
+    "  - Leave out what the diff already shows (no file-by-file walkthrough), approaches you tried and dropped, cost and token counts, trouble with your own environment, and how you handled credentials. Whatever of that people need goes in your report.",
+  ].join("\n");
   if (spec.kind === "change" && project) {
     lines.push(
       "- Make the change on the job's branch in each repo you touch, and commit it there with clear messages.",

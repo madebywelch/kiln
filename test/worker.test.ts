@@ -474,6 +474,10 @@ describe("pull request descriptions", () => {
     const { record } = await work({ mode: "pr-file" });
     expect(record.stdin).toContain("Write the pull request's description to `.kiln/pr.md`");
     expect(record.stdin).toContain("leave out kiln, this job, its files, and `.kiln/`");
+    // A reviewer's description, not the job's whole story: capped, with the rest sent to the report.
+    expect(record.stdin).toContain("for a reviewer deciding whether to merge");
+    expect(record.stdin).toContain("Under 250 words.");
+    expect(record.stdin).toContain("goes in your report");
     expect(pullRequests).toHaveLength(1);
     expect(pullRequests[0]?.body).toBe(
       "## Snow on the landing page\n\nAdds a snow layer. Verified with the unit tests.",
