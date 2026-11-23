@@ -38,6 +38,9 @@ export const RESUME_LABEL = "resume";
 export const RESUME_DISK = "disk";
 /** The job's branch, chosen on its first run, so every later run pushes to the same one. */
 export const BRANCH_LABEL = "branch";
+/** A queued job with this label starts before older ones, after jobs with work to continue. */
+export const PRIORITY_LABEL = "priority";
+export const PRIORITY_HIGH = "high";
 /** A job blocked with this kind waits for the inference endpoint, not for a person. */
 export const INFERENCE_KIND = "inference";
 /** When the agent next checks whether the endpoint is back, as an ISO time. */
@@ -156,6 +159,8 @@ export interface JobSpec extends Selection {
   readonly title: string;
   readonly brief: string;
   readonly origin: SlackOrigin | undefined;
+  /** Starts before older queued jobs: for a job that can't wait its turn. */
+  readonly priority?: boolean | undefined;
 }
 
 export class JobError extends Error {
@@ -283,6 +288,7 @@ export function encodeJob(spec: JobSpec): EncodedJob {
   if (spec.origin)
     labels.slack = labelValue("slack origin", `${spec.origin.channelId}/${spec.origin.threadTs}`);
   if (spec.origin?.asker) labels.asker = labelValue("asker", JSON.stringify(spec.origin.asker));
+  if (spec.priority) labels[PRIORITY_LABEL] = PRIORITY_HIGH;
   return { text: `## ${title}\n\n${brief}`, labels };
 }
 

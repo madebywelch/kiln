@@ -26,6 +26,8 @@ import {
   jobRef,
   KEPT_UNTIL_LABEL,
   NOTICE_LABEL,
+  PRIORITY_HIGH,
+  PRIORITY_LABEL,
   REPORT_LABEL,
   REPORT_PENDING,
   RESUME_LABEL,
@@ -659,12 +661,15 @@ export async function reconcileMachines(deps: MachineDeps): Promise<ReconcileRes
 
   const covered = new Set(live.map((machine) => machine.labels?.job));
   const running = (harness: string) => live.filter((machine) => machine.labels?.harness === harness).length;
-  // Jobs that have work to continue go first, then the queue, oldest first.
+  // Jobs that have work to continue go first, then priority jobs, then the queue, oldest first.
+  const urgent = (job: MessageView) => Number(job.labels[PRIORITY_LABEL] === PRIORITY_HIGH);
   const ready = [...jobs.values()]
     .filter((job) => job.task?.state === "ready" && !covered.has(job.id))
     .sort(
       (a, b) =>
-        Number(stopped.has(b.id)) - Number(stopped.has(a.id)) || a.createdAt.localeCompare(b.createdAt),
+        Number(stopped.has(b.id)) - Number(stopped.has(a.id)) ||
+        urgent(b) - urgent(a) ||
+        a.createdAt.localeCompare(b.createdAt),
     );
   for (const job of ready) {
     const spec = decodeJob(job);

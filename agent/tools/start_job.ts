@@ -101,6 +101,13 @@ export default defineDynamic(() => {
           "Where the job's updates go, when not this thread: a Slack channel ID, such as a project's channel. " +
             "Without thread_ts, a short opener is posted there and its thread holds the updates.",
         ),
+      priority: z
+        .boolean()
+        .optional()
+        .describe(
+          "Start before older queued jobs, for a job that can't wait its turn, such as one with a deadline. It " +
+            "takes the next free slot; it doesn't stop running jobs.",
+        ),
       thread_ts: z
         .string()
         .optional()
@@ -130,6 +137,7 @@ export default defineDynamic(() => {
           title: input.title,
           brief: input.brief,
           origin: thread ? { ...thread, ...(asker ? { asker } : {}) } : undefined,
+          priority: input.priority,
         },
         files,
       );

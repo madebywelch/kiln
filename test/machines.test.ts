@@ -1,7 +1,7 @@
 import { type Board, board, type ClaimedTask } from "@vercel/board";
 import { local } from "@vercel/board/backend-local";
 import { beforeEach, describe, expect, it } from "vitest";
-import { postJob } from "../lib/board-jobs.ts";
+import { postJob, prioritizeJob } from "../lib/board-jobs.ts";
 import { Boat } from "../lib/boat.ts";
 import { machineLimits } from "../lib/config.ts";
 import type { ProbeResult } from "../lib/inference.ts";
@@ -306,6 +306,34 @@ describe("launchMachine", () => {
 });
 
 describe("reconcileMachines", () => {
+  it("starts a priority job before older queued jobs, and a job moved up later the same way", async () => {
+    const limit = machineLimits.claude ?? 0;
+    const queued = [];
+    for (let i = 0; i < limit + 2; i++) queued.push(await postJob(team, { ...spec, title: `Snow ${i}` }));
+    const urgent = await postJob(team, { ...spec, title: "Fix the email going out at 1pm", priority: true });
+    const first = await reconcileMachines(deps);
+    expect(first.launched).toContain(urgent.id);
+    expect(first.launched).toHaveLength(limit);
+    expect(first.waiting).toEqual(queued.slice(limit - 1).map((job) => job.id));
+
+    // The newest of the waiting jobs is moved up: it takes the next free slot, not the oldest waiting job.
+    const moved = queued.at(-1);
+    await prioritizeJob(team, moved?.id ?? "");
+    const done = fake.machines.find((machine) => machine.labels.job === urgent.id);
+    if (done) fake.machines.splice(fake.machines.indexOf(done), 1);
+    const claim = await team.tasks.claim(urgent.id, { lease: 60 });
+    await claim.complete("done");
+    const second = await reconcileMachines(deps);
+    expect(second.launched).toEqual([moved?.id]);
+  });
+
+  it("moves up only a queued job", async () => {
+    const job = await postJob(team, spec);
+    const claim = await team.tasks.claim(job.id, { lease: 60 });
+    await claim.fail("boom");
+    await expect(prioritizeJob(team, job.id)).rejects.toThrow(/only a queued job can move up/);
+  });
+
   it("launches a machine for each ready job, up to each harness's limit", async () => {
     const limit = machineLimits.claude ?? 0;
     const claude = [];

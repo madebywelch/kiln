@@ -15,6 +15,8 @@ import {
   jobRef,
   KEPT_UNTIL_LABEL,
   NEEDS_SECRETS_LABEL,
+  PRIORITY_HIGH,
+  PRIORITY_LABEL,
   REPORT_INLINE_CHARS,
   REPORT_LABEL,
   REPORT_PENDING,
@@ -47,6 +49,8 @@ export interface JobView {
   readonly workKept: boolean;
   /** Until when a failed job's work is kept for retry_job. */
   readonly keptUntil: string | null;
+  /** Whether it starts before older queued jobs. */
+  readonly priority: boolean;
 }
 
 export function viewJob(root: MessageView): JobView {
@@ -70,6 +74,7 @@ export function viewJob(root: MessageView): JobView {
     waitingForInference: task?.state === "blocked" && task.blocked?.kind === INFERENCE_KIND,
     workKept: root.labels[RESUME_LABEL] !== undefined,
     keptUntil: root.labels[KEPT_UNTIL_LABEL] ?? null,
+    priority: root.labels[PRIORITY_LABEL] === PRIORITY_HIGH,
   };
 }
 
@@ -187,6 +192,17 @@ export async function retryJob(
     ...(thread ? { set: { slack: `${thread.channelId}/${thread.threadTs}` } } : {}),
   });
   return viewJob(await team.tasks.reopen(id));
+}
+
+/** Moves a queued job ahead of older queued jobs: it takes the next free slot of its harness. */
+export async function prioritizeJob(team: Board, id: string): Promise<JobView> {
+  const { message } = await team.thread(id, { limit: 1 });
+  const job = viewJob(message);
+  if (job.state !== "ready") {
+    throw new JobError(`only a queued job can move up; #${job.ref} is ${job.state}`);
+  }
+  await team.label(id, { set: { [PRIORITY_LABEL]: PRIORITY_HIGH } });
+  return { ...job, priority: true };
 }
 
 /** Passes a person's answer to a blocked job and returns it to the queue. */

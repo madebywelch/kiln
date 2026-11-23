@@ -21,6 +21,7 @@ const update = reportMessage(
     waitingForInference: false,
     workKept: false,
     keptUntil: null,
+    priority: false,
   },
   "**Done.** Draft PR: https://github.com/acme/web/pull/42\n\nAdded a snowfall layer to the landing page behind a seasonal flag. Lighthouse unchanged.",
 );

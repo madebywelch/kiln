@@ -22,6 +22,7 @@ const failed = reportMessage(
     waitingForInference: false,
     workKept: false,
     keptUntil: null,
+    priority: false,
   },
   "",
 );

@@ -24,7 +24,7 @@ The minute's check also does the following:
 
 | It finds | It does |
 |---|---|
-| A ready job with no machine | Launches one, up to `machineLimits` per harness (4 for Claude, 3 for OpenCode if enabled). Jobs over a limit wait their turn: kept work first, then oldest first. |
+| A ready job with no machine | Launches one, up to `machineLimits` per harness (4 for Claude, 3 for OpenCode if enabled). Jobs over a limit wait their turn: kept work first, then priority jobs (`priority=high`, from `start_job`'s `priority` or `prioritize_job`), then oldest first. |
 | A ready job whose machine is stopped | Moves the machine to the latest version of its repo's secrets, resumes it, and, once it is up, writes the worker's settings file and starts the worker, once per resume. A machine whose saved disk is gone is deleted, and the job starts over. |
 | A paused or failed job whose machine is running | Stops it, when the job's work is kept; otherwise deletes it. A failed job's stopped machine is deleted after 3 days. |
 | A job waiting for inference | See "Waiting for inference". |

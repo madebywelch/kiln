@@ -321,6 +321,7 @@ describe("reportMessage", () => {
     waitingForInference: false,
     workKept: false,
     keptUntil: null,
+    priority: false,
   };
 
   it("tells the agent to relay a question and how to answer it", () => {

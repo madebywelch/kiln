@@ -24,6 +24,11 @@ export const stubsFor = (runsOn: string): ToolStub[] => [
     tool: "retry_job",
     outcome: { response: { job: "#b799fe5c", state: "ready", runsOn, continues: "from the start" } },
   },
+  {
+    id: "prioritize-job",
+    tool: "prioritize_job",
+    outcome: { response: { job: "#b799fe5c", state: "ready", priority: true } },
+  },
   { id: "wish", tool: "wish", outcome: { response: { wish: "#1a2b3c4d", summary: "x", state: "ready" } } },
   { id: "list-wishes", tool: "list_wishes", outcome: { response: { wishes: [] } } },
   { id: "history", tool: "slack_history", outcome: { response: { channel: "C0123", messages: [] } } },
