@@ -1,8 +1,11 @@
 import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
+  COPY_ACTION_ID,
+  copyBlocks,
   DELETE_ACTION_ID,
   deleteBlocks,
+  type GitHubCopyRequest,
   handleInteractivity,
   type InteractivityDeps,
   MODAL_CALLBACK_ID,
@@ -38,6 +41,8 @@ function harness(overrides: Partial<InteractivityDeps> = {}) {
     deleted: [] as SecretDeletion[],
     posts: [] as string[],
     resumed: [] as [string, string, string][],
+    copies: [] as GitHubCopyRequest[],
+    updated: [] as [SecretRequest, string][],
     forwarded: 0,
     logs: [] as { event: string; fields?: Record<string, unknown> }[],
     pending: [] as Promise<unknown>[],
@@ -54,7 +59,18 @@ function harness(overrides: Partial<InteractivityDeps> = {}) {
     },
     deleteSecret: async (deletion) => {
       calls.deleted.push(deletion);
-      return deletion.name !== "GONE";
+      return {
+        deleted: deletion.name !== "GONE",
+        github: deletion.name === "DEPLOYED" ? ["acme/web's production environment as DEPLOYED"] : [],
+      };
+    },
+    copyToGitHub: async (copy) => {
+      calls.copies.push(copy);
+      return `copied \`${copy.secrets[0]?.name}\` to ${copy.github}.`;
+    },
+    updateGitHubCopies: async (saved, value) => {
+      calls.updated.push([saved, value]);
+      return undefined;
     },
     postMessage: async (_channel, _thread, text) => {
       calls.posts.push(text);
@@ -243,6 +259,69 @@ describe("handleInteractivity", () => {
     expect(calls.posts[1]).toContain("U_STRANGER");
   });
 
+  it("names the GitHub copies a deleted secret leaves behind", async () => {
+    const { deps, calls } = harness();
+    await handleInteractivity(signed(remove("U_ADMIN", "DEPLOYED")), deps);
+    await Promise.all(calls.pending);
+    expect(calls.posts[0]).toContain(
+      "Its GitHub copies stay until they're deleted there: acme/web's production environment as DEPLOYED.",
+    );
+  });
+
+  const copyRequest: GitHubCopyRequest = {
+    repo: "web",
+    group: "production-write",
+    github: "acme/web",
+    environment: "production",
+    secrets: [{ name: "PROD_WRITE_FLY_API_TOKEN", as: "FLY_API_TOKEN" }],
+  };
+  const copyClick = (user: string, value = JSON.stringify(copyRequest)) => ({
+    type: "block_actions",
+    user: { id: user },
+    channel: { id: "C1" },
+    message: { ts: "2.0", thread_ts: "1.0" },
+    actions: [{ action_id: COPY_ACTION_ID, value }],
+  });
+
+  it("copies secrets to GitHub once the confirmed button is clicked, and tells the thread", async () => {
+    const { deps, calls } = harness();
+    const response = await handleInteractivity(signed(copyClick("U_ADMIN")), deps);
+    expect(response.status).toBe(200);
+    await Promise.all(calls.pending);
+    expect(calls.copies).toEqual([copyRequest]);
+    expect(calls.posts).toEqual(["<@U_ADMIN> copied `PROD_WRITE_FLY_API_TOKEN` to acme/web."]);
+  });
+
+  it("copies nothing for someone who may not edit, or for a button naming no kiln repo", async () => {
+    const { deps, calls } = harness();
+    await handleInteractivity(signed(copyClick("U_STRANGER")), deps);
+    await handleInteractivity(
+      signed(copyClick("U_ADMIN", JSON.stringify({ ...copyRequest, repo: "elsewhere" }))),
+      deps,
+    );
+    await Promise.all(calls.pending);
+    expect(calls.copies).toEqual([]);
+    expect(calls.posts).toHaveLength(1);
+    expect(calls.posts[0]).toContain("U_STRANGER");
+  });
+
+  it("updates a saved secret's GitHub copies with the value in hand, and says so", async () => {
+    const updated: [SecretRequest, string][] = [];
+    const { deps, calls } = harness({
+      updateGitHubCopies: async (saved, value) => {
+        updated.push([saved, value]);
+        return "Updated in GitHub: acme/web's staging environment as LINEAR_API_KEY.";
+      },
+    });
+    await handleInteractivity(signed(submit("U_ADMIN", "lin_secret")), deps);
+    await Promise.all(calls.pending);
+    expect(updated).toEqual([[request, "lin_secret"]]);
+    expect(calls.posts[0]).toMatch(
+      /get the new value\. Updated in GitHub: acme\/web's staging environment as LINEAR_API_KEY\.$/,
+    );
+    expect(calls.posts[0]).not.toContain("lin_secret");
+  });
+
   it("forwards every other payload to eve unchanged", async () => {
     const { deps, calls } = harness();
     const response = await handleInteractivity(
@@ -266,6 +345,29 @@ describe("requestBlocks", () => {
     expect(blocks).toContain(OPEN_ACTION_ID);
     expect(blocks).toContain("Linear, for its MCP server.");
     expect(blocks).toContain("Expires 2026-12-01.");
+  });
+});
+
+describe("copyBlocks", () => {
+  it("says what goes where under which names, behind a confirm", () => {
+    const blocks = JSON.stringify(
+      copyBlocks(
+        {
+          repo: "web",
+          group: "production-read",
+          github: "acme/web",
+          environment: "production",
+          secrets: [
+            { name: "PROD_READ_DATABASE_URL", as: "DATABASE_URL" },
+            { name: "PROD_READ_GRAFANA_TOKEN", as: "PROD_READ_GRAFANA_TOKEN" },
+          ],
+        },
+        "For the deploy workflow.",
+      ),
+    );
+    expect(blocks).toContain("`PROD_READ_DATABASE_URL` as `DATABASE_URL`, `PROD_READ_GRAFANA_TOKEN`");
+    expect(blocks).toContain("*acme/web*'s *production* environment");
+    expect(blocks).toContain('"confirm":{');
   });
 });
 

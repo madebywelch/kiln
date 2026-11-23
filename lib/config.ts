@@ -54,3 +54,10 @@ export const keptMachineDays = 3;
 
 /** boat machine size for jobs. A Next.js dev build of a large app needs more than small's 4 GB. */
 export const machineType = "default" as const;
+
+/**
+ * The agent's GitHub token: KILN_GH_TOKEN, or the workers' WORKER_GH_TOKEN when that is unset. Its
+ * sandbox's firewall adds it to `gh`, and the agent's own function uses it to copy secrets into GitHub.
+ */
+export const agentGitHubToken = (env: NodeJS.ProcessEnv = process.env): string | undefined =>
+  env.KILN_GH_TOKEN || env.WORKER_GH_TOKEN || undefined;

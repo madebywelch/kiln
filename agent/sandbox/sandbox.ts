@@ -13,6 +13,7 @@
 // `gh` is unauthenticated there.
 
 import { DefaultSandbox, defineSandbox, type SandboxNetworkPolicy } from "eve/sandbox";
+import { agentGitHubToken } from "../../lib/config.ts";
 
 const PACKAGES = ["gh", "imagemagick", "zip", "unzip", "file"];
 /** What the sandbox's GH_TOKEN says; the firewall swaps in the real token. */
@@ -30,7 +31,7 @@ export function githubPolicy(token: string): SandboxNetworkPolicy {
   };
 }
 
-const token = process.env.KILN_GH_TOKEN || process.env.WORKER_GH_TOKEN;
+const token = agentGitHubToken();
 if (!token && process.env.VERCEL) {
   console.warn(JSON.stringify({ event: "sandbox.github_token_missing", effect: "gh is unauthenticated" }));
 }

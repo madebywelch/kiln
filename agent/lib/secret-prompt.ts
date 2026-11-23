@@ -1,10 +1,12 @@
 // Collecting a repo secret in Slack without a model ever seeing it, and
-// deleting one only when a person confirms it.
+// deleting or copying one to GitHub only when a person confirms it.
 //
 // The agent posts a "Set NAME" button (request_secret). A click opens a modal;
 // its submission goes straight to boat, and what the secret is goes to kiln's
 // labels. A "Delete NAME" button (delete_secret) asks Slack to confirm, then
-// deletes. eve's Slack channel drops modal
+// deletes. A "Copy to GitHub" button (copy_secrets_to_github) asks Slack to
+// confirm, then copies values from boat into GitHub Actions secrets, and saving
+// a secret again updates its copies. eve's Slack channel drops modal
 // payloads it didn't create, so Slack's interactivity URL points at
 // /slack/interactivity (agent/channels/slack-interactivity.ts): it handles the
 // button and the modal here and forwards every other payload, byte for byte,
@@ -15,6 +17,7 @@ import { environmentName, SECRET_GROUPS, type SecretGroup, secretNameIssue } fro
 
 export const OPEN_ACTION_ID = "kiln_secret_open";
 export const DELETE_ACTION_ID = "kiln_secret_delete";
+export const COPY_ACTION_ID = "kiln_secret_github";
 export const MODAL_CALLBACK_ID = "kiln_secret";
 const INPUT_BLOCK_ID = "secret";
 const INPUT_ACTION_ID = "value";
@@ -37,6 +40,24 @@ export interface SecretDeletion {
   readonly repo: string;
   readonly group: SecretGroup;
   readonly name: string;
+}
+
+/** Secrets to copy from one group into GitHub Actions, once a person confirms. */
+export interface GitHubCopyRequest {
+  readonly repo: string;
+  readonly group: SecretGroup;
+  /** The GitHub repo, owner/name: one of the project's. */
+  readonly github: string;
+  /** A GitHub environment; without one, repository secrets. */
+  readonly environment?: string;
+  /** Each kiln name, and its name in GitHub. */
+  readonly secrets: readonly { readonly name: string; readonly as: string }[];
+}
+
+/** What deleting a secret did, and the GitHub copies it left in place. */
+export interface DeletionOutcome {
+  readonly deleted: boolean;
+  readonly github: readonly string[];
 }
 
 interface ModalContext extends SecretRequest {
@@ -130,6 +151,57 @@ export function deleteBlocks(deletion: SecretDeletion, why: string): Record<stri
   ];
 }
 
+const copyTarget = (copy: GitHubCopyRequest) =>
+  copy.environment
+    ? `*${copy.github}*'s *${copy.environment}* environment`
+    : `*${copy.github}*'s repository secrets`;
+
+const copyList = (copy: GitHubCopyRequest) =>
+  copy.secrets.map(({ name, as }) => (name === as ? `\`${name}\`` : `\`${name}\` as \`${as}\``)).join(", ");
+
+/** The message the agent posts to copy secrets into GitHub Actions: a button Slack makes the person confirm. */
+export function copyBlocks(copy: GitHubCopyRequest, why: string): Record<string, unknown>[] {
+  return [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `Copy ${copyList(copy)} from *${copy.repo}*'s *${copy.group}* secrets to ${copyTarget(copy)}? ${why}`.trim(),
+      },
+    },
+    {
+      type: "actions",
+      elements: [
+        {
+          type: "button",
+          action_id: COPY_ACTION_ID,
+          text: { type: "plain_text", text: "Copy to GitHub" },
+          value: JSON.stringify(copy),
+          style: copy.group === "staging" ? "primary" : "danger",
+          confirm: {
+            title: { type: "plain_text", text: "Copy to GitHub?" },
+            text: {
+              type: "mrkdwn",
+              text: `Every workflow that can use ${copy.environment ? `the ${copy.environment} environment` : "this repo's secrets"} in ${copy.github} gets these values. Saving one of them again in kiln updates its copy.`,
+            },
+            confirm: { type: "plain_text", text: "Copy" },
+            deny: { type: "plain_text", text: "Don't" },
+          },
+        },
+      ],
+    },
+    {
+      type: "context",
+      elements: [
+        {
+          type: "mrkdwn",
+          text: "The values go from boat to GitHub, sealed with the repo's key; the agent never sees them.",
+        },
+      ],
+    },
+  ];
+}
+
 export function secretModal(context: ModalContext): Record<string, unknown> {
   return {
     type: "modal",
@@ -174,8 +246,15 @@ export interface InteractivityDeps {
   readonly openView: (triggerId: string, view: Record<string, unknown>) => Promise<unknown>;
   /** Saves the value, then records what the secret is and who saved it. */
   readonly setSecret: (request: SecretRequest, value: string, savedBy: string) => Promise<void>;
-  /** Deletes a secret and its label; false when it wasn't there. */
-  readonly deleteSecret: (deletion: SecretDeletion) => Promise<boolean>;
+  /** Deletes a secret and its label. */
+  readonly deleteSecret: (deletion: SecretDeletion) => Promise<DeletionOutcome>;
+  /** Copies secrets into GitHub and records the copies; says what happened, in a sentence for the thread. */
+  readonly copyToGitHub: (copy: GitHubCopyRequest) => Promise<string>;
+  /**
+   * After a secret is saved: updates its GitHub copies with the value in hand, and says what happened in a
+   * sentence for the thread; undefined when it has none.
+   */
+  readonly updateGitHubCopies: (request: SecretRequest, value: string) => Promise<string | undefined>;
   readonly postMessage: (channel: string, thread: string | undefined, text: string) => Promise<unknown>;
   /**
    * After a secret is saved for a paused job: resumes the job if nothing else is missing, and says what
@@ -243,6 +322,33 @@ function parseDeletion(value: unknown, isRepo: (repo: string) => boolean): Secre
       isRepo(parsed.repo)
     )
       return { repo: parsed.repo, group: parsed.group, name: parsed.name };
+  } catch {
+    // not ours
+  }
+  return null;
+}
+
+function parseCopy(value: unknown, isRepo: (repo: string) => boolean): GitHubCopyRequest | null {
+  try {
+    const parsed = JSON.parse(String(value)) as Partial<GitHubCopyRequest>;
+    if (
+      typeof parsed.repo === "string" &&
+      isGroup(parsed.group) &&
+      isRepo(parsed.repo) &&
+      typeof parsed.github === "string" &&
+      Array.isArray(parsed.secrets) &&
+      parsed.secrets.length > 0 &&
+      parsed.secrets.every((s) => typeof s?.name === "string" && typeof s?.as === "string")
+    )
+      return {
+        repo: parsed.repo,
+        group: parsed.group,
+        github: parsed.github,
+        ...(typeof parsed.environment === "string" && parsed.environment
+          ? { environment: parsed.environment }
+          : {}),
+        secrets: parsed.secrets.map(({ name, as }) => ({ name, as })),
+      };
   } catch {
     // not ours
   }
@@ -329,15 +435,53 @@ export async function handleInteractivity(request: Request, deps: InteractivityD
         let text: string;
         if (!deps.mayEdit(userId)) text = notAllowed(userId);
         else {
-          const deleted = await deps.deleteSecret(deletion);
+          const { deleted, github } = await deps.deleteSecret(deletion);
           deps.log("secrets.deleted", { ...deletion, user: userId, existed: deleted });
           text = deleted
             ? `<@${userId}> deleted \`${deletion.name}\` from *${deletion.repo}*'s *${deletion.group}* secrets. Jobs that start now don't have it.`
             : `\`${deletion.name}\` wasn't in *${deletion.repo}*'s *${deletion.group}* secrets; nothing to delete.`;
+          if (github.length > 0)
+            text += ` Its GitHub copies stay until they're deleted there: ${github.join("; ")}.`;
         }
         await deps.postMessage(channel, thread, text);
       })().catch((error: unknown) =>
         deps.log("secrets.delete_failed", { ...deletion, error: String(error) }),
+      ),
+    );
+    return new Response(null, { status: 200 });
+  }
+
+  const copy =
+    payload.type === "block_actions" && payload.actions?.find((a) => a.action_id === COPY_ACTION_ID);
+  if (copy) {
+    // Slack asked the person to confirm before sending this.
+    const request = parseCopy(copy.value, deps.isRepo);
+    const channel = payload.channel?.id ?? payload.container?.channel_id;
+    const thread = payload.message?.thread_ts ?? payload.container?.thread_ts ?? payload.message?.ts;
+    if (!request || !channel) return new Response(null, { status: 200 });
+    deps.waitUntil(
+      (async () => {
+        let text: string;
+        if (!deps.mayEdit(userId)) text = notAllowed(userId);
+        else {
+          const outcome = await deps.copyToGitHub(request);
+          deps.log("secrets.github_copied", {
+            repo: request.repo,
+            group: request.group,
+            github: request.github,
+            environment: request.environment ?? null,
+            names: request.secrets.map((s) => s.name),
+            user: userId,
+          });
+          text = `<@${userId}> ${outcome}`;
+        }
+        await deps.postMessage(channel, thread, text);
+      })().catch((error: unknown) =>
+        deps.log("secrets.github_copy_failed", {
+          repo: request.repo,
+          github: request.github,
+          error: String(error),
+        }),
       ),
     );
     return new Response(null, { status: 200 });
@@ -374,8 +518,20 @@ export async function handleInteractivity(request: Request, deps: InteractivityD
       user: userId,
       job: context.job ?? null,
     });
+    const { channel: _channel, thread: _thread, ...saved } = context;
     deps.waitUntil(
       (async () => {
+        let github: string | undefined;
+        try {
+          github = await deps.updateGitHubCopies(saved, value);
+        } catch (error) {
+          deps.log("secrets.github_update_failed", {
+            repo: context.repo,
+            name: context.name,
+            error: String(error),
+          });
+          github = "Its GitHub copies weren't updated; ask me to check them.";
+        }
         let next = `Jobs started with its ${context.group} secrets get the new value.`;
         if (context.job) {
           try {
@@ -388,7 +544,7 @@ export async function handleInteractivity(request: Request, deps: InteractivityD
         await deps.postMessage(
           context.channel,
           context.thread,
-          `<@${userId}> set \`${context.name}\` in *${context.repo}*'s *${context.group}* secrets. ${next}`,
+          `<@${userId}> set \`${context.name}\` in *${context.repo}*'s *${context.group}* secrets. ${next}${github ? ` ${github}` : ""}`,
         );
       })().catch((error: unknown) => deps.log("secrets.notice_failed", { error: String(error) })),
     );

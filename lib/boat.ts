@@ -189,6 +189,25 @@ export class Boat {
 }
 
 /** The variable names in a .env-style text, never the values. */
+/**
+ * One variable's value from an environment's .env text, as boat writes it: bare, or in double quotes
+ * when it has spaces or symbols. A quoted value with a backslash has escapes kiln can't read back
+ * exactly, so it throws rather than return something close. Undefined when the variable isn't set.
+ */
+export function variableValue(envContents: string, name: string): string | undefined {
+  let value: string | undefined;
+  for (const line of envContents.split("\n")) {
+    const match = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$/.exec(line);
+    if (match?.[1] === name) value = (match[2] ?? "").trim();
+  }
+  if (value === undefined) return undefined;
+  const quoted = /^"(.*)"$/.exec(value) ?? /^'(.*)'$/.exec(value);
+  if (!quoted) return value;
+  if (value.startsWith('"') && quoted[1]?.includes("\\"))
+    throw new Error(`${name}'s value has escapes kiln can't read back exactly`);
+  return quoted[1] ?? "";
+}
+
 export function variableNames(envContents: string): string[] {
   const names: string[] = [];
   for (const line of envContents.split("\n")) {

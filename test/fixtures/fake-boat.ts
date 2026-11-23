@@ -147,7 +147,8 @@ export class FakeBoat {
         environments: this.environments.map(({ vars, ...rest }) => ({
           ...rest,
           envContents: Object.entries(vars)
-            .map(([k, v]) => `${k}=${v}`)
+            // boat double-quotes a value with spaces or shell symbols, escaping quotes and backslashes.
+            .map(([k, v]) => `${k}=${/[\s#?&;$'`"\\]/.test(v) ? `"${v.replace(/["\\]/g, "\\$&")}"` : v}`)
             .join("\n"),
         })),
       });

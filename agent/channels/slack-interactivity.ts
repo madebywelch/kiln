@@ -5,14 +5,19 @@
 
 import { defineChannel, POST } from "eve/channels";
 import { resumeAfterSecrets } from "../../lib/board-jobs.ts";
+import { agentGitHubToken } from "../../lib/config.ts";
 import { configuredProjects } from "../../lib/deployment.ts";
-import { labelSecret } from "../../lib/secret-labels.ts";
+import { copySecretsToGitHub, describeCopy, updateGitHubCopies } from "../../lib/github-secrets.ts";
+import { readSecretLabels, updateSecretLabel } from "../../lib/secret-labels.ts";
 import { deleteSecret, environmentName, secretNames, setSecret } from "../../lib/secrets.ts";
 import { team } from "../lib/board.ts";
 import { secretLabelStore } from "../lib/drive.ts";
 import { boatClient, launchNow, log } from "../lib/machines.ts";
 import { handleInteractivity, secretEditors } from "../lib/secret-prompt.ts";
 import { slackApi } from "../lib/slack.ts";
+
+const githubToken = () => agentGitHubToken();
+const githubRepos = (key: string) => configuredProjects()?.[key]?.repos.map((repo) => repo.github) ?? [];
 
 const FORWARDED_HEADERS = [
   "content-type",
@@ -34,19 +39,42 @@ export default defineChannel({
           const boat = boatClient();
           if (typeof boat === "string") throw new Error(boat);
           await setSecret(boat, request.repo, request.group, request.name, value);
-          await labelSecret(secretLabelStore(), environmentName(request.repo, request.group), request.name, {
-            description: request.description,
-            savedBy,
-            savedAt: new Date().toISOString(),
-            ...(request.expires ? { expires: request.expires } : {}),
-          });
+          await updateSecretLabel(
+            secretLabelStore(),
+            environmentName(request.repo, request.group),
+            request.name,
+            (previous) => ({
+              description: request.description,
+              savedBy,
+              savedAt: new Date().toISOString(),
+              ...(request.expires ? { expires: request.expires } : {}),
+              ...(previous?.github?.length ? { github: previous.github } : {}),
+            }),
+          );
+        },
+        updateGitHubCopies: (request, value) =>
+          updateGitHubCopies(
+            { labels: secretLabelStore(), token: githubToken() },
+            environmentName(request.repo, request.group),
+            request.name,
+            value,
+          ),
+        copyToGitHub: async (request) => {
+          const boat = boatClient();
+          if (typeof boat === "string") throw new Error(boat);
+          return copySecretsToGitHub(
+            { boat, labels: secretLabelStore(), token: githubToken(), githubRepos },
+            request,
+          );
         },
         deleteSecret: async ({ repo, group, name }) => {
           const boat = boatClient();
           if (typeof boat === "string") throw new Error(boat);
+          const store = secretLabelStore();
+          const github = (await readSecretLabels(store))[environmentName(repo, group)]?.[name]?.github ?? [];
           const deleted = await deleteSecret(boat, repo, group, name);
-          await labelSecret(secretLabelStore(), environmentName(repo, group), name, null);
-          return deleted;
+          await updateSecretLabel(store, environmentName(repo, group), name, () => null);
+          return { deleted, github: github.map(describeCopy) };
         },
         resumeJob: async (job, repo, group) => {
           const boat = boatClient();

@@ -47,6 +47,16 @@ export const stubsFor = (runsOn: string): ToolStub[] => [
     outcome: { response: { asked: "LINEAR_API_KEY", repo: "web", group: "staging" } },
   },
   {
+    id: "copy-secrets-to-github",
+    tool: "copy_secrets_to_github",
+    outcome: {
+      response: {
+        offered: ["PROD_WRITE_FLY_API_TOKEN as FLY_API_TOKEN"],
+        to: "acme/web environment production",
+      },
+    },
+  },
+  {
     id: "delete-secret",
     tool: "delete_secret",
     outcome: { response: { offered: "HELLO_WORLD", repo: "web", group: "staging" } },

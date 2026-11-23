@@ -4,7 +4,7 @@
 // secrets and no other group's or project's. Values go from a person, through
 // code, into boat; they never pass through a model, a log, or the board.
 
-import { type Boat, type Environment, type EnvironmentFlags, variableNames } from "./boat.ts";
+import { type Boat, type Environment, type EnvironmentFlags, variableNames, variableValue } from "./boat.ts";
 
 /** Secrets and nothing else: no GitHub login, no boat key, no agent logins on a job's machine. */
 export const REPO_ENVIRONMENT_FLAGS: EnvironmentFlags = {
@@ -173,6 +173,22 @@ export async function jobEnvironment(
     environment = { ...environment, ...REPO_ENVIRONMENT_FLAGS };
   }
   return environment;
+}
+
+/**
+ * A secret's value, for copying it on to GitHub from the agent's own function. Never hand it to a
+ * model, a sandbox, a log, or the board.
+ */
+export async function secretValue(
+  boat: Boat,
+  key: string,
+  group: SecretGroup,
+  name: string,
+): Promise<string> {
+  const environment = (await boat.environments()).find((e) => e.name === environmentName(key, group));
+  const value = environment ? variableValue(environment.envContents, name) : undefined;
+  if (!value) throw new SecretError(`${name} isn't in ${key}'s ${group} secrets`);
+  return value;
 }
 
 export async function setSecret(

@@ -5,6 +5,7 @@
 // secret is ignored, and a secret without a label lists without one.
 
 import { DriveConflict, type DriveStore } from "./drive.ts";
+import type { GitHubCopy } from "./github-secrets.ts";
 
 export interface SecretLabel {
   /** What it is and what it reaches, as the person who asked for it put it. */
@@ -14,6 +15,8 @@ export interface SecretLabel {
   readonly savedAt: string;
   /** The day it stops working, YYYY-MM-DD, when it has one. */
   readonly expires?: string;
+  /** Where it was copied in GitHub Actions; saving it again updates each copy. */
+  readonly github?: readonly GitHubCopy[];
 }
 
 export type SecretLabels = Readonly<Record<string, Readonly<Record<string, SecretLabel>>>>;
@@ -34,11 +37,21 @@ export async function readSecretLabels(store: DriveStore): Promise<SecretLabels>
 }
 
 /** Sets or, with null, removes a secret's label, retrying when someone else wrote the file meanwhile. */
-export async function labelSecret(
+export function labelSecret(
   store: DriveStore,
   environment: string,
   name: string,
   label: SecretLabel | null,
+): Promise<void> {
+  return updateSecretLabel(store, environment, name, () => label);
+}
+
+/** Rewrites a secret's label from what it is now (undefined when it has none); null removes it. */
+export async function updateSecretLabel(
+  store: DriveStore,
+  environment: string,
+  name: string,
+  update: (label: SecretLabel | undefined) => SecretLabel | null,
 ): Promise<void> {
   for (let attempt = 1; ; attempt++) {
     const file = await store.read(SECRET_LABELS_FILE);
@@ -49,6 +62,7 @@ export async function labelSecret(
       labels = {};
     }
     const group = { ...(labels[environment] ?? {}) };
+    const label = update(group[name]);
     if (label) group[name] = label;
     else delete group[name];
     labels[environment] = group;

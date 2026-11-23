@@ -1,6 +1,7 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { configuredProjects, deployment, secretsNamedBy, serversFor } from "../../lib/deployment.ts";
+import { describeCopy } from "../../lib/github-secrets.ts";
 import { daysUntil, EXPIRY_WARNING_DAYS, readSecretLabels } from "../../lib/secret-labels.ts";
 import { environmentName, SECRET_GROUPS, secretNamesByGroup } from "../../lib/secrets.ts";
 import { secretLabelStore } from "../lib/drive.ts";
@@ -14,7 +15,8 @@ export default defineDynamic(() => {
   return defineTool({
     description:
       "List a repo's or project's secrets by group: each one's name, what it is, who saved it and when, and when it " +
-      "expires (expiresInDays when it's within two weeks, expired once it has passed). Also its MCP servers and which " +
+      "expires (expiresInDays when it's within two weeks, expired once it has passed), and where it's copied in GitHub " +
+      "Actions. Also its MCP servers and which " +
       "group can sign in to each: a job gets a server only when its group holds every secret the server needs. Names " +
       "only; values never leave boat. For a secret that expires, set yourself a task to remind people before it does.",
     inputSchema: z.object({ repo: z.enum(repoKeys) }),
@@ -40,14 +42,16 @@ export default defineDynamic(() => {
               const days = label.expires ? daysUntil(label.expires, now) : undefined;
               return {
                 name,
-                description: label.description,
-                savedBy: `<@${label.savedBy}>`,
-                savedAt: label.savedAt.slice(0, 10),
+                description: label.description || null,
+                ...(label.savedBy
+                  ? { savedBy: `<@${label.savedBy}>`, savedAt: label.savedAt.slice(0, 10) }
+                  : {}),
                 ...(label.expires ? { expires: label.expires } : {}),
                 ...(days !== undefined && days < 0 ? { expired: true } : {}),
                 ...(days !== undefined && days >= 0 && days <= EXPIRY_WARNING_DAYS
                   ? { expiresInDays: days }
                   : {}),
+                ...(label.github?.length ? { github: label.github.map(describeCopy) } : {}),
               };
             }),
           ];
