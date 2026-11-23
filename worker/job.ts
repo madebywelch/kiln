@@ -1,14 +1,16 @@
 // One job, from a held claim to a settled task: clone, branch, run the
 // harness, push and open a draft PR (for changes), report, settle.
 
-import { appendFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { access, appendFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type { Attachment, Board, ClaimedTask } from "@vercel/board";
+import { keptMachineDays } from "../lib/config.ts";
 import { agentName, type McpServer, type RepoConfig } from "../lib/deployment.ts";
-import { type Inference, inferenceHost } from "../lib/inference.ts";
+import { type Inference, inferenceHost, rateLimitOf } from "../lib/inference.ts";
 import {
   decodeJob,
   describeSelection,
+  INFERENCE_KIND,
   type JobSpec,
   jobBranch,
   MAX_JOB_FILE_BYTES,
@@ -17,6 +19,11 @@ import {
   NEEDS_SECRETS_LABEL,
   REPORT_LABEL,
   REPORT_PENDING,
+  RESUME_DISK,
+  RESUME_LABEL,
+  WAIT_MODEL_LABEL,
+  WAIT_SINCE_LABEL,
+  WAIT_UNTIL_LABEL,
 } from "../lib/jobs.ts";
 import { type Exec, run } from "./exec.ts";
 import { type HarnessBins, harnessInvocation, MissingSecrets, resolveMcp } from "./harness.ts";
@@ -109,6 +116,8 @@ export function harnessEnv(env: NodeJS.ProcessEnv, readToken?: string): NodeJS.P
 
 export type Outcome =
   | { readonly kind: "completed"; readonly result: string; readonly report: string }
+  /** The inference endpoint refused for a rate limit: the job waits on its machine until it's back. */
+  | { readonly kind: "paused"; readonly until: number; readonly model?: string | undefined }
   | { readonly kind: "failed"; readonly reason: string; readonly report: string }
   | {
       readonly kind: "blocked";
@@ -218,6 +227,40 @@ class JobFailure extends Error {
 
 const STARTED = "Started by ";
 
+/** A failed run this long left work worth keeping its machine for, so retry_job can continue it. */
+export const KEEP_AFTER_MS = 10 * 60_000;
+/** How long to wait for a rate limit that doesn't say when it resets. */
+export const DEFAULT_WAIT_MS = 15 * 60_000;
+
+/** What a run got through, whatever its outcome: what decides whether its machine is worth keeping. */
+interface Progress {
+  /** The job's clone is on this machine's disk. */
+  cloned: boolean;
+  /** This run continued work an earlier run left on the disk. */
+  continued: boolean;
+  /** The coding CLI ran, and for how long. */
+  harnessRan: boolean;
+  harnessMs: number;
+  /** The CLI's session, to continue on a later run. */
+  session?: string | undefined;
+}
+
+/** Whether the run's machine holds work to continue from, and the label value that says how. */
+function keepFor(outcome: Outcome, progress: Progress): string | undefined {
+  const keep =
+    progress.cloned &&
+    (outcome.kind === "paused" ||
+      (outcome.kind === "blocked" && progress.harnessRan) ||
+      (outcome.kind === "failed" && (progress.continued || progress.harnessMs >= KEEP_AFTER_MS)));
+  return keep ? (progress.session ?? RESUME_DISK) : undefined;
+}
+
+const exists = (path: string) =>
+  access(path).then(
+    () => true,
+    () => false,
+  );
+
 export async function runJob(deps: JobDeps): Promise<Outcome> {
   const { claim, log } = deps;
   const id = claim.task.id;
@@ -225,9 +268,10 @@ export async function runJob(deps: JobDeps): Promise<Outcome> {
   const jobDir = join(deps.workDir, "jobs", id);
   await mkdir(dirname(logFile), { recursive: true });
 
+  const progress: Progress = { cloned: false, continued: false, harnessRan: false, harnessMs: 0 };
   let outcome: Outcome;
   try {
-    outcome = await execute(deps, jobDir, logFile);
+    outcome = await execute(deps, jobDir, logFile, progress);
   } catch (error) {
     if (deps.signal.aborted) {
       outcome = { kind: "abandoned", why: String(deps.signal.reason) };
@@ -238,14 +282,25 @@ export async function runJob(deps: JobDeps): Promise<Outcome> {
     }
   }
 
-  const artifacts = outcome.kind === "abandoned" ? [] : await collectArtifacts(join(jobDir, ARTIFACTS_DIR));
-  log("job.outcome", { task: id, outcome: outcome.kind, artifacts: artifacts.length });
-  await settle(deps, outcome, artifacts);
-  await rm(jobDir, { recursive: true, force: true });
+  const keep = keepFor(outcome, progress);
+  const artifacts =
+    outcome.kind === "abandoned" || outcome.kind === "paused"
+      ? []
+      : await collectArtifacts(join(jobDir, ARTIFACTS_DIR));
+  log("job.outcome", {
+    task: id,
+    outcome: outcome.kind,
+    artifacts: artifacts.length,
+    kept: keep !== undefined,
+  });
+  await settle(deps, outcome, artifacts, keep);
+  // Kept work stays where the next run finds it: the agent stops this machine and resumes it for the job.
+  if (keep === undefined) await rm(jobDir, { recursive: true, force: true });
+  else await rm(join(jobDir, ARTIFACTS_DIR), { recursive: true, force: true });
   return outcome;
 }
 
-async function execute(deps: JobDeps, jobDir: string, logFile: string): Promise<Outcome> {
+async function execute(deps: JobDeps, jobDir: string, logFile: string, progress: Progress): Promise<Outcome> {
   const { board, claim, exec, signal } = deps;
   const id = claim.task.id;
   const spec = decodeJob(claim.task);
@@ -278,8 +333,14 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string): Promise<
     };
   }
 
-  await rm(jobDir, { recursive: true, force: true });
-  await mkdir(single ? dirname(jobDir) : jobDir, { recursive: true });
+  // An earlier run of this job kept its work on this machine's disk: continue from it, without cloning.
+  const kept = claim.task.labels[RESUME_LABEL];
+  progress.continued =
+    kept !== undefined && (await exists(join(single ? jobDir : join(jobDir, repos[0]?.key ?? ""), ".git")));
+  if (!progress.continued) {
+    await rm(jobDir, { recursive: true, force: true });
+    await mkdir(single ? dirname(jobDir) : jobDir, { recursive: true });
+  }
   const identity = deps.gitIdentity ?? {
     name: `${agentName()} (${deps.profile})`,
     email: "kiln@users.noreply.github.com",
@@ -288,6 +349,16 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string): Promise<
   for (const repo of repos) {
     const dir = single ? jobDir : join(jobDir, repo.key);
     const git = (args: readonly string[]) => run(exec, "git", args, { cwd: dir, signal });
+    const base = repo.baseBranch ?? "main";
+    if (progress.continued) {
+      // The clone is as the last run left it; its origin refs are from when it was cloned.
+      const pushed =
+        (await exec("git", ["rev-parse", "--verify", "--quiet", `origin/${branch}`], { cwd: dir })).code ===
+        0;
+      const startSha = await git(["rev-parse", pushed ? `origin/${branch}` : `origin/${base}`]);
+      checkouts.push({ ...repo, base, dir, git, resumed: pushed, startSha });
+      continue;
+    }
     const url = deps.cloneUrl(repo.github);
     const mirror = await refreshMirror(
       exec,
@@ -304,12 +375,14 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string): Promise<
     // A job that blocked for an answer pushed its work; the next run continues from it.
     const resumed =
       (await exec("git", ["ls-remote", "--exit-code", "--heads", "origin", branch], { cwd: dir })).code === 0;
-    const base = repo.baseBranch ?? "main";
     await git(["switch", "--quiet", "-c", branch, resumed ? `origin/${branch}` : `origin/${base}`]);
     checkouts.push({ ...repo, base, dir, git, resumed, startSha: await git(["rev-parse", "HEAD"]) });
   }
-  const resumed = checkouts.some((checkout) => checkout.resumed);
-  const inputs = await fetchInputs(board, claim.task.attachments ?? [], join(jobDir, INPUTS_DIR));
+  progress.cloned = true;
+  const resumed = progress.continued || checkouts.some((checkout) => checkout.resumed);
+  const inputs = progress.continued
+    ? await readdir(join(jobDir, INPUTS_DIR)).catch(() => [])
+    : await fetchInputs(board, claim.task.attachments ?? [], join(jobDir, INPUTS_DIR));
   if (inputs.length) deps.log("job.inputs", { task: id, files: inputs.length });
   /** Commits and pushes every repo with work; returns those that had new commits. */
   const pushAll = async () => {
@@ -322,19 +395,23 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string): Promise<
 
   const thread = await board.thread(id, { limit: 100 });
   const earlier = thread.replies.filter((reply) => !reply.text.startsWith(STARTED));
-  const prompt = buildPrompt(
-    spec,
-    {
-      id,
-      github: repos[0]?.github ?? "",
-      branch,
-      resumed,
-      ...(single ? {} : { project: spec.repo, repos: repos.map(({ key, github }) => ({ key, github })) }),
-    },
-    earlier,
-    deps.guidance,
-    inputs,
-  );
+  // A session kept from an earlier run continues with what happened since; anything else starts with the whole job.
+  const session = progress.continued && kept !== RESUME_DISK ? kept : undefined;
+  const prompt = session
+    ? resumePrompt(sinceLastRun(thread.replies))
+    : buildPrompt(
+        spec,
+        {
+          id,
+          github: repos[0]?.github ?? "",
+          branch,
+          resumed,
+          ...(single ? {} : { project: spec.repo, repos: repos.map(({ key, github }) => ({ key, github })) }),
+        },
+        earlier,
+        deps.guidance,
+        inputs,
+      );
   const reportFile = join(deps.workDir, "logs", `${id}.report.md`);
   // Claude Code's own settings for the deployment's Anthropic-compatible endpoint: the host without /v1, and the key.
   const endpointEnv =
@@ -344,12 +421,13 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string): Promise<
           ANTHROPIC_API_KEY: deps.inference.apiKey,
         }
       : {};
-  const invocation = harnessInvocation(spec, prompt, jobDir, reportFile, mcp, deps.bins);
+  const invocation = harnessInvocation(spec, prompt, jobDir, reportFile, mcp, deps.bins, session);
   deps.log("job.harness", {
     task: id,
     harness: spec.harness,
     model: spec.model ?? "default",
     effort: spec.effort,
+    ...(session ? { continuing: session } : {}),
     ...(spec.harness === "claude" && deps.inference
       ? { endpoint: new URL(deps.inference.baseURL).host }
       : {}),
@@ -363,7 +441,20 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string): Promise<
     timeoutMs: deps.timeoutMs,
     onOutput: (chunk) => void appendFile(logFile, chunk),
   });
+  progress.harnessRan = true;
+  progress.harnessMs = Date.now() - started;
+  progress.session = invocation.sessionOf(result.stdout) ?? session;
   if (signal.aborted) throw new Error(String(signal.reason));
+  // The endpoint is rate limited: the job waits for it on this machine rather than failing.
+  const limited = spec.harness === "claude" ? harnessRateLimit(result.stdout) : null;
+  if (limited) {
+    deps.log("job.rate_limited", {
+      task: id,
+      resetMs: limited.resetMs ?? null,
+      model: limited.model ?? null,
+    });
+    return { kind: "paused", until: Date.now() + (limited.resetMs ?? DEFAULT_WAIT_MS), model: limited.model };
+  }
   if (result.timedOut) {
     throw new JobFailure(`${spec.harness} timed out after ${minutes(deps.timeoutMs)}`, tail(result));
   }
@@ -379,8 +470,8 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string): Promise<
   const report = await invocation.readReport(result.stdout);
 
   const secret = SECRET.exec(report.trim());
+  // A paused job's work stays on this machine, uncommitted and unpushed, until the job resumes on it.
   if (secret?.[1]) {
-    if (spec.kind === "change") await pushAll();
     const names = secret[1].split(",").map((name) => name.trim());
     const why = secret[2]?.trim();
     return {
@@ -392,7 +483,6 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string): Promise<
   }
 
   if (QUESTION.test(report)) {
-    if (spec.kind === "change") await pushAll();
     return { kind: "blocked", question: report.replace(QUESTION, "").trim(), report };
   }
 
@@ -547,6 +637,38 @@ export function buildPrompt(
   return lines.filter((line, index, all) => !(line === "" && all[index - 1] === "")).join("\n");
 }
 
+/**
+ * What a run resumed on its own machine is told: it was interrupted, what happened since (its own
+ * pause and any answer), and to carry on. Its session already holds the job and how to work.
+ */
+export function resumePrompt(since: readonly { readonly text: string }[]): string {
+  const lines = [
+    "This job was interrupted and has resumed on the same machine, with your work as you left it.",
+    "",
+  ];
+  const notes = since.slice(-20).map((reply) => clip(reply.text, 2_000));
+  if (notes.length > 0) lines.push("# Since you stopped", "", ...notes.map((note) => `- ${note}`), "");
+  lines.push(
+    "Continue the job from where you stopped. Everything you were told at the start still applies, including how to finish: your final message is the report, or `QUESTION: ` or `SECRET: ` as before.",
+  );
+  return lines.join("\n");
+}
+
+/** The thread's replies since the last run started, without the worker's own start lines. */
+export function sinceLastRun<T extends { readonly text: string }>(replies: readonly T[]): T[] {
+  const starts = replies.flatMap((reply, index) => (reply.text.startsWith(STARTED) ? [index] : []));
+  // The newest start is this run's; what matters is everything after the one before it.
+  const from = starts.length >= 2 ? (starts.at(-2) ?? 0) + 1 : 0;
+  return replies.slice(from).filter((reply) => !reply.text.startsWith(STARTED));
+}
+
+/** A rate limit in Claude Code's output: its error result, by status or by what it says. */
+export function harnessRateLimit(stdout: string) {
+  const status = /"api_error_status":\s*429\b/.test(stdout);
+  const why = harnessError(stdout) ?? "";
+  return rateLimitOf(why) ?? (status ? rateLimitOf(`429 ${why}`) : null);
+}
+
 /** The report's first line as plain text: the job's one-line result. */
 export function firstLine(report: string): string {
   const line = report.split("\n").find((candidate) => candidate.trim() !== "") ?? "Done.";
@@ -622,12 +744,37 @@ async function logTail(logFile: string): Promise<string> {
   }
 }
 
-async function settle(deps: JobDeps, outcome: Outcome, artifacts: readonly Artifact[] = []): Promise<void> {
+async function settle(
+  deps: JobDeps,
+  outcome: Outcome,
+  artifacts: readonly Artifact[] = [],
+  keep?: string,
+): Promise<void> {
   const { board, claim, log } = deps;
   const id = claim.task.id;
   try {
     if (outcome.kind === "abandoned") {
       if (outcome.why === SHUTDOWN) await claim.release();
+      return;
+    }
+    // Before the state changes, so the agent never sees the job settled without knowing its machine holds work.
+    if (keep !== undefined) await board.label(id, { set: { [RESUME_LABEL]: keep } });
+    else if (claim.task.labels[RESUME_LABEL] !== undefined) await board.label(id, { unset: [RESUME_LABEL] });
+    if (outcome.kind === "paused") {
+      // No report: the agent tells the asker once for every job waiting, and the job carries on by itself.
+      const until = new Date(outcome.until).toISOString();
+      await board.reply(
+        id,
+        `**Paused:** inference is rate limited until about ${until}. The job continues on this machine once it's back.`,
+      );
+      await board.label(id, {
+        set: {
+          [WAIT_UNTIL_LABEL]: until,
+          ...(claim.task.labels[WAIT_SINCE_LABEL] ? {} : { [WAIT_SINCE_LABEL]: new Date().toISOString() }),
+          ...(outcome.model ? { [WAIT_MODEL_LABEL]: outcome.model } : {}),
+        },
+      });
+      await claim.block(`Waiting for inference: rate limited until about ${until}`, { kind: INFERENCE_KIND });
       return;
     }
     const attachments = [];
@@ -638,7 +785,10 @@ async function settle(deps: JobDeps, outcome: Outcome, artifacts: readonly Artif
         log("job.artifact_failed", { task: id, file: artifact.name, error: String(error) });
       }
     }
-    await board.reply(id, { text: replyText(outcome), ...(attachments.length ? { attachments } : {}) });
+    await board.reply(id, {
+      text: replyText(outcome, keep !== undefined),
+      ...(attachments.length ? { attachments } : {}),
+    });
     await board.label(id, { set: { [REPORT_LABEL]: REPORT_PENDING } });
     if (outcome.kind === "completed") await claim.complete(clip(outcome.result, MAX_SETTLE_CHARS));
     else if (outcome.kind === "failed") await claim.fail(clip(outcome.reason, MAX_SETTLE_CHARS));
@@ -656,18 +806,22 @@ async function settle(deps: JobDeps, outcome: Outcome, artifacts: readonly Artif
   }
 }
 
-function replyText(outcome: Exclude<Outcome, { kind: "abandoned" }>): string {
+function replyText(outcome: Exclude<Outcome, { kind: "abandoned" | "paused" }>, kept: boolean): string {
   switch (outcome.kind) {
     case "completed": {
       // An investigation's result is its report's first line; don't say it twice.
       const lead = outcome.report.includes(outcome.result) ? "**Done.**" : `**Done.** ${outcome.result}`;
       return clip(`${lead}\n\n${outcome.report}`, MAX_REPLY_CHARS);
     }
-    case "failed":
+    case "failed": {
+      const keptNote = kept
+        ? `\n\nIts machine is kept with the work for ${keptMachineDays} days: retry_job continues from where it stopped.`
+        : "";
       return clip(
-        `**Failed:** ${outcome.reason}${outcome.report ? `\n\n\`\`\`\n${outcome.report}\n\`\`\`` : ""}`,
+        `**Failed:** ${outcome.reason}${keptNote}${outcome.report ? `\n\n\`\`\`\n${outcome.report}\n\`\`\`` : ""}`,
         MAX_REPLY_CHARS,
       );
+    }
     case "blocked":
       return clip(
         outcome.secrets?.length

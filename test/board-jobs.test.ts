@@ -18,7 +18,15 @@ import {
   retryReport,
   sweepReports,
 } from "../lib/board-jobs.ts";
-import { JOBS_CHANNEL, type JobSpec, REPORT_LABEL, REPORT_PENDING } from "../lib/jobs.ts";
+import {
+  INFERENCE_KIND,
+  JOBS_CHANNEL,
+  type JobSpec,
+  KEPT_UNTIL_LABEL,
+  REPORT_LABEL,
+  REPORT_PENDING,
+  RESUME_LABEL,
+} from "../lib/jobs.ts";
 import { FAILED_STARTS_LABEL } from "../lib/machines.ts";
 
 const spec: JobSpec = {
@@ -309,6 +317,9 @@ describe("reportMessage", () => {
     createdAt: "",
     origin: undefined,
     secretsNeeded: null,
+    waitingForInference: false,
+    workKept: false,
+    keptUntil: null,
   };
 
   it("tells the agent to relay a question and how to answer it", () => {
@@ -409,5 +420,31 @@ describe("retrying a failed job", () => {
   it("refuses a job that hasn't failed", async () => {
     const job = await postJob(team, spec);
     await expect(retryJob(team, job.id)).rejects.toThrow(/only a failed job can be retried; #.+ is ready/);
+  });
+});
+
+describe("jobs waiting for inference", () => {
+  it("won't take an answer for a job that waits for the endpoint, not a person", async () => {
+    const job = await postJob(team, spec);
+    const claim = await claimAs(worker);
+    await claim.block("Waiting for inference: rate limited until about 01:30", { kind: INFERENCE_KIND });
+    const view = (await readJob(team, job.id)).job;
+    expect(view).toMatchObject({ state: "blocked", waitingForInference: true, workKept: false });
+    await expect(answerJob(team, job.id, "go on")).rejects.toThrow(/waits for inference, not for an answer/);
+  });
+
+  it("says whether a failed job's work is kept, and a retry keeps it while clearing its expiry", async () => {
+    const job = await postJob(team, spec);
+    const claim = await claimAs(worker);
+    await claim.fail("claude timed out after 180m");
+    await team.label(job.id, {
+      set: { [RESUME_LABEL]: "ses-1", [KEPT_UNTIL_LABEL]: "2026-11-25T00:00:00.000Z" },
+    });
+    expect((await readJob(team, job.id)).job).toMatchObject({
+      workKept: true,
+      keptUntil: "2026-11-25T00:00:00.000Z",
+    });
+    const retried = await retryJob(team, job.id);
+    expect(retried).toMatchObject({ state: "ready", workKept: true, keptUntil: null });
   });
 });

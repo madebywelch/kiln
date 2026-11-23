@@ -7,12 +7,12 @@ Slack ──> agent (eve on Vercel) ──start_job──> Vercel Board "jobs" <
   ^          drive, skills, tools   │                 │                         Claude Code on your endpoint     
   │                                 └─ launches ──────┼───────────────────────> the repo's secrets only
   │                                                   │ report=pending          clone, run, push, draft PR, files
-  └───── job-reports schedule, every minute ──────────┘                         deleted when the job settles
+  └───── job-reports schedule, every minute ──────────┘                         stopped while paused, deleted when done
 ```
 
 - **The agent** is an [eve](https://vercel.com/docs/eve) agent on Vercel. It hears Slack, decides when to speak, react, or start a job, and follows the jobs it starts.
 - **Jobs** are tasks on a [Vercel Board](https://vercel.com/docs/board): the brief in the text; repo, kind, harness, model, and effort in the labels.
-- **Workers** run on [boat.dev](https://boat.dev) machines, a fresh one per job, launched by the agent when it starts the job and deleted when the job settles. With no jobs there are no machines. A worker claims its job, runs the coding CLI headless in a fresh clone, pushes a branch and opens a draft PR for a change, attaches any files the CLI saved, and settles the job.
+- **Workers** run on [boat.dev](https://boat.dev) machines, one per job, launched by the agent when it starts the job and deleted when the job settles, or stopped with the work on them while it is paused. A stopped machine costs nothing; with no jobs running, nothing is billed. A worker claims its job, runs the coding CLI headless in a fresh clone, pushes a branch and opens a draft PR for a change, attaches any files the CLI saved, and settles the job.
 - **Repo secrets** live in a boat environment per repo. A job's machine gets its own repo's secrets and nothing else. People set them through a Slack form the agent never sees.
 - **Reports** come back through the board. Within a minute of a job settling, the agent's schedule saves the worker's files in its drive and hands the result to the agent in the Slack thread that asked, as the person who asked, so the agent can schedule a check-back from it. The agent relays the result and shares a file only when someone needs to see it.
 - **The wish list** is where the agent reports limitations it runs into in kiln or eve itself: a task per wish in the board's `wishes` channel, for whoever builds kiln to review (`vb read wishes`). Complete a wish when it is built, or fail it with the reason it won't be.
@@ -40,7 +40,9 @@ The drive is the agent's only memory: a folder of files it organizes however it 
 - **Projects** group repos that change together, such as an app and its hosted service. A job on a project clones all of its repos side by side, works across them, and opens a draft PR in each repo it changed. Projects, like repos, have their own defaults, MCP servers, and secrets.
 - **investigate** jobs report findings and change nothing.
 - **Files go both ways.** Drop a file in Slack and the agent keeps it in its drive, works on it in its sandbox (ImageMagick, zip, Python), or hands it to a job: the worker finds it in `.kiln/inputs/`, and it lands in the repo only where the brief says. Files a job's CLI saves in `.kiln/artifacts/`, such as screenshots, come back posted in the Slack thread and saved in the drive under `jobs/<id>/`. They ride on the job's Board task as attachments, never signed URLs, and workers never get drive access. Up to 10 files of 25 MB each way.
-- **Questions:** a CLI that needs a person ends with `QUESTION: ...`. The worker pushes its work and blocks the job; the agent asks in the thread, passes the answer back, and the next run resumes from the branch.
+- **Questions:** a CLI that needs a person ends with `QUESTION: ...`. The worker blocks the job and its work stays on its machine, which is stopped; the agent asks in the thread, passes the answer back, and the machine resumes with the same Claude Code session, answer in hand. Nothing unfinished is pushed.
+- **Rate limits:** when the inference endpoint runs out, a job pauses instead of failing, its work kept on its stopped machine, and no new Claude job starts. The agent checks the endpoint when the limit says it resets and continues every paused job once it answers. Each asker gets one DM about it, updated when it's over. A job that waits a day fails, its work still kept.
+- **Kept work:** a job that fails after 10 minutes of work keeps its machine, stopped, for 3 days. `retry_job` continues it in the same session, or starts over with `fresh`.
 - **Secrets:** a job whose repo lacks a secret it needs pauses. That includes an MCP server's key, or a credential the CLI asks for by name with `SECRET: NAME`. The agent posts a button for it, and saving the value in the private form resumes the job.
 
 Say the model in Slack, or don't:
@@ -95,7 +97,7 @@ Third-party skills are vendored unmodified under their own licenses; [skills/ven
 | `KILN_REASONING` | `high` | Its reasoning level: `low`, `medium`, `high`, or `xhigh`. |
 | `KILN_GH_TOKEN` | `WORKER_GH_TOKEN` | The agent's GitHub token, for `gh` in its sandbox: PRs, CI, merging. Added at the sandbox firewall; it never enters the sandbox. |
 | `KILN_TRANSCRIPTION_MODEL` | `openai/gpt-4o-mini-transcribe` | The AI Gateway model that transcribes voice notes. Always AI Gateway, even with `INFERENCE_BASE_URL`. |
-| `BOAT_API_KEY` | required for jobs | Launches and deletes job machines and writes repo secrets. |
+| `BOAT_API_KEY` | required for jobs | Launches, stops, resumes, and deletes job machines and writes repo secrets. Actions: see [docs/workers.md](docs/workers.md#set-up). |
 | `WORKER_*` | required for jobs | The workers' credentials, passed to each machine without the prefix. See [docs/workers.md](docs/workers.md). |
 | `KILN_WORKER_CODE` | written by `pnpm run deploy` | The kiln commit job machines run. |
 | `KILN_SECRET_ADMINS` | anyone | Slack user IDs, comma-separated, allowed to set repo secrets. Unset, anyone in the workspace can. |

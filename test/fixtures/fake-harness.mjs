@@ -157,6 +157,19 @@ switch (mode) {
     process.exit(1);
     break;
   }
+  case "rate-limited":
+    // What Claude Code printed when the endpoint's account ran out: an error result, then exit 1.
+    writeFileSync(join(cwd, "draft.css"), "/* half done */\n");
+    line({
+      type: "result",
+      is_error: true,
+      api_error_status: 429,
+      result:
+        "API Error: Request rejected (429) · All credentials for model claude-opus-5-5 are cooling down via provider claude (last error: rate_limit_error: This request would exceed your account's rate limit. Please try again later.) (reset after 1h32m14s)",
+      session_id: SESSION,
+    });
+    process.exit(1);
+    break;
   case "fail":
     process.stderr.write("working...\nboom: rate limited\n");
     process.exit(3);

@@ -1,18 +1,35 @@
-import { type Board, board } from "@vercel/board";
+import { type Board, board, type ClaimedTask } from "@vercel/board";
 import { local } from "@vercel/board/backend-local";
 import { beforeEach, describe, expect, it } from "vitest";
 import { postJob } from "../lib/board-jobs.ts";
 import { Boat } from "../lib/boat.ts";
 import { machineLimits } from "../lib/config.ts";
-import { type JobSpec, REPORT_LABEL, REPORT_PENDING } from "../lib/jobs.ts";
+import type { ProbeResult } from "../lib/inference.ts";
 import {
+  INFERENCE_KIND,
+  type JobSpec,
+  KEPT_UNTIL_LABEL,
+  NOTICE_LABEL,
+  REPORT_LABEL,
+  REPORT_PENDING,
+  RESUME_LABEL,
+  RESUMED_AT_LABEL,
+  WAIT_MODEL_LABEL,
+  WAIT_SINCE_LABEL,
+  WAIT_UNTIL_LABEL,
+} from "../lib/jobs.ts";
+import {
+  discardKeptMachine,
   FAILED_STARTS_LABEL,
   harnessIssue,
+  INFERENCE_RECHECK_MS,
+  type InferenceNotices,
   LAUNCHES_LABEL,
   type LaunchConfig,
   launchConfig,
   launchMachine,
   MAX_FAILED_STARTS,
+  MAX_INFERENCE_WAIT_MS,
   type MachineDeps,
   reconcileMachines,
   STARTUP_GRACE_MS,
@@ -235,7 +252,7 @@ describe("launchMachine", () => {
     const [launched] = fake.machines;
     expect(launched?.environment).toBe("kiln-web");
     expect(launched?.labels).toEqual({ kiln: "worker", job: job.id, harness: "claude" });
-    expect(launched?.snapshots).toBe(false);
+    expect(launched?.snapshots).toBe(true);
     expect(launched?.ttlSeconds).toBe((180 + 30) * 60);
     const settings = JSON.parse(launched?.files[0]?.content ?? "{}");
     expect(settings).toMatchObject({
@@ -314,7 +331,15 @@ describe("reconcileMachines", () => {
   it("launches nothing for a job someone other than the agent posted", async () => {
     await postJob(team.as("intruder"), spec);
     const result = await reconcileMachines(deps);
-    expect(result).toEqual({ launched: [], deleted: [], failed: [], waiting: [] });
+    expect(result).toEqual({
+      launched: [],
+      resumed: [],
+      stopped: [],
+      deleted: [],
+      failed: [],
+      waiting: [],
+      inferenceHeld: false,
+    });
     expect(fake.machines).toHaveLength(0);
   });
 
@@ -389,5 +414,276 @@ describe("reconcileMachines", () => {
     const result = await reconcileMachines(deps);
     expect(result.deleted).toEqual([]);
     expect(fake.machines).toHaveLength(1);
+  });
+});
+
+const iso = (ms: number) => new Date(ms).toISOString();
+const asker = {
+  authenticator: "slack-webhook",
+  principalType: "user",
+  principalId: "slack:T1:U1",
+  issuer: "slack:T1",
+  userId: "U1",
+} as const;
+
+/** Runs a job on its machine until the worker settles it the way `settle` says, as a worker does. */
+async function runUntil(
+  jobId: string,
+  settle: (claim: ClaimedTask) => Promise<unknown>,
+  labels: Record<string, string> = {},
+) {
+  const claim = await team.as("claude").tasks.claim(jobId, { lease: 300 });
+  if (Object.keys(labels).length) await team.label(jobId, { set: labels });
+  await settle(claim);
+}
+
+describe("keeping a job's work on its stopped machine", () => {
+  it("stops the machine of a job paused with its work, and resumes it, worker and all, once answered", async () => {
+    const job = await postJob(team, spec);
+    await reconcileMachines(deps);
+    const machine = fake.machines[0];
+    await runUntil(job.id, (claim) => claim.block("which shade of white?", { kind: "needs_input" }), {
+      [RESUME_LABEL]: "ses-1",
+    });
+
+    const paused = await reconcileMachines(deps);
+    expect(paused.stopped).toEqual([
+      { machine: machine?.id, job: job.id, why: "its job is paused; its work is kept" },
+    ]);
+    expect(paused.deleted).toEqual([]);
+    expect(machine?.state).toBe("archived");
+    // While it waits, nothing touches it.
+    expect(await reconcileMachines(deps)).toMatchObject({
+      stopped: [],
+      deleted: [],
+      resumed: [],
+      launched: [],
+    });
+
+    now += 60 * 60_000;
+    await team.tasks.unblock(job.id);
+    const resumed = await reconcileMachines(deps);
+    expect(resumed.resumed).toEqual([job.id]);
+    expect(resumed.launched).toEqual([]);
+    expect(machine).toMatchObject({ state: "provisioning", resumes: 1, ttlSeconds: (180 + 30) * 60 });
+    expect(fake.upgrades).toEqual([{ environment: expect.any(String), machine: machine?.id }]);
+    expect((await message(job.id)).labels[RESUMED_AT_LABEL]).toBe(iso(now));
+
+    // Up: the agent writes the worker's settings and starts it, once per resume.
+    if (machine) machine.state = "ready";
+    await reconcileMachines(deps);
+    await reconcileMachines(deps);
+    const settings = machine?.files.filter((file) => file.path === WORKER_SETTINGS_PATH) ?? [];
+    expect(settings).toHaveLength(2); // one at launch, one at resume
+    expect(JSON.parse(settings[1]?.content ?? "{}")).toMatchObject({
+      KILN_JOB_ID: job.id,
+      GH_TOKEN: "ghp_push",
+    });
+    const started = machine?.commands.filter((command) => command.detached) ?? [];
+    expect(started).toHaveLength(1);
+    expect(started[0]?.command).toContain("nohup node worker/main.ts");
+    expect(machine?.commands.some((command) => command.command.includes("ghp_push"))).toBe(false);
+  });
+
+  it("gives a resumed machine its own startup grace, then replaces it with a fresh one", async () => {
+    const job = await postJob(team, spec);
+    await reconcileMachines(deps);
+    await runUntil(job.id, (claim) => claim.block("which shade?", { kind: "needs_input" }), {
+      [RESUME_LABEL]: "ses-1",
+    });
+    await reconcileMachines(deps);
+    now += STARTUP_GRACE_MS * 5;
+    await team.tasks.unblock(job.id);
+    await reconcileMachines(deps);
+    expect((await reconcileMachines(deps)).deleted).toEqual([]);
+    now += STARTUP_GRACE_MS + 1;
+    const result = await reconcileMachines(deps);
+    expect(result.deleted[0]?.why).toBe("its worker never claimed the job");
+    expect((await message(job.id)).labels[RESUME_LABEL]).toBeUndefined();
+  });
+
+  it("deletes a paused job's machine when nothing ran on it, as before", async () => {
+    const job = await postJob(team, spec);
+    await reconcileMachines(deps);
+    await runUntil(job.id, (claim) => claim.block("Set LINEAR_API_KEY for web.", { kind: "needs_secret" }));
+    expect((await reconcileMachines(deps)).deleted[0]?.why).toBe("its job is waiting for an answer");
+  });
+
+  it("keeps a failed job's work for the kept days, then deletes it", async () => {
+    const job = await postJob(team, spec);
+    await reconcileMachines(deps);
+    await runUntil(job.id, (claim) => claim.fail("claude timed out after 180m"), { [RESUME_LABEL]: "ses-1" });
+    const failed = await reconcileMachines(deps);
+    expect(failed.stopped[0]?.why).toBe("its job failed; its work is kept for retry_job");
+    const until = now + 3 * 24 * 60 * 60_000;
+    expect((await message(job.id)).labels[KEPT_UNTIL_LABEL]).toBe(iso(until));
+
+    now = until + 1;
+    const expired = await reconcileMachines(deps);
+    expect(expired.deleted[0]?.why).toBe("its job's kept work expired");
+    expect(fake.machines).toHaveLength(0);
+    expect((await message(job.id)).labels).not.toHaveProperty(RESUME_LABEL);
+  });
+
+  it("starts a job over on a fresh machine when its saved disk is gone", async () => {
+    const job = await postJob(team, spec);
+    await reconcileMachines(deps);
+    await runUntil(job.id, (claim) => claim.fail("boom"), { [RESUME_LABEL]: "ses-1" });
+    await reconcileMachines(deps);
+    const kept = fake.machines[0];
+    if (kept) fake.expired.add(kept.id);
+    await team.tasks.reopen(job.id);
+    const gone = await reconcileMachines(deps);
+    expect(gone.waiting).toEqual([job.id]);
+    expect(fake.machines).toHaveLength(0);
+    expect((await message(job.id)).labels).not.toHaveProperty(RESUME_LABEL);
+    expect((await reconcileMachines(deps)).launched).toEqual([job.id]);
+  });
+
+  it("discards kept work on request, so a retry starts over", async () => {
+    const job = await postJob(team, spec);
+    await reconcileMachines(deps);
+    await runUntil(job.id, (claim) => claim.fail("boom"), { [RESUME_LABEL]: "ses-1" });
+    await reconcileMachines(deps);
+    expect(await discardKeptMachine(deps, job.id)).toBe(true);
+    expect(fake.machines).toHaveLength(0);
+    expect((await message(job.id)).labels).not.toHaveProperty(RESUME_LABEL);
+  });
+});
+
+describe("an account with snapshots off", () => {
+  it("still runs jobs, on machines without snapshots, and deletes rather than stops them", async () => {
+    fake.snapshotsOff = true;
+    const job = await postJob(team, spec);
+    expect((await reconcileMachines(deps)).launched).toEqual([job.id]);
+    expect(fake.machines[0]).toMatchObject({ snapshots: false, labels: { snapshots: "off" } });
+    expect(events.map((e) => e.event)).toContain("machines.snapshots_off");
+
+    await runUntil(job.id, (claim) => claim.block("which shade?", { kind: "needs_input" }), {
+      [RESUME_LABEL]: "ses-1",
+    });
+    const result = await reconcileMachines(deps);
+    expect(result.stopped).toEqual([]);
+    expect(result.deleted[0]?.why).toBe("its job is waiting for an answer");
+    expect((await message(job.id)).labels).not.toHaveProperty(RESUME_LABEL);
+  });
+});
+
+describe("waiting for inference", () => {
+  let probes: string[];
+  let answers: ProbeResult[];
+  let said: { kind: string; to?: string; notice?: string; at?: number; jobs?: readonly string[] }[];
+
+  beforeEach(() => {
+    probes = [];
+    answers = [];
+    said = [];
+    const notices: InferenceNotices = {
+      paused: async (who, until) => {
+        said.push({ kind: "paused", to: who.userId, at: until });
+        return `D1:${said.length}`;
+      },
+      back: async (notice, since) => void said.push({ kind: "back", notice, at: since }),
+      gaveUp: async (notice, jobs) => void said.push({ kind: "gaveUp", notice, jobs }),
+    };
+    deps = {
+      ...deps,
+      notices,
+      probeModel: "claude-fable-5-2",
+      probe: async (model) => {
+        probes.push(model);
+        return answers.shift() ?? { ok: true };
+      },
+    };
+  });
+
+  const asked: JobSpec = { ...spec, origin: { channelId: "C1", threadTs: "1.2", asker } };
+
+  /** Launches jobs, then runs each until the endpoint refuses it, as the worker settles one. */
+  async function rateLimited(titles: string[], resetMs: number) {
+    const jobs = [];
+    for (const title of titles) jobs.push(await postJob(team, { ...asked, title }));
+    await reconcileMachines(deps);
+    for (const [index, job] of jobs.entries()) await pause(job.id, `ses-${titles[index]}`, resetMs);
+    return jobs;
+  }
+
+  async function pause(id: string, session: string, resetMs: number) {
+    await runUntil(id, (claim) => claim.block("Waiting for inference", { kind: INFERENCE_KIND }), {
+      [RESUME_LABEL]: session,
+      [WAIT_UNTIL_LABEL]: iso(now + resetMs),
+      [WAIT_SINCE_LABEL]: iso(now),
+      [WAIT_MODEL_LABEL]: "claude-opus-5-5",
+    });
+  }
+
+  it("holds every Claude job until the endpoint answers, tells the asker once, then continues paused work first", async () => {
+    const [first, second] = await rateLimited(["first", "second"], 60 * 60_000);
+    if (!first || !second) throw new Error("no jobs");
+    const queued = await postJob(team, { ...asked, title: "queued" });
+
+    const held = await reconcileMachines(deps);
+    expect(held.inferenceHeld).toBe(true);
+    expect(held.waiting).toEqual([queued.id]);
+    expect(held.stopped.map((s) => s.job).sort()).toEqual([first.id, second.id].sort());
+    expect(probes).toEqual([]); // nothing is due yet
+    expect(said).toEqual([{ kind: "paused", to: "U1", at: now + 60 * 60_000 }]);
+    expect((await message(first.id)).labels[NOTICE_LABEL]).toBe("D1:1");
+    expect((await message(second.id)).labels[NOTICE_LABEL]).toBe("D1:1");
+
+    // Due, and still limited: check again when the endpoint says, telling no one again.
+    now += 60 * 60_000;
+    answers.push({ ok: false, limit: { resetMs: 30 * 60_000 }, why: "429" });
+    expect((await reconcileMachines(deps)).inferenceHeld).toBe(true);
+    expect(probes).toEqual(["claude-opus-5-5"]);
+    expect((await message(first.id)).labels[WAIT_UNTIL_LABEL]).toBe(iso(now + 30 * 60_000));
+    expect(said).toHaveLength(1);
+
+    now += 30 * 60_000;
+    const back = await reconcileMachines(deps);
+    expect(back.inferenceHeld).toBe(false);
+    expect(back.resumed.sort()).toEqual([first.id, second.id].sort());
+    expect(back.launched).toEqual([queued.id]);
+    expect(said.at(-1)).toEqual({ kind: "back", notice: "D1:1", at: now - 90 * 60_000 });
+    const labels = (await message(first.id)).labels;
+    expect((await message(first.id)).task?.state).toBe("ready");
+    for (const label of [WAIT_UNTIL_LABEL, WAIT_SINCE_LABEL, WAIT_MODEL_LABEL, NOTICE_LABEL]) {
+      expect(labels).not.toHaveProperty(label);
+    }
+    expect(labels[RESUME_LABEL]).toBe("ses-first");
+  });
+
+  it("checks again in a while when the endpoint doesn't say when it resets", async () => {
+    await rateLimited(["first"], 0);
+    answers.push({ ok: false, limit: null, why: "503" });
+    await reconcileMachines(deps);
+    const [job] = (await team.tasks.list({ channel: "jobs", state: "open" })).tasks;
+    expect(job?.message.labels[WAIT_UNTIL_LABEL]).toBe(iso(now + INFERENCE_RECHECK_MS));
+  });
+
+  it("gives up after a day, failing the job with its work kept, and says so in the same message", async () => {
+    const [job] = await rateLimited(["first"], 60 * 60_000);
+    if (!job) throw new Error("no job");
+    await reconcileMachines(deps);
+    now += MAX_INFERENCE_WAIT_MS + 1;
+    answers.push({ ok: false, limit: null, why: "429" });
+    const result = await reconcileMachines(deps);
+    expect(result.inferenceHeld).toBe(false);
+    const root = await message(job.id);
+    expect(root.task?.state).toBe("failed");
+    expect(root.task?.reason).toContain("inference stayed rate limited for a day");
+    expect(root.labels).toMatchObject({ [REPORT_LABEL]: REPORT_PENDING, [RESUME_LABEL]: "ses-first" });
+    expect(root.labels[KEPT_UNTIL_LABEL]).toBeDefined();
+    expect(said.at(-1)).toEqual({
+      kind: "gaveUp",
+      notice: "D1:1",
+      jobs: [`#${job.id.replace(/^msg_/, "").slice(0, 8)}`],
+    });
+  });
+
+  it("leaves jobs on other harnesses alone", async () => {
+    await rateLimited(["first"], 60 * 60_000);
+    const gateway = await postJob(team, { ...asked, harness: "opencode", model: "openai/gpt-6-luna-fast" });
+    expect((await reconcileMachines(deps)).launched).toEqual([gateway.id]);
   });
 });

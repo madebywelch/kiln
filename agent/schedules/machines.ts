@@ -1,5 +1,6 @@
-// Every minute: a machine for each ready job, within each harness's limit, and
-// none for jobs that are over. See lib/machines.ts.
+// Every minute: a machine for each ready job, within each harness's limit; a
+// stopped one for a job whose work is kept; none for jobs that are over. See
+// lib/machines.ts.
 
 import { defineSchedule } from "eve/schedules";
 import { reconcileMachines } from "../../lib/machines.ts";
@@ -16,7 +17,13 @@ export default defineSchedule({
     waitUntil(
       reconcileMachines(deps).then(
         (result) => {
-          if (result.launched.length || result.deleted.length || result.failed.length) {
+          if (
+            result.launched.length ||
+            result.resumed.length ||
+            result.stopped.length ||
+            result.deleted.length ||
+            result.failed.length
+          ) {
             log("machines.reconciled", { ...result });
           }
         },

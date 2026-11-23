@@ -14,6 +14,8 @@ export interface HarnessInvocation {
   readonly env: Readonly<Record<string, string>>;
   /** Reads the harness's final message once it has exited 0. */
   readonly readReport: (stdout: string) => Promise<string>;
+  /** The session the run worked in, which a later run can continue; undefined for a CLI kiln can't resume. */
+  readonly sessionOf: (stdout: string) => string | undefined;
 }
 
 export type HarnessBins = Readonly<Record<Harness, string>>;
@@ -93,6 +95,8 @@ export function harnessInvocation(
   reportFile: string,
   mcp: Readonly<Record<string, ResolvedMcp>> = {},
   bins: HarnessBins = defaultBins,
+  /** A session to continue, from an earlier run on this machine: Claude Code only. */
+  resume?: string,
 ): HarnessInvocation {
   const servers = Object.entries(mcp);
   switch (selection.harness) {
@@ -111,6 +115,7 @@ export function harnessInvocation(
       args.push("--settings", JSON.stringify(CLAUDE_SETTINGS));
       args.push("--effort", selection.effort);
       if (selection.model) args.push("--model", selection.model);
+      if (resume) args.push("--resume", resume);
       if (servers.length > 0) {
         const config = Object.fromEntries(
           servers.map(([name, server]) => [
@@ -128,6 +133,7 @@ export function harnessInvocation(
         stdin: prompt,
         env: {},
         readReport: async (out) => claudeReport(out),
+        sessionOf: claudeSession,
       };
     }
     case "codex": {
@@ -156,6 +162,7 @@ export function harnessInvocation(
         stdin: prompt,
         env: {},
         readReport: async () => (await readFile(reportFile, "utf8")).trim(),
+        sessionOf: () => undefined,
       };
     }
     case "opencode": {
@@ -186,6 +193,7 @@ export function harnessInvocation(
         stdin: undefined,
         env,
         readReport: async (out) => opencodeReport(out),
+        sessionOf: () => undefined,
       };
     }
   }
@@ -203,6 +211,16 @@ export function claudeReport(stdout: string): string {
   if (is_error === true) throw new Error(`claude reported an error: ${String(result).slice(0, 500)}`);
   if (typeof result !== "string") throw new Error("claude's JSON result has no text");
   return result.trim();
+}
+
+/** The session Claude Code worked in: every stream-json event names it, the first one before any model call. */
+export function claudeSession(stdout: string): string | undefined {
+  let session: string | undefined;
+  for (const line of stdout.split("\n")) {
+    const id = parseLine(line)?.session_id;
+    if (typeof id === "string" && id) session = id;
+  }
+  return session;
 }
 
 /** `opencode run --format json` prints one event per line; the final message is the last message's text parts. */

@@ -7,13 +7,16 @@ import {
   decodeJob,
   describeSelection,
   encodeJob,
+  INFERENCE_KIND,
   JOBS_CHANNEL,
   JobError,
   type JobSpec,
   jobRef,
+  KEPT_UNTIL_LABEL,
   NEEDS_SECRETS_LABEL,
   REPORT_LABEL,
   REPORT_PENDING,
+  RESUME_LABEL,
   type SlackOrigin,
 } from "./jobs.ts";
 import { FAILED_STARTS_LABEL } from "./machines.ts";
@@ -36,6 +39,12 @@ export interface JobView {
   readonly origin: SlackOrigin | undefined;
   /** The repo secrets it is paused for, if it is paused for secrets. */
   readonly secretsNeeded: readonly string[] | null;
+  /** Whether it waits for the inference endpoint, not for a person: it continues on its own. */
+  readonly waitingForInference: boolean;
+  /** Whether its machine holds its work, so its next run continues where the last one stopped. */
+  readonly workKept: boolean;
+  /** Until when a failed job's work is kept for retry_job. */
+  readonly keptUntil: string | null;
 }
 
 export function viewJob(root: MessageView): JobView {
@@ -56,6 +65,9 @@ export function viewJob(root: MessageView): JobView {
     createdAt: root.createdAt,
     origin: spec.origin,
     secretsNeeded: root.labels[NEEDS_SECRETS_LABEL]?.split(",").filter(Boolean) ?? null,
+    waitingForInference: task?.state === "blocked" && task.blocked?.kind === INFERENCE_KIND,
+    workKept: root.labels[RESUME_LABEL] !== undefined,
+    keptUntil: root.labels[KEPT_UNTIL_LABEL] ?? null,
   };
 }
 
@@ -152,8 +164,9 @@ export async function cancelJob(team: Board, id: string, reason: string): Promis
 
 /**
  * Runs a failed job again, in place: the same brief, files, harness, model, and effort, under the same
- * reference. Its worker resumes the branch the last run pushed, if any, and reads the job's thread, so it
- * sees why the last run failed. Clears what the last run left: its report and its count of failed starts.
+ * reference. When its machine kept its work, the agent resumes that machine and the worker continues its
+ * session; otherwise it starts over on a fresh clone and reads the job's thread, so it sees why the last
+ * run failed. Clears what the last run left: its report and its count of failed starts.
  */
 export async function retryJob(team: Board, id: string): Promise<JobView> {
   const { message } = await team.thread(id, { limit: 1 });
@@ -162,7 +175,7 @@ export async function retryJob(team: Board, id: string): Promise<JobView> {
     throw new JobError(`only a failed job can be retried; #${job.ref} is ${job.state}`);
   }
   await team.label(id, {
-    unset: [REPORT_LABEL, REPORT_RETRY_LABEL, REPORT_AFTER_LABEL, FAILED_STARTS_LABEL],
+    unset: [REPORT_LABEL, REPORT_RETRY_LABEL, REPORT_AFTER_LABEL, FAILED_STARTS_LABEL, KEPT_UNTIL_LABEL],
   });
   return viewJob(await team.tasks.reopen(id));
 }
@@ -172,6 +185,9 @@ export async function answerJob(team: Board, id: string, answer: string): Promis
   const { message } = await team.thread(id, { limit: 1 });
   const job = viewJob(message);
   if (job.state !== "blocked") throw new JobError(`job #${id} is ${job.state}, not waiting for an answer`);
+  if (job.waitingForInference) {
+    throw new JobError(`job #${job.ref} waits for inference, not for an answer: it continues on its own`);
+  }
   await team.reply(id, `Answer from Slack:\n\n${answer}`);
   await team.label(id, { unset: [REPORT_LABEL] });
   await team.tasks.unblock(id);

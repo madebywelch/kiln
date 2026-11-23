@@ -18,6 +18,9 @@ const update = reportMessage(
     createdAt: "2026-11-20T00:00:00Z",
     origin: undefined,
     secretsNeeded: null,
+    waitingForInference: false,
+    workKept: false,
+    keptUntil: null,
   },
   "**Done.** Draft PR: https://github.com/acme/web/pull/42\n\nAdded a snowfall layer to the landing page behind a seasonal flag. Lighthouse unchanged.",
 );

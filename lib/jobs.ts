@@ -28,6 +28,29 @@ export const NEEDS_SECRETS_LABEL = "needs_secrets";
 /** The block kind of a job paused for secrets; a job paused for an answer is `needs_input`. */
 export const NEEDS_SECRET_KIND = "needs_secret";
 
+/**
+ * The job's machine holds work to continue from: its clone, uncommitted changes and all. The value is
+ * the coding CLI's session to continue, or `disk` when the CLI keeps none. The worker sets it when a
+ * job pauses, or fails after real work; the agent then stops the machine instead of deleting it, and
+ * resumes it when the job is ready again.
+ */
+export const RESUME_LABEL = "resume";
+export const RESUME_DISK = "disk";
+/** A job blocked with this kind waits for the inference endpoint, not for a person. */
+export const INFERENCE_KIND = "inference";
+/** When the agent next checks whether the endpoint is back, as an ISO time. */
+export const WAIT_UNTIL_LABEL = "wait-until";
+/** When the job first waited for inference, as an ISO time; it gives up after a day. */
+export const WAIT_SINCE_LABEL = "wait-since";
+/** The model the endpoint refused, to check again on. */
+export const WAIT_MODEL_LABEL = "wait-model";
+/** The Slack message, `channel:ts`, that told the job's asker inference is rate limited. */
+export const NOTICE_LABEL = "notice";
+/** Until when a failed job's stopped machine is kept for retry_job, as an ISO time. */
+export const KEPT_UNTIL_LABEL = "kept-until";
+/** When the agent last resumed the job's machine, as an ISO time. */
+export const RESUMED_AT_LABEL = "resumed-at";
+
 export const MAX_BRIEF_CHARS = 9_000;
 export const MAX_TITLE_CHARS = 120;
 /**

@@ -1,6 +1,6 @@
 # Workers
 
-Every job runs on its own fresh boat.dev machine. The agent launches the machine when it starts the job and deletes it once the job settles. With no jobs, there are no machines and nothing to pay for.
+Every job runs on its own boat.dev machine. The agent launches the machine when it starts the job and deletes it once the job settles, unless the job's work is kept: then it stops the machine and resumes it when the job is ready again (see "Kept work"). A stopped machine costs nothing. With no jobs running, nothing is billed.
 
 Workers run Claude Code on the deployment's inference endpoint (`INFERENCE_BASE_URL` and `INFERENCE_API_KEY`). `enabledHarnesses` in `lib/config.ts` lists the coding CLIs they may use; out of the box that is Claude Code. OpenCode, for AI Gateway models, is built in and switched off, and Codex waits on lending its login to per-job machines. A job for a harness that is off fails at once with that reason.
 
@@ -8,30 +8,54 @@ Workers run Claude Code on the deployment's inference endpoint (`INFERENCE_BASE_
 
 1. **Launch.** `start_job` posts the job and asks boat for a machine right away. A schedule on the agent checks every minute as well, so a launch that failed is retried. The machine starts in the repo's own boat environment, so it gets that repo's secrets and no other's.
 2. **Setup**, about 20 seconds. The setup script downloads kiln at the commit the agent was deployed from, installs the worker's dependencies, and starts the worker. The worker reads its settings file (`~/.kiln/worker.json`, mode 600) into its environment and deletes it.
-3. **The job.** The worker claims its job by ID, with a 5-minute lease it renews every 100 seconds. It replies "Started by claude: claude opus/high on owner/repo." in the job's thread, clones the repo, and creates `kiln/<id>-<title>` from the base branch, or from that branch on the remote if an earlier run of the job pushed it. For a project, it clones each of the project's repos into a subfolder named by its key, creates the branch in each, and runs the CLI from the folder above them; afterwards it pushes each repo the CLI committed to and opens a draft PR for each. It downloads the files the agent attached to the job's task into `.kiln/inputs/` (excluded from git, as all of `.kiln/` is), so a file goes into the repo only where the CLI copies it. Then it runs the CLI with the brief, the earlier replies in the job's thread, the house rules (`worker/instructions.md`), and the rules for finishing.
+3. **The job.** The worker claims its job by ID, with a 5-minute lease it renews every 100 seconds. It replies "Started by claude: claude opus/high on owner/repo." in the job's thread. On a resumed machine it continues the kept work (see "Kept work"); otherwise it clones the repo and creates `kiln/<id>-<title>` from the base branch, or from that branch on the remote if an earlier run of the job pushed it. For a project, it clones each of the project's repos into a subfolder named by its key, creates the branch in each, and runs the CLI from the folder above them; afterwards it pushes each repo the CLI committed to and opens a draft PR for each. It downloads the files the agent attached to the job's task into `.kiln/inputs/` (excluded from git, as all of `.kiln/` is), so a file goes into the repo only where the CLI copies it. Then it runs the CLI with the brief, the earlier replies in the job's thread, the house rules (`worker/instructions.md`), and the rules for finishing.
 4. **Settle.** For a change, the worker commits anything left uncommitted, pushes the branch, and opens a draft PR. Its description is the one the CLI wrote for the repo's reviewers in `.kiln/pr.md` (or `.kiln/pr-<repo>.md` in a project), never committed; without one, the CLI's report. kiln adds nothing to it: the branch, `kiln/<id>-<title>`, ties the PR to its job. It replies with the report and attaches the files the CLI left in `.kiln/artifacts/` (10 files, 25 MB each), which the agent posts in the thread and saves in its drive under `jobs/<id>/`. It labels the job `report=pending`, completes, fails, or blocks the task, and exits.
-5. **Delete.** The next minute's check deletes the machine. Every machine also has its own deadline, the job timeout plus 30 minutes. If nothing deletes the machine first, boat stops it at the deadline, and with snapshots off a stopped machine keeps nothing.
+5. **Delete or stop.** The next minute's check deletes the machine, or stops it when the job's work is kept. Every machine also has its own deadline, the job timeout plus 30 minutes after it starts or resumes. If nothing acts first, boat stops it at the deadline, keeping its disk; the check then deletes it once its job is over.
 
 | The job ends with | The task |
 |---|---|
 | The report | completed, result `Draft PR: <url>`, `No changes made.`, or the report's first line |
-| `QUESTION: ...` | blocked for an answer, with the work pushed. The machine is deleted. An answer puts the job back in the queue, and a new machine resumes from the branch. |
-| A non-zero exit, a CLI error, or the timeout (`JOB_TIMEOUT_MINUTES`, default 180) | failed, with the output's tail in the thread |
+| `QUESTION: ...` | blocked for an answer, with the work kept on the machine, which is stopped. An answer puts the job back in the queue, and the machine resumes with the same session. |
+| A rate limit from the inference endpoint | blocked with kind `inference`, with the work kept. No report: see "Waiting for inference". |
+| A non-zero exit, a CLI error, or the timeout (`JOB_TIMEOUT_MINUTES`, default 180) | failed, with the output's tail in the thread. After 10 minutes of work, or on a run that continued kept work, the work is kept for 3 days. |
 | A cancel | the worker stops at its next lease renewal; the machine is deleted |
 
 The minute's check also does the following:
 
 | It finds | It does |
 |---|---|
-| A ready job with no machine | Launches one, up to `machineLimits` per harness (4 for Claude, 3 for OpenCode if enabled). Jobs over a limit wait their turn, oldest first. |
+| A ready job with no machine | Launches one, up to `machineLimits` per harness (4 for Claude, 3 for OpenCode if enabled). Jobs over a limit wait their turn: kept work first, then oldest first. |
+| A ready job whose machine is stopped | Moves the machine to the latest version of its repo's secrets, resumes it, and, once it is up, writes the worker's settings file and starts the worker, once per resume. A machine whose saved disk is gone is deleted, and the job starts over. |
+| A paused or failed job whose machine is running | Stops it, when the job's work is kept; otherwise deletes it. A failed job's stopped machine is deleted after 3 days. |
+| A job waiting for inference | See "Waiting for inference". |
 | A machine whose setup failed, or whose job is still unclaimed after 10 minutes | Deletes it and launches another. After 3 launches the job fails, with the reason in its thread. |
 | A job for a harness that can't run | Fails it at once, with the reason in its thread: Codex, or a harness without its credential. |
+
+## Kept work
+
+Unfinished work never reaches GitHub, and paused or failed work is not thrown away. A run's machine is worth keeping when the job pauses after the CLI ran (a question, a secret, a rate limit), or fails after 10 minutes of work (`KEEP_AFTER_MS`) or on a run that itself continued kept work. The worker then leaves the clone in place and labels the job `resume=<session>`: the Claude Code session to continue, or `disk` for a CLI without one. The agent stops the machine. boat saves its disk, uncommitted changes and Claude Code's session history included, keeps it at least 14 days, and bills nothing while it is stopped.
+
+When the job is ready again (answered, its secrets set, inference back, or `retry_job`), the agent resumes the machine and starts the worker. The worker skips the clone and runs `claude --resume <session>` with what happened since it stopped: its own question and the answer, or the failure. The model picks up with its whole history, not a summary.
+
+- A failed job's machine is kept for 3 days (`kept-until`; `keptMachineDays` in `lib/config.ts`), then deleted. `retry_job` with `fresh` deletes it at once, so the retry starts over.
+- When the machine is gone (deleted, expired, or a resume that fails), the job starts over on a fresh clone with its brief and the replies in its thread, as before.
+- The worker's settings file is written again at each resume, through boat's file API, never in a command, which boat keeps in the machine's history. The worker deletes it once read, and again once it holds the job.
+
+## Waiting for inference
+
+When the inference endpoint refuses a Claude job for a rate limit, the job doesn't fail. The worker blocks it with kind `inference`, keeps its work, and labels it with when to check again (`wait-until`: the reset the endpoint gave, or 15 minutes), when it started waiting (`wait-since`), and the model it was refused (`wait-model`). There is no report.
+
+While any job waits, the minute's check starts no Claude job, new or resumed. Once a job is due, it asks the endpoint for one token on that model. A rate limit, a 5xx, or no answer sets the next check; any other answer means the endpoint is back, and every waiting job returns to the queue, paused work first. A job that has waited a day fails, with its work kept.
+
+The agent's own turns run on the same endpoint, so it can't speak in Slack while the endpoint is down. The check tells each asker once, in a DM posted straight through Slack's API: jobs are paused until about the reset time. It edits that message when inference is back, or when jobs gave up waiting. Job threads stay quiet.
 
 ## Set up
 
 Everything lives in the agent's Vercel project; nothing runs on your computer.
 
-1. **A boat API key** with these actions: `sandbox.create`, `sandbox.read`, `sandbox.delete-own`, `environment.read`, `environment.write`, and `exec` (for `workers:logs`). Create it in the boat dashboard. Set it as `BOAT_API_KEY` on the Vercel project, and in `.env` for the status and logs commands.
+1. **A boat API key** with these actions: `sandbox.create`, `sandbox.read`, `sandbox.stop`, `sandbox.resume`, `sandbox.delete-own`, `environment.read`, `environment.write`, `exec`, and `file.write`. Stop, resume, exec, and file writes keep and continue a job's work; exec also serves `workers:logs`. Create it in the boat dashboard. Set it as `BOAT_API_KEY` on the Vercel project, and in `.env` for the status and logs commands.
+
+   Turn snapshots on for the account (boat dashboard, Account tab). Without them a stop erases a machine, so kiln launches machines without snapshots, logs `machines.snapshots_off`, and deletes a paused or failed job's machine instead of keeping its work: the job then starts over from its brief and thread.
 2. **Worker settings** on the Vercel project. Each `WORKER_<NAME>` is passed to workers as `<NAME>`:
 
    | Setting | What it is |
@@ -71,9 +95,9 @@ Each repo's secrets live in its own boat environment, `kiln-<repo>`. kiln create
 A job pauses, instead of failing, when its repo lacks a secret it needs:
 
 - **Before it runs:** its MCP servers name a secret (`${NAME}`) the repo doesn't have. The worker checks before the CLI starts.
-- **Mid-run:** the CLI ends with `SECRET: NAME, OTHER_NAME: what for`. Every job's prompt tells it to name the variable and never ask for the value. The worker pushes the work so far.
+- **Mid-run:** the CLI ends with `SECRET: NAME, OTHER_NAME: what for`. Every job's prompt tells it to name the variable and never ask for the value. The work so far stays on the machine.
 
-The worker blocks the job with kind `needs_secret` and labels it `needs_secrets=NAME,OTHER_NAME`. The agent posts a "Set NAME" button for each name, tied to the job. Saving the last missing one unblocks the job, and a fresh machine resumes it within a minute, from its pushed branch, with the secret in its environment. Until then the thread says which names are still missing.
+The worker blocks the job with kind `needs_secret` and labels it `needs_secrets=NAME,OTHER_NAME`. The agent posts a "Set NAME" button for each name, tied to the job. Saving the last missing one unblocks the job, and within a minute its machine resumes, upgraded to the environment's latest version so the secret is in its environment, and continues the session. A job that paused before anything ran gets a fresh machine. Until then the thread says which names are still missing.
 - Names a secret can't take: the worker's own settings (`GH_TOKEN`, `BOARD_TOKEN`, model credentials), anything starting `KILN_` or `GIT_`, `PATH`, `HOME`, `NODE_OPTIONS`, and boat's reserved names.
 
 ## Skills, house rules, and MCP

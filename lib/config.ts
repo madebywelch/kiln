@@ -49,5 +49,8 @@ export const defaultModels: Readonly<Record<Harness, string | undefined>> = {
 /** Jobs that may run at once on each harness, each on its own boat machine. */
 export const machineLimits: Readonly<Partial<Record<Harness, number>>> = { opencode: 3, claude: 4 };
 
+/** Days a failed job's stopped machine is kept, with its work, for retry_job to continue from. */
+export const keptMachineDays = 3;
+
 /** boat machine size for jobs. A Next.js dev build of a large app needs more than small's 4 GB. */
 export const machineType = "default" as const;

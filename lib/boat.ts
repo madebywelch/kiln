@@ -16,9 +16,13 @@ export class BoatError extends Error {
   }
 }
 
+/** boat's API name for a stopped machine: its disk is saved and it can resume. */
+export const STOPPED = "archived";
+
 export interface Machine {
   readonly id: string;
   readonly name?: string;
+  /** `archived` is stopped; `provisioning`, `archiving`, and the like are on the way. */
   readonly state: string;
   readonly createdAt: string;
   readonly labels?: Readonly<Record<string, string>>;
@@ -39,6 +43,8 @@ export interface CreateMachine {
   readonly setupScript: string;
   /** Makes a retried create return the first machine instead of a second one. */
   readonly idempotencyKey: string;
+  /** Whether stopping the machine keeps its disk. An account with snapshots off refuses `true`. */
+  readonly snapshots: boolean;
 }
 
 /** What an environment passes to its machines. kiln's repo environments pass secrets and nothing else. */
@@ -110,18 +116,39 @@ export class Boat {
 
   async createMachine(input: CreateMachine): Promise<Machine> {
     const { idempotencyKey, ...rest } = input;
-    const { sandbox } = await this.#call<{ sandbox: Machine }>(
-      "POST",
-      "/sandboxes",
-      // No snapshots: nothing on a job's machine is worth keeping, and a stop erases it.
-      { ...rest, snapshots: false },
-      { "idempotency-key": idempotencyKey },
-    );
+    const { sandbox } = await this.#call<{ sandbox: Machine }>("POST", "/sandboxes", rest, {
+      "idempotency-key": idempotencyKey,
+    });
     return sandbox;
   }
 
   async deleteMachine(id: string): Promise<void> {
     await this.#call("DELETE", `/sandboxes/${id}`, undefined, { "x-ascii-confirm-delete": id });
+  }
+
+  /** Stops a machine and saves its disk, which boat keeps for at least 14 days. Costs nothing while stopped. */
+  async stopMachine(id: string): Promise<void> {
+    await this.#call("POST", `/sandboxes/${id}/stop`, {});
+  }
+
+  /** Starts a stopped machine again from its saved disk, with a fresh auto-stop deadline. Running programs don't come back. */
+  async resumeMachine(id: string, ttlSeconds: number): Promise<void> {
+    await this.#call("POST", `/sandboxes/${id}/resume`, { ttlSeconds });
+  }
+
+  /** Moves a machine to its environment's latest version, so a stopped one resumes with secrets set since it started. */
+  async upgradeEnvironment(environmentId: string, machineId: string): Promise<void> {
+    await this.#call("POST", `/environments/${environmentId}/upgrade`, { agentIds: [machineId] });
+  }
+
+  /** Writes a file on a running machine, under /home/user for a relative path. */
+  async writeFile(id: string, path: string, content: string): Promise<void> {
+    await this.#call("PUT", `/sandboxes/${id}/files`, { path, content });
+  }
+
+  /** Starts a command in the background on a running machine and returns at once. */
+  async startCommand(id: string, command: string): Promise<void> {
+    await this.#call("POST", `/sandboxes/${id}/commands`, { command, detached: true });
   }
 
   /** Runs a command on a machine and returns its output; throws on a non-zero exit. */

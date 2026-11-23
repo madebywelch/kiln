@@ -19,6 +19,9 @@ const failed = reportMessage(
     createdAt: "2026-11-20T00:00:00Z",
     origin: undefined,
     secretsNeeded: ["LINEAR_API_KEY"],
+    waitingForInference: false,
+    workKept: false,
+    keptUntil: null,
   },
   "",
 );

@@ -1,7 +1,8 @@
 // A kiln worker: runs one job on its own boat machine. The agent launches the
 // machine with the job's ID and this worker's settings; the worker claims that
 // job, runs the coding CLI on it, settles it, and exits. The agent then deletes
-// the machine.
+// the machine, or stops it when the job paused or failed with work worth
+// keeping, and resumes it, starting a worker again, when the job is ready.
 
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -162,6 +163,9 @@ async function work(config: Config, team: Board, shutdown: AbortSignal, guidance
     throw error;
   }
 
+  // The agent writes settings only while the job is unclaimed: a copy that raced the first read is gone
+  // before the coding CLI runs.
+  rmSync(join(homedir(), WORKER_SETTINGS_PATH), { force: true });
   const job = new AbortController();
   const onShutdown = () => job.abort(SHUTDOWN);
   shutdown.addEventListener("abort", onShutdown, { once: true });

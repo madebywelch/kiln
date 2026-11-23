@@ -7,7 +7,17 @@ import { local } from "@vercel/board/backend-local";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { answerJob, postJob, readJob } from "../lib/board-jobs.ts";
 import type { McpServer, RepoConfig } from "../lib/deployment.ts";
-import { JOBS_CHANNEL, type JobSpec, jobBranch, REPORT_LABEL } from "../lib/jobs.ts";
+import {
+  INFERENCE_KIND,
+  JOBS_CHANNEL,
+  type JobSpec,
+  jobBranch,
+  REPORT_LABEL,
+  RESUME_LABEL,
+  WAIT_MODEL_LABEL,
+  WAIT_SINCE_LABEL,
+  WAIT_UNTIL_LABEL,
+} from "../lib/jobs.ts";
 import { type Exec, exec } from "../worker/exec.ts";
 import { claudeReport, harnessInvocation, opencodeReport, resolveMcp, topEffort } from "../worker/harness.ts";
 import {
@@ -17,11 +27,15 @@ import {
   fetchInputs,
   firstLine,
   harnessEnv,
+  harnessRateLimit,
+  KEEP_AFTER_MS,
   type OpenPullRequest,
   type Outcome,
   type RegistryEntry,
+  resumePrompt,
   runJob,
   SHUTDOWN,
+  sinceLastRun,
 } from "../worker/job.ts";
 
 const FAKE = join(import.meta.dirname, "fixtures", "fake-harness.mjs");
@@ -88,6 +102,8 @@ async function claim(): Promise<ClaimedTask> {
 
 interface RunOptions {
   mode: string;
+  /** The machine's work directory: the same one again is the same machine, resumed. */
+  workDir?: string;
   cloneUrl?: (github: string) => string;
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -126,7 +142,7 @@ async function work(
     board: worker,
     claim: await claim(),
     profile: "claude-1",
-    workDir: join(root, "work"),
+    workDir: options.workDir ?? join(root, "work"),
     exec: fakeExec,
     bins: { claude: FAKE, codex: FAKE, opencode: FAKE },
     cloneUrl: options.cloneUrl ?? (() => remote),
@@ -282,26 +298,44 @@ describe("change jobs", () => {
     expect(() => remoteFiles(jobBranch(job.id, spec.title))).toThrow();
   });
 
-  it("blocks on a question, keeps the work, and resumes from it with the answer", async () => {
+  it("blocks on a question, keeps the work on its machine unpushed, and continues the session with the answer", async () => {
     const job = await postJob(team, spec);
     const first = await work({ mode: "question" });
     expect(first.outcome).toMatchObject({ kind: "blocked", question: "Which colors should the theme use?" });
     const branch = jobBranch(job.id, spec.title);
-    expect(remoteFiles(branch)).toContain("draft.css");
+    expect(() => remoteFiles(branch)).toThrow(); // nothing unfinished reaches GitHub
+    await expect(stat(join(root, "work", "jobs", job.id, "draft.css"))).resolves.toBeDefined();
     const blocked = await rootOf(job.id);
     expect(blocked.task?.state).toBe("blocked");
     expect(blocked.task?.blocked).toEqual({
       kind: "needs_input",
       reason: "Which colors should the theme use?",
     });
+    expect(blocked.labels[RESUME_LABEL]).toBe("ses-claude-1");
 
     await answerJob(team, job.id, "Red and green.");
     const second = await work({ mode: "change" });
-    expect(second.record.stdin).toContain("holds work from an earlier run");
+    expect(second.record.args).toEqual(expect.arrayContaining(["--resume", "ses-claude-1"]));
+    expect(second.record.stdin).toContain("resumed on the same machine");
+    expect(second.record.stdin).toContain("**Question:** Which colors should the theme use?");
     expect(second.record.stdin).toContain("Red and green.");
     expect(second.record.stdin).not.toContain("Started by");
+    expect(second.record.stdin).not.toContain(spec.brief); // the session already has it
     expect(second.outcome).toMatchObject({ kind: "completed" });
     expect(remoteFiles(branch)).toEqual(expect.arrayContaining(["draft.css", "theme.css"]));
+    expect((await rootOf(job.id)).labels).not.toHaveProperty(RESUME_LABEL);
+  });
+
+  it("starts over from the brief and the thread when the kept machine is gone", async () => {
+    const job = await postJob(team, spec);
+    await work({ mode: "question" });
+    await answerJob(team, job.id, "Red and green.");
+    const second = await work({ mode: "change", workDir: join(root, "other-machine") });
+    expect(second.record.args).not.toContain("--resume");
+    expect(second.record.stdin).toContain(spec.brief);
+    expect(second.record.stdin).toContain("Red and green.");
+    expect(second.outcome).toMatchObject({ kind: "completed" });
+    expect(remoteFiles(jobBranch(job.id, spec.title))).not.toContain("draft.css");
   });
 });
 
@@ -621,7 +655,7 @@ describe("house rules and MCP servers", () => {
     expect(log.at(-1)?.text).toMatch(/^\*\*Paused for secrets:\*\* Set TEST_MISSING_KEY for web/);
   });
 
-  it("pauses a job whose CLI ends asking for a secret by name, with its work pushed", async () => {
+  it("pauses a job whose CLI ends asking for a secret by name, with its work kept on its machine", async () => {
     const job = await postJob(team, spec);
     const { outcome } = await work({ mode: "secret" });
     expect(outcome).toMatchObject({
@@ -629,8 +663,10 @@ describe("house rules and MCP servers", () => {
       secrets: ["STRIPE_API_KEY", "DATABASE_URL"],
       question: "Set STRIPE_API_KEY, DATABASE_URL for web: read the customer's payment history",
     });
-    expect((await rootOf(job.id)).labels.needs_secrets).toBe("STRIPE_API_KEY,DATABASE_URL");
-    expect(remoteFiles(jobBranch(job.id, spec.title))).toContain("draft.css");
+    const root_ = await rootOf(job.id);
+    expect(root_.labels.needs_secrets).toBe("STRIPE_API_KEY,DATABASE_URL");
+    expect(root_.labels[RESUME_LABEL]).toBe("ses-claude-1");
+    await expect(stat(join(root, "work", "jobs", job.id, "draft.css"))).resolves.toBeDefined();
   });
 
   it("tells the CLI to name a missing credential, never to ask for its value", () => {
@@ -734,5 +770,75 @@ describe("failure reports", () => {
         "opencode exited 1: Invalid JSON schema: regex lookaround is not supported. Found at $.properties.email.pattern.",
     });
     expect(outcome.kind === "failed" && outcome.report).not.toContain("unknown format");
+  });
+});
+
+describe("waiting for inference", () => {
+  it("pauses a job the endpoint rate limits, quietly, with its work and session kept until the reset", async () => {
+    const job = await postJob(team, spec);
+    const before = Date.now();
+    const { outcome } = await work({ mode: "rate-limited" });
+    expect(outcome).toMatchObject({ kind: "paused", model: "claude-opus-5-5" });
+    const reset = (1 * 3600 + 32 * 60 + 14) * 1000;
+    if (outcome.kind !== "paused") throw new Error("not paused");
+    expect(outcome.until).toBeGreaterThanOrEqual(before + reset);
+
+    const paused = await rootOf(job.id);
+    expect(paused.task?.state).toBe("blocked");
+    expect(paused.task?.blocked?.kind).toBe(INFERENCE_KIND);
+    expect(paused.labels).toMatchObject({
+      [RESUME_LABEL]: "ses-claude-1",
+      [WAIT_UNTIL_LABEL]: new Date(outcome.until).toISOString(),
+      [WAIT_MODEL_LABEL]: "claude-opus-5-5",
+    });
+    expect(paused.labels[WAIT_SINCE_LABEL]).toBeDefined();
+    expect(paused.labels).not.toHaveProperty(REPORT_LABEL); // no report: the asker hears once, from the agent
+    await expect(stat(join(root, "work", "jobs", job.id, "draft.css"))).resolves.toBeDefined();
+  });
+
+  it("reads a rate limit from Claude Code's error result, and nothing else", () => {
+    const result = (fields: Record<string, unknown>) =>
+      JSON.stringify({ type: "result", is_error: true, ...fields });
+    expect(
+      harnessRateLimit(
+        result({ api_error_status: 429, result: "API Error: Request rejected (429) (reset after 2m)" }),
+      ),
+    ).toEqual({
+      resetMs: 120_000,
+    });
+    expect(harnessRateLimit(result({ api_error_status: 429, result: "Request rejected" }))).toEqual({});
+    expect(harnessRateLimit(result({ api_error_status: 401, result: "Failed to authenticate" }))).toBeNull();
+    expect(harnessRateLimit(result({ result: "usage limit reached" }))).toBeNull();
+    expect(harnessRateLimit("boom: rate limited")).toBeNull(); // stderr chatter isn't the CLI's verdict
+  });
+});
+
+describe("keeping work after a failure", () => {
+  it("throws away a short failed run's clone, so its machine goes", async () => {
+    const job = await postJob(team, spec);
+    await work({ mode: "fail" });
+    expect((await rootOf(job.id)).labels).not.toHaveProperty(RESUME_LABEL);
+    await expect(stat(join(root, "work", "jobs", job.id))).rejects.toThrow();
+    expect(KEEP_AFTER_MS).toBe(10 * 60_000);
+  });
+
+  it("tells a resumed session what happened since it stopped, and only that", () => {
+    const replies = [
+      { text: "Started by claude: claude opus/high on acme/web." },
+      { text: "**Question:** Which colors?" },
+      { text: "Answer from Slack:\n\nRed." },
+      { text: "Started by claude: claude opus/high on acme/web." },
+      { text: "**Question:** Which shade of red?" },
+      { text: "Answer from Slack:\n\nCrimson." },
+      { text: "Started by claude: claude opus/high on acme/web." },
+    ];
+    expect(sinceLastRun(replies).map((reply) => reply.text)).toEqual([
+      "**Question:** Which shade of red?",
+      "Answer from Slack:\n\nCrimson.",
+    ]);
+    const prompt = resumePrompt(sinceLastRun(replies));
+    expect(prompt).toContain("Crimson.");
+    expect(prompt).not.toContain("Which colors?");
+    expect(prompt).toContain("`QUESTION: `");
   });
 });
