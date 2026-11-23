@@ -23,7 +23,7 @@ The minute's check also does the following:
 
 | It finds | It does |
 |---|---|
-| A ready job with no machine | Launches one, up to `machineLimits` per harness (6 for Claude, 3 for OpenCode if enabled). Jobs over a limit wait their turn, oldest first. |
+| A ready job with no machine | Launches one, up to `machineLimits` per harness (4 for Claude, 3 for OpenCode if enabled). Jobs over a limit wait their turn, oldest first. |
 | A machine whose setup failed, or whose job is still unclaimed after 10 minutes | Deletes it and launches another. After 3 launches the job fails, with the reason in its thread. |
 | A job for a harness that can't run | Fails it at once, with the reason in its thread: Codex, or a harness without its credential. |
 

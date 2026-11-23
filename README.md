@@ -143,7 +143,7 @@ pnpm eval         # the agent's real model on scripted conversations; spends tok
 - Board is experimental; its API and limits may change.
 - A job's result reaches Slack within a minute of settling.
 - A job waits about 20 seconds for its machine before it starts.
-- Six Claude jobs run at a time (`machineLimits`). Codex and OpenCode are off (`enabledHarnesses`).
+- Four Claude jobs run at a time (`machineLimits`). Codex and OpenCode are off (`enabledHarnesses`).
 - A job's model never changes after it starts.
 - Reactions on the agent's messages don't reach it.
 - One repo or project per job. A project's repos are cloned side by side; each one the job changes gets its own draft PR.
