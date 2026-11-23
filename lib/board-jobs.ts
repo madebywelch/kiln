@@ -16,6 +16,7 @@ import {
   REPORT_PENDING,
   type SlackOrigin,
 } from "./jobs.ts";
+import { FAILED_STARTS_LABEL } from "./machines.ts";
 
 export interface JobView {
   /** The board's ID, for board operations. Show people `ref`. */
@@ -125,15 +126,20 @@ export async function resolveJobId(team: Board, named: string): Promise<string> 
   return matches[0] as string;
 }
 
-export async function readJob(team: Board, id: string): Promise<{ job: JobView; log: JobLogEntry[] }> {
+export async function readJob(
+  team: Board,
+  id: string,
+): Promise<{ job: JobView; brief: string; files: string[]; log: JobLogEntry[] }> {
   const thread = await team.thread(id, { limit: 100 });
   const job = viewJob(thread.message);
+  const { brief } = decodeJob(thread.message);
+  const files = thread.message.attachments.map((file) => file.name);
   const log = thread.replies.map((reply) => ({
     by: reply.author?.name ?? reply.author?.handle ?? "unknown",
     at: reply.createdAt,
     text: reply.text,
   }));
-  return { job, log };
+  return { job, brief, files, log };
 }
 
 export async function cancelJob(team: Board, id: string, reason: string): Promise<JobView> {
@@ -142,6 +148,23 @@ export async function cancelJob(team: Board, id: string, reason: string): Promis
   await team.label(id, { unset: [REPORT_LABEL] });
   const { message } = await team.thread(id, { limit: 1 });
   return viewJob(message);
+}
+
+/**
+ * Runs a failed job again, in place: the same brief, files, harness, model, and effort, under the same
+ * reference. Its worker resumes the branch the last run pushed, if any, and reads the job's thread, so it
+ * sees why the last run failed. Clears what the last run left: its report and its count of failed starts.
+ */
+export async function retryJob(team: Board, id: string): Promise<JobView> {
+  const { message } = await team.thread(id, { limit: 1 });
+  const job = viewJob(message);
+  if (job.state !== "failed") {
+    throw new JobError(`only a failed job can be retried; #${job.ref} is ${job.state}`);
+  }
+  await team.label(id, {
+    unset: [REPORT_LABEL, REPORT_RETRY_LABEL, REPORT_AFTER_LABEL, FAILED_STARTS_LABEL],
+  });
+  return viewJob(await team.tasks.reopen(id));
 }
 
 /** Passes a person's answer to a blocked job and returns it to the queue. */

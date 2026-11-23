@@ -14,10 +14,12 @@ import {
   reportMessage,
   resolveJobId,
   resumeAfterSecrets,
+  retryJob,
   retryReport,
   sweepReports,
 } from "../lib/board-jobs.ts";
 import { JOBS_CHANNEL, type JobSpec, REPORT_LABEL, REPORT_PENDING } from "../lib/jobs.ts";
+import { FAILED_STARTS_LABEL } from "../lib/machines.ts";
 
 const spec: JobSpec = {
   repo: "web",
@@ -381,5 +383,31 @@ describe("a report whose turn failed", () => {
     const job = await settledJob();
     await team.label(job.id, { set: { [REPORT_RETRY_LABEL]: String(MAX_REPORT_RETRIES) } });
     expect(await retryReport(team, job.id)).toBe("gave_up");
+  });
+});
+
+describe("retrying a failed job", () => {
+  it("runs it again in place, as it was, with the last run's report and failed starts cleared", async () => {
+    const job = await postJob(team, spec, [{ name: "logo.svg", bytes: new Uint8Array([1]) }]);
+    const claim = await claimAs(worker);
+    await worker.reply(job.id, "**Failed:** claude exited 1: API Error: Request rejected (429)");
+    await worker.label(job.id, { set: { [REPORT_LABEL]: REPORT_PENDING } });
+    await claim.fail("claude exited 1: API Error: Request rejected (429)");
+    await team.label(job.id, { set: { [FAILED_STARTS_LABEL]: "2", [REPORT_RETRY_LABEL]: "3" } });
+
+    const retried = await retryJob(team, job.id);
+    expect(retried).toMatchObject({ id: job.id, state: "ready", runsOn: "claude opus/high" });
+    const { message } = await team.thread(job.id, { limit: 1 });
+    for (const label of [REPORT_LABEL, REPORT_RETRY_LABEL, FAILED_STARTS_LABEL]) {
+      expect(message.labels[label]).toBeUndefined();
+    }
+    const { brief, files } = await readJob(team, job.id);
+    expect(brief).toBe(spec.brief);
+    expect(files).toEqual(["logo.svg"]);
+  });
+
+  it("refuses a job that hasn't failed", async () => {
+    const job = await postJob(team, spec);
+    await expect(retryJob(team, job.id)).rejects.toThrow(/only a failed job can be retried; #.+ is ready/);
   });
 });
