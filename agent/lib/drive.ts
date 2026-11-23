@@ -3,10 +3,18 @@
 // deployment's OIDC token. Under `eve dev` and in evals there is no store, and
 // the drive lives in memory for the session.
 
-import { del, get, list, put } from "@vercel/blob";
-import { type DriveStore, ensureDefaults, memoryDrive } from "../../lib/drive.ts";
+import { BlobPreconditionFailedError, del, get, list, put } from "@vercel/blob";
+import { DriveConflict, type DriveStore, ensureDefaults, memoryDrive } from "../../lib/drive.ts";
 
 const ROOT = "kiln/drive/";
+
+/**
+ * A blob's version, for a conditional write: its strong ETag. A compressed read (a larger text file)
+ * gets the weak form, W/"...", which `ifMatch` never matches.
+ */
+export function versionOf(etag: string): string {
+  return etag.replace(/^W\//, "");
+}
 
 export function blobDrive(storeId: string): DriveStore {
   const options = { storeId };
@@ -38,16 +46,24 @@ export function blobDrive(storeId: string): DriveStore {
       return {
         bytes: new Uint8Array(await new Response(result.stream).arrayBuffer()),
         contentType: result.blob.contentType,
+        version: versionOf(result.blob.etag),
       };
     },
-    async write(path, bytes, contentType) {
-      await put(`${ROOT}${path}`, Buffer.from(bytes), {
-        access: "private",
-        addRandomSuffix: false,
-        allowOverwrite: true,
-        contentType,
-        ...options,
-      });
+    async write(path, bytes, contentType, ifVersion) {
+      try {
+        await put(`${ROOT}${path}`, Buffer.from(bytes), {
+          access: "private",
+          addRandomSuffix: false,
+          allowOverwrite: true,
+          contentType,
+          ...(ifVersion !== undefined ? { ifMatch: ifVersion } : {}),
+          ...options,
+        });
+      } catch (error) {
+        if (error instanceof BlobPreconditionFailedError)
+          throw new DriveConflict(`${path} changed since it was read`);
+        throw error;
+      }
     },
     async remove(path) {
       await del(`${ROOT}${path}`, options);

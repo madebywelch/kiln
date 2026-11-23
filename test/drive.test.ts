@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
+import { versionOf } from "../agent/lib/drive.ts";
 import { starterAgentsMd } from "../lib/agents-starter.ts";
 import { DEFAULT_AGENT_NAME } from "../lib/deployment.ts";
 import {
+  DriveConflict,
   DriveError,
   defaultFiles,
   driveName,
@@ -110,6 +112,29 @@ describe("driveName", () => {
 });
 
 describe("editFile", () => {
+  it("applies two edits of one file made at the same moment, instead of the last write dropping the first", async () => {
+    const store = memoryDrive();
+    await writeFile(store, "notes.md", new TextEncoder().encode("one\ntwo\n"));
+    await Promise.all([editFile(store, "notes.md", "ONE", "one"), editFile(store, "notes.md", "TWO", "two")]);
+    expect((await readText(store, "notes.md")).text).toBe("ONE\nTWO\n");
+  });
+
+  it("compares Blob's strong ETag, which a compressed read reports in its weak form", () => {
+    // AGENTS.md read back as W/"..." and no conditional write of it ever matched.
+    expect(versionOf('W/"6e5f7070b94d75faf1ba46a2eacfa518"')).toBe('"6e5f7070b94d75faf1ba46a2eacfa518"');
+    expect(versionOf('"deed54b823522e0525693b090363f9df"')).toBe('"deed54b823522e0525693b090363f9df"');
+  });
+
+  it("gives up with the conflict when the file keeps changing under it", async () => {
+    const store = memoryDrive();
+    await writeFile(store, "notes.md", new TextEncoder().encode("one\n"));
+    const write = vi
+      .spyOn(store, "write")
+      .mockRejectedValue(new DriveConflict("notes.md changed since it was read"));
+    await expect(editFile(store, "notes.md", "ONE", "one")).rejects.toBeInstanceOf(DriveConflict);
+    expect(write).toHaveBeenCalledTimes(5);
+  });
+
   it("refuses text it can't place exactly, and binary files, changing nothing", async () => {
     const store = memoryDrive();
     await writeFile(store, "AGENTS.md", text("- a\n- b\n- a\n"));

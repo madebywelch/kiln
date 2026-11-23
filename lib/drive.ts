@@ -13,16 +13,32 @@ export interface DriveEntry {
 }
 
 /** Where the files live. Blob in production; a map in tests. Paths are relative to the drive's root. */
+export interface StoredFile {
+  readonly bytes: Uint8Array;
+  readonly contentType: string;
+  /** Changes with every write: what a conditional write checks. */
+  readonly version: string;
+}
+
 export interface DriveStore {
   list(prefix: string): Promise<DriveEntry[]>;
-  read(path: string): Promise<{ readonly bytes: Uint8Array; readonly contentType: string } | null>;
-  write(path: string, bytes: Uint8Array, contentType: string): Promise<void>;
+  read(path: string): Promise<StoredFile | null>;
+  /** With `ifVersion`, writes only over that version of the file, else throws DriveConflict. */
+  write(path: string, bytes: Uint8Array, contentType: string, ifVersion?: string): Promise<void>;
   remove(path: string): Promise<void>;
 }
 
 export class DriveError extends Error {
-  override readonly name = "DriveError";
+  override readonly name: string = "DriveError";
 }
+
+/** The file changed between a read and a conditional write of it. */
+export class DriveConflict extends DriveError {
+  override readonly name = "DriveConflict";
+}
+
+/** How many times an edit reapplies itself over a file that keeps changing under it. */
+const EDIT_ATTEMPTS = 5;
 
 /** The files every drive has, with what they start as. The agent edits them; nobody removes them. */
 export const defaultFiles = (): Readonly<Record<string, string>> => ({ "AGENTS.md": starterAgentsMd() });
@@ -115,17 +131,22 @@ const permanent = (path: string) =>
 
 /**
  * Writes a file. Before AGENTS.md changes, its current version is copied to .history/, so a bad
- * edit of the agent's prompt can be undone.
+ * edit of the agent's prompt can be undone. Given the file as it was read, writes only over that version.
  */
-async function save(store: DriveStore, path: string, bytes: Uint8Array): Promise<void> {
+async function save(
+  store: DriveStore,
+  path: string,
+  bytes: Uint8Array,
+  read?: StoredFile | null,
+): Promise<void> {
   if (path === TURN_FILE) {
-    const current = await store.read(path);
+    const current = read === undefined ? await store.read(path) : read;
     if (current) {
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");
       await store.write(`${HISTORY_FOLDER}AGENTS-${stamp}.md`, current.bytes, contentTypeOf(path));
     }
   }
-  await store.write(path, bytes, contentTypeOf(path));
+  await store.write(path, bytes, contentTypeOf(path), read?.version);
 }
 
 export async function writeFile(store: DriveStore, raw: string, bytes: Uint8Array): Promise<string> {
@@ -147,7 +168,23 @@ export async function editFile(
 ): Promise<{ path: string; size: number }> {
   const path = drivePath(raw);
   if (!isText(path)) throw new DriveError(`${path} is not a text file; use drive_write`);
-  const file = await store.read(path);
+  // Another edit can land between this one's read and write, as two edits in one step do: the write
+  // is conditional on the version read, and on a conflict the edit reapplies itself to the new text.
+  for (let attempt = 1; ; attempt++) {
+    const file = await store.read(path);
+    const bytes = new TextEncoder().encode(edited(path, file, replace, find));
+    checkSize(bytes);
+    try {
+      await save(store, path, bytes, file);
+      return { path, size: bytes.byteLength };
+    } catch (error) {
+      if (!(error instanceof DriveConflict) || attempt >= EDIT_ATTEMPTS) throw error;
+    }
+  }
+}
+
+/** The file's text after the edit: `find` replaced, or `replace` appended as a line. */
+function edited(path: string, file: StoredFile | null, replace: string, find: string | undefined): string {
   const text = file ? new TextDecoder().decode(file.bytes) : "";
   let next: string;
   if (find === undefined || find === "") {
@@ -161,10 +198,7 @@ export async function editFile(
       throw new DriveError(`the text to replace occurs ${count} times in ${path}; include more of it`);
     next = text.replace(find, () => replace);
   }
-  const bytes = new TextEncoder().encode(next);
-  checkSize(bytes);
-  await save(store, path, bytes);
-  return { path, size: bytes.byteLength };
+  return next;
 }
 
 export async function readText(
@@ -251,7 +285,11 @@ export async function searchDrive(
 
 /** A drive kept in memory, for tests and local development. */
 export function memoryDrive(now: () => string = () => new Date().toISOString()): DriveStore {
-  const files = new Map<string, { bytes: Uint8Array; contentType: string; updatedAt: string }>();
+  const files = new Map<
+    string,
+    { bytes: Uint8Array; contentType: string; updatedAt: string; version: string }
+  >();
+  let writes = 0;
   return {
     async list(prefix) {
       return [...files.entries()]
@@ -261,10 +299,12 @@ export function memoryDrive(now: () => string = () => new Date().toISOString()):
     },
     async read(path) {
       const f = files.get(path);
-      return f ? { bytes: f.bytes, contentType: f.contentType } : null;
+      return f ? { bytes: f.bytes, contentType: f.contentType, version: f.version } : null;
     },
-    async write(path, bytes, contentType) {
-      files.set(path, { bytes, contentType, updatedAt: now() });
+    async write(path, bytes, contentType, ifVersion) {
+      if (ifVersion !== undefined && files.get(path)?.version !== ifVersion)
+        throw new DriveConflict(`${path} changed since it was read`);
+      files.set(path, { bytes, contentType, updatedAt: now(), version: String(++writes) });
     },
     async remove(path) {
       files.delete(path);
