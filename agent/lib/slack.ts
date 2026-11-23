@@ -174,6 +174,51 @@ export function slackHere(ctx: {
   };
 }
 
+/** Where a job's updates go: a Slack channel and a thread in it. */
+export interface ReportThread {
+  readonly channelId: string;
+  readonly threadTs: string;
+}
+
+/** The shapes of the IDs a report target names, checked before anything is posted. */
+export const SLACK_CHANNEL_ID = /^[CGD][A-Z0-9]{2,}$/;
+export const SLACK_THREAD_TS = /^\d+\.\d+$/;
+
+/**
+ * The thread a job reports to. By default the one this turn is in, if any. A named thread is used as
+ * is (in the named channel, or this one). A channel named without a thread gets a short opener, posted
+ * now, whose thread then holds every update of the job: eve would otherwise start a new thread per update.
+ */
+export async function reportThread(
+  want: { readonly channelId?: string | undefined; readonly threadTs?: string | undefined },
+  here: SlackHere | undefined,
+  opener: string,
+): Promise<ReportThread | undefined> {
+  const channelId = want.channelId ?? here?.channelId;
+  if (!want.channelId && !want.threadTs)
+    return here?.threadTs ? { channelId: here.channelId, threadTs: here.threadTs } : undefined;
+  if (!channelId) throw new Error("thread_ts needs channel_id outside Slack: name the channel too");
+  if (!SLACK_CHANNEL_ID.test(channelId))
+    throw new Error(`channel_id ${channelId} is not a Slack channel ID, such as C0123ABCD`);
+  if (want.threadTs) {
+    if (!SLACK_THREAD_TS.test(want.threadTs))
+      throw new Error(
+        `thread_ts ${want.threadTs} is not a Slack message timestamp, such as 1795393911.357859`,
+      );
+    return { channelId, threadTs: want.threadTs };
+  }
+  const posted = await slackApi("chat.postMessage", { channel: channelId, text: opener }, here?.teamId);
+  if (typeof posted.ts !== "string") throw new Error("Slack posted the thread opener without a timestamp");
+  return { channelId, threadTs: posted.ts };
+}
+
+/** What start_job tells the agent about where the job's updates will go. */
+export function reportsTo(origin: ReportThread | undefined, here: SlackHere | undefined): string {
+  if (!origin) return "nowhere";
+  if (origin.channelId === here?.channelId && origin.threadTs === here.threadTs) return "this thread";
+  return `<#${origin.channelId}>, thread ${origin.threadTs}`;
+}
+
 /** Uploads a file into a channel or thread: ask Slack for an upload URL, send the bytes, then share the file. */
 export async function uploadToSlack(input: {
   readonly channel: string;

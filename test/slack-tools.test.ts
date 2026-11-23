@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { conversationContext, conversationLabel, markdownToMrkdwn } from "../agent/lib/slack.ts";
+import {
+  conversationContext,
+  conversationLabel,
+  markdownToMrkdwn,
+  reportsTo,
+  reportThread,
+} from "../agent/lib/slack.ts";
 import slackHistory from "../agent/tools/slack_history.ts";
 import slackPost from "../agent/tools/slack_post.ts";
 import slackReact from "../agent/tools/slack_react.ts";
@@ -170,6 +176,55 @@ describe("slack_upload", () => {
 
   it("refuses an empty file before calling Slack", async () => {
     await expect(run(slackUpload, { filename: "x.txt", content: "" })).rejects.toThrow(/empty/);
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("reportThread", () => {
+  const here = { channelId: "C0123", threadTs: "1700000000.000100", teamId: "T1" };
+
+  it("reports to this thread unless told otherwise, and nowhere outside one", async () => {
+    expect(await reportThread({}, here, "opener")).toEqual({
+      channelId: "C0123",
+      threadTs: "1700000000.000100",
+    });
+    expect(
+      await reportThread({}, { channelId: "C0123", threadTs: undefined, teamId: "T1" }, "opener"),
+    ).toBeUndefined();
+    expect(calls).toEqual([]);
+  });
+
+  it("uses a named thread as is, in this channel or the named one", async () => {
+    expect(await reportThread({ threadTs: "1795393911.357859" }, here, "opener")).toEqual({
+      channelId: "C0123",
+      threadTs: "1795393911.357859",
+    });
+    expect(
+      await reportThread({ channelId: "C0GUACA", threadTs: "1795393911.357859" }, here, "opener"),
+    ).toEqual({
+      channelId: "C0GUACA",
+      threadTs: "1795393911.357859",
+    });
+    expect(calls).toEqual([]);
+  });
+
+  it("posts an opener in a channel named without a thread, and reports to its thread", async () => {
+    replies["chat.postMessage"] = () => ({ ok: true, ts: "1795400000.000200" });
+    const thread = await reportThread({ channelId: "C0GUACA" }, here, "Job on guaca: Add search.");
+    expect(thread).toEqual({ channelId: "C0GUACA", threadTs: "1795400000.000200" });
+    expect(calls.map((call) => call.method)).toEqual(["chat.postMessage"]);
+    expect(calls[0]?.body).toMatchObject({ channel: "C0GUACA", text: "Job on guaca: Add search." });
+    expect(reportsTo(thread, here)).toBe("<#C0GUACA>, thread 1795400000.000200");
+  });
+
+  it("refuses IDs that aren't Slack's before posting anything", async () => {
+    await expect(reportThread({ channelId: "#guaca" }, here, "x")).rejects.toThrow(/not a Slack channel ID/);
+    await expect(reportThread({ threadTs: "yesterday" }, here, "x")).rejects.toThrow(
+      /not a Slack message timestamp/,
+    );
+    await expect(reportThread({ threadTs: "1795393911.357859" }, undefined, "x")).rejects.toThrow(
+      /name the channel/,
+    );
     expect(calls).toEqual([]);
   });
 });

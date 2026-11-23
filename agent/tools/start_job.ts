@@ -18,7 +18,7 @@ import {
 import { team } from "../lib/board.ts";
 import { drive } from "../lib/drive.ts";
 import { launchNow } from "../lib/machines.ts";
-import { slackHere } from "../lib/slack.ts";
+import { reportsTo, reportThread, slackHere } from "../lib/slack.ts";
 
 // Built per model call from kiln.config.yaml (KILN_CONFIG), so the public code names no repos.
 // With none configured, the tool isn't offered.
@@ -94,6 +94,17 @@ export default defineDynamic(() => {
             "The worker finds them by file name in .kiln/inputs/. Say in the brief what to do with each, such as " +
             '"put favicon.ico at public/favicon.ico". Files go into the repo only if the brief says where.',
         ),
+      channel_id: z
+        .string()
+        .optional()
+        .describe(
+          "Where the job's updates go, when not this thread: a Slack channel ID, such as a project's channel. " +
+            "Without thread_ts, a short opener is posted there and its thread holds the updates.",
+        ),
+      thread_ts: z
+        .string()
+        .optional()
+        .describe("A thread for the job's updates: its root message's ts, in channel_id or this channel."),
     }),
     label: { start: ({ repo, title }) => `Start job on ${repo}: ${title}` },
     async execute(input, ctx) {
@@ -104,6 +115,12 @@ export default defineDynamic(() => {
         sandbox: async (path) => (await ctx.getSandbox()).readBinaryFile({ path }),
         drive: async (path) => (await (await drive()).read(drivePath(path)))?.bytes ?? null,
       });
+      // After the files check, so a refused job leaves no opener behind.
+      const thread = await reportThread(
+        { channelId: input.channel_id, threadTs: input.thread_ts },
+        here,
+        `Job on ${input.repo}: ${input.title}. Its updates follow in this thread.`,
+      );
       const job = await postJob(
         team,
         {
@@ -112,9 +129,7 @@ export default defineDynamic(() => {
           kind: input.kind,
           title: input.title,
           brief: input.brief,
-          origin: here?.threadTs
-            ? { channelId: here.channelId, threadTs: here.threadTs, ...(asker ? { asker } : {}) }
-            : undefined,
+          origin: thread ? { ...thread, ...(asker ? { asker } : {}) } : undefined,
         },
         files,
       );
@@ -123,7 +138,7 @@ export default defineDynamic(() => {
         job: `#${job.ref}`,
         state: job.state,
         runsOn: job.runsOn,
-        reportsTo: job.origin ? "this thread" : "nowhere",
+        reportsTo: reportsTo(job.origin, here),
         ...(files.length ? { files: files.map((file) => file.name) } : {}),
       };
     },

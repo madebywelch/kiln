@@ -168,16 +168,23 @@ export async function cancelJob(team: Board, id: string, reason: string): Promis
  * Runs a failed job again, in place: the same brief, files, harness, model, and effort, under the same
  * reference. When its machine kept its work, the agent resumes that machine and the worker continues its
  * session; otherwise it starts over on a fresh clone and reads the job's thread, so it sees why the last
- * run failed. Clears what the last run left: its report and its count of failed starts.
+ * run failed. Clears what the last run left: its report and its count of failed starts. `reportTo`, called
+ * once the job is known to be retryable, gives it a new thread to report to.
  */
-export async function retryJob(team: Board, id: string): Promise<JobView> {
+export async function retryJob(
+  team: Board,
+  id: string,
+  reportTo?: () => Promise<{ readonly channelId: string; readonly threadTs: string } | undefined>,
+): Promise<JobView> {
   const { message } = await team.thread(id, { limit: 1 });
   const job = viewJob(message);
   if (job.state !== "failed") {
     throw new JobError(`only a failed job can be retried; #${job.ref} is ${job.state}`);
   }
+  const thread = await reportTo?.();
   await team.label(id, {
     unset: [REPORT_LABEL, REPORT_RETRY_LABEL, REPORT_AFTER_LABEL, FAILED_STARTS_LABEL, KEPT_UNTIL_LABEL],
+    ...(thread ? { set: { slack: `${thread.channelId}/${thread.threadTs}` } } : {}),
   });
   return viewJob(await team.tasks.reopen(id));
 }

@@ -427,9 +427,28 @@ describe("retrying a failed job", () => {
     expect(files).toEqual(["logo.svg"]);
   });
 
-  it("refuses a job that hasn't failed", async () => {
+  it("refuses a job that hasn't failed, before asking for a new thread", async () => {
     const job = await postJob(team, spec);
-    await expect(retryJob(team, job.id)).rejects.toThrow(/only a failed job can be retried; #.+ is ready/);
+    let asked = false;
+    const reportTo = async () => {
+      asked = true;
+      return { channelId: "C0GUACA", threadTs: "1795400000.000200" };
+    };
+    await expect(retryJob(team, job.id, reportTo)).rejects.toThrow(
+      /only a failed job can be retried; #.+ is ready/,
+    );
+    expect(asked).toBe(false);
+  });
+
+  it("reports to a new thread from now on when given one", async () => {
+    const job = await postJob(team, spec);
+    const claim = await claimAs(worker);
+    await claim.fail("boom");
+    const retried = await retryJob(team, job.id, async () => ({
+      channelId: "C0GUACA",
+      threadTs: "1795400000.000200",
+    }));
+    expect(retried.origin).toMatchObject({ channelId: "C0GUACA", threadTs: "1795400000.000200" });
   });
 });
 
