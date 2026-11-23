@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   answerJob,
   cancelJob,
+  JOB_PAGE,
   listJobs,
   MAX_REPORT_RETRIES,
   postJob,
@@ -361,6 +362,12 @@ describe("resolveJobId", () => {
     expect(await resolveJobId(team, job.ref)).toBe(job.id);
     expect(await resolveJobId(team, "msg_whatever_1")).toBe("msg_whatever_1");
     await expect(resolveJobId(team, "#deadbeef")).rejects.toThrow(/no job #deadbeef/);
+  });
+
+  it("finds a job past the first page of the board's oldest-first list", async () => {
+    let last = await postJob(team, spec);
+    for (let i = 0; i < JOB_PAGE; i++) last = await postJob(team, spec);
+    expect(await resolveJobId(team, `#${last.ref}`)).toBe(last.id);
   });
 });
 

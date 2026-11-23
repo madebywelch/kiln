@@ -130,16 +130,28 @@ export interface JobLogEntry {
  * The board ID for a job someone named: its short reference (b799fe5c or #b799fe5c), or its full ID.
  * Models mangle long IDs when they copy them; an eight-character reference survives.
  */
+/** Jobs per board read when looking one up by reference. */
+export const JOB_PAGE = 200;
+
 export async function resolveJobId(team: Board, named: string): Promise<string> {
   const ref = named.trim().replace(/^#/, "");
   if (ref.startsWith("msg_")) return ref;
-  const { tasks } = await team.tasks.list({
-    channel: JOBS_CHANNEL,
-    state: "all",
-    label: { kiln: "job" },
-    limit: 200,
-  });
-  const matches = tasks.map(({ message }) => message.id).filter((id) => jobRef(id) === ref.toLowerCase());
+  const matches: string[] = [];
+  // Every job, a page at a time: the board answers oldest first, so one page
+  // misses every job after its first JOB_PAGE.
+  for (let after: string | undefined; ; ) {
+    const page = await team.tasks.list({
+      channel: JOBS_CHANNEL,
+      state: "all",
+      label: { kiln: "job" },
+      limit: JOB_PAGE,
+      ...(after ? { after } : {}),
+    });
+    for (const { message } of page.tasks)
+      if (jobRef(message.id) === ref.toLowerCase()) matches.push(message.id);
+    if (page.tasks.length < JOB_PAGE || !page.cursor || page.cursor === after) break;
+    after = page.cursor;
+  }
   if (matches.length === 0) throw new JobError(`no job #${ref}; list_jobs shows the recent ones`);
   if (matches.length > 1) throw new JobError(`#${ref} matches ${matches.length} jobs; name it in full`);
   return matches[0] as string;
