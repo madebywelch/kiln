@@ -33,11 +33,13 @@ import {
   type MachineDeps,
   reconcileMachines,
   STARTUP_GRACE_MS,
+  serversWithSecrets,
   setupScript,
   WORKER_SETTINGS_PATH,
   workerCode,
   workerSettings,
 } from "../lib/machines.ts";
+import { setSecret } from "../lib/secrets.ts";
 import { FakeBoat } from "./fixtures/fake-boat.ts";
 
 const env = {
@@ -147,13 +149,28 @@ describe("workerSettings", () => {
     expect(opencode.INFERENCE_API_KEY).toBeUndefined();
   });
 
-  it("names the job's secrets for the worker to hide, never their values", () => {
+  it("tells the worker its job's group and secrets by name and description, never their values", () => {
+    const secrets = {
+      group: "production-read" as const,
+      secrets: { DATABASE_URL: "read only", STRIPE_API_KEY: "" },
+    };
     expect(
-      workerSettings("msg_1", "claude", config, undefined, ["DATABASE_URL", "STRIPE_API_KEY"]),
-    ).toMatchObject({
-      KILN_SECRET_NAMES: "DATABASE_URL,STRIPE_API_KEY",
-    });
-    expect(workerSettings("msg_1", "claude", config).KILN_SECRET_NAMES).toBeUndefined();
+      JSON.parse(workerSettings("msg_1", "claude", config, undefined, secrets).KILN_SECRETS ?? "{}"),
+    ).toEqual(secrets);
+    expect(workerSettings("msg_1", "claude", config).KILN_SECRETS).toBeUndefined();
+  });
+
+  it("gives a job only the MCP servers its group holds every secret for", () => {
+    const servers = {
+      linear: {
+        url: "https://mcp.linear.app/mcp",
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: how kiln.config.yaml names a server's secret
+        headers: { Authorization: "Bearer ${LINEAR_API_KEY}" },
+      },
+      open: { url: "https://open.example/mcp" },
+    };
+    expect(Object.keys(serversWithSecrets(servers, []))).toEqual(["open"]);
+    expect(Object.keys(serversWithSecrets(servers, ["LINEAR_API_KEY"]))).toEqual(["linear", "open"]);
   });
 
   it("gives a job's machine its own repo and that repo's MCP servers, and no other repo's", () => {
@@ -253,13 +270,13 @@ describe("setupScript", () => {
 });
 
 describe("launchMachine", () => {
-  it("starts a machine in the repo's secrets-only environment, with the job's settings in a file", async () => {
+  it("starts a job with no secrets in the empty environment, with the job's settings in a file", async () => {
     const job = await postJob(team, spec);
     const { machine } = await launchMachine(deps, job.message);
     expect(machine?.id).toBe("bx_2");
 
     const [launched] = fake.machines;
-    expect(launched?.environment).toBe("kiln-web");
+    expect(launched?.environment).toBe("kiln-none");
     expect(launched?.labels).toEqual({ kiln: "worker", job: job.id, harness: "claude" });
     expect(launched?.snapshots).toBe(true);
     expect(launched?.ttlSeconds).toBe((180 + 30) * 60);
@@ -279,6 +296,27 @@ describe("launchMachine", () => {
       passAgentsCredentials: false,
     });
     expect((await message(job.id)).labels).toMatchObject({ [LAUNCHES_LABEL]: "1" });
+  });
+
+  it("starts a job in its group's environment and tells the worker that group's secrets and what they are", async () => {
+    const boat = new Boat("key", fake.fetch);
+    await setSecret(boat, "web", "production-read", "PROD_READ_DATABASE_URL", "postgres://reader:pw@db/app");
+    await setSecret(boat, "web", "production-write", "PROD_WRITE_DEPLOY_TOKEN", "never-this-one");
+    const job = await postJob(team, { ...spec, secrets: "production-read" });
+    const labels = {
+      "kiln-web-production-read": {
+        PROD_READ_DATABASE_URL: { description: "read only", savedBy: "U", savedAt: "t" },
+      },
+    };
+    await launchMachine({ ...deps, secretLabels: async () => labels }, job.message);
+    const [launched] = fake.machines;
+    expect(launched?.environment).toBe("kiln-web-production-read");
+    const settings = JSON.parse(launched?.files[0]?.content ?? "{}");
+    expect(JSON.parse(settings.KILN_SECRETS)).toEqual({
+      group: "production-read",
+      secrets: { PROD_READ_DATABASE_URL: "read only" },
+    });
+    expect(launched?.files[0]?.content).not.toContain("postgres://");
   });
 
   it("gives two launches of the same job one machine", async () => {

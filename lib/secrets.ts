@@ -1,7 +1,8 @@
-// Each repo's secrets live in its own boat environment, `kiln-<repo>`. A job's
-// machine starts in its repo's environment, so a job sees that repo's secrets
-// and no other repo's. Values go from a person, through code, into boat; they
-// never pass through a model, a log, or the board.
+// A repo's or project's secrets live in boat environments, one per group: how
+// far its secrets reach. A job names the group it needs (`none` by default)
+// and its machine starts in that group's environment, so it sees that group's
+// secrets and no other group's or project's. Values go from a person, through
+// code, into boat; they never pass through a model, a log, or the board.
 
 import { type Boat, type Environment, type EnvironmentFlags, variableNames } from "./boat.ts";
 
@@ -14,8 +15,33 @@ export const REPO_ENVIRONMENT_FLAGS: EnvironmentFlags = {
   passAgentsCredentials: false,
 };
 
-export function environmentName(repoKey: string): string {
-  return `kiln-${repoKey}`.replace(/[^a-zA-Z0-9._-]/g, "-").slice(0, 64);
+/** How far a group's secrets reach. A secret's name says what it is; its group says where. */
+export const SECRET_GROUPS = ["staging", "production-read", "production-write"] as const;
+export type SecretGroup = (typeof SECRET_GROUPS)[number];
+/** What a job gets: no secrets, or one group's. */
+export const JOB_SECRETS = ["none", ...SECRET_GROUPS] as const;
+export type JobSecrets = (typeof JOB_SECRETS)[number];
+
+/** What each group holds, for the agent's tools and the forms people save secrets in. */
+export const GROUP_MEANING: Readonly<Record<SecretGroup, string>> = {
+  staging:
+    "staging and development: test databases, sandbox and staging API keys, keys that only spend money",
+  "production-read":
+    "production, read only: read-only database logins, read-only API keys, billing and analytics reads",
+  "production-write":
+    "production, able to change it: write database logins, deploy tokens, cluster credentials, admin API keys",
+};
+
+/** The environment of a job with no secrets: one for every project, holding nothing. */
+export const NO_SECRETS_ENVIRONMENT = "kiln-none";
+
+export function environmentName(repoKey: string, group: SecretGroup): string {
+  return `kiln-${repoKey}-${group}`.replace(/[^a-zA-Z0-9._-]/g, "-").slice(0, 64);
+}
+
+/** The environment a job's machine starts in. */
+export function jobEnvironmentName(repoKey: string, secrets: JobSecrets): string {
+  return secrets === "none" ? NO_SECRETS_ENVIRONMENT : environmentName(repoKey, secrets);
 }
 
 /**
@@ -57,15 +83,59 @@ const RESERVED = new Set([
   "BOAT_CLI_TOKEN",
 ]);
 
-/** Why a name can't be a repo secret, or null when it can. */
-export function secretNameIssue(name: string): string | null {
+/**
+ * Each group's name prefix. A production secret's name says so, so the repo's own code, which reads
+ * plain names such as DATABASE_URL, never picks one up by accident: a job passes it on purpose, to
+ * the one step that needs it. Staging names are plain, for the code and its tests to read as they are.
+ */
+export const GROUP_PREFIX: Readonly<Record<SecretGroup, string>> = {
+  staging: "",
+  "production-read": "PROD_READ_",
+  "production-write": "PROD_WRITE_",
+};
+
+/** Words that say where a secret reaches, which only a group's prefix may say. */
+const WHERE_WORDS = new Set([
+  "DEV",
+  "DEVELOPMENT",
+  "STAGE",
+  "STAGING",
+  "STG",
+  "PROD",
+  "PRODUCTION",
+  "PRD",
+  "READ",
+  "READONLY",
+  "RO",
+  "WRITE",
+  "RW",
+]);
+
+/** Why a name can't be a secret in this group, or null when it can. */
+export function secretNameIssue(name: string, group: SecretGroup): string | null {
   if (!/^[A-Z][A-Z0-9_]{0,127}$/.test(name)) {
     return "use capital letters, digits, and underscores, starting with a letter, like LINEAR_API_KEY";
   }
   if (RESERVED.has(name) || name.startsWith("KILN_") || name.startsWith("GIT_")) {
     return `${name} is reserved for kiln's workers`;
   }
-  return null;
+  const prefix = GROUP_PREFIX[group];
+  const named = SECRET_GROUPS.find((other) => GROUP_PREFIX[other] && name.startsWith(GROUP_PREFIX[other]));
+  const what = named ? name.slice(GROUP_PREFIX[named].length) : name;
+  // READ and WRITE say what a token does (GRAFANA_READ_TOKEN); only the environment words are refused there.
+  const where = what
+    .split("_")
+    .filter((word) => WHERE_WORDS.has(word) && word !== "READ" && word !== "WRITE");
+  if (named === group && what && where.length === 0) return null;
+  if (!named && !prefix && where.length === 0) return null;
+  const plain = what
+    .split("_")
+    .filter((word) => !where.includes(word))
+    .join("_");
+  const rule = prefix
+    ? `a ${group} secret's name is ${prefix} and then what it is`
+    : `a ${group} secret's name says only what it is`;
+  return plain ? `${rule}, so ${prefix}${plain}` : rule;
 }
 
 export class SecretError extends Error {
@@ -77,21 +147,24 @@ const flagsDrift = (environment: Environment) =>
     (flag) => environment[flag] !== REPO_ENVIRONMENT_FLAGS[flag],
   );
 
+type Log = (event: string, fields: Record<string, unknown>) => void;
+
 /**
- * The repo's environment, created on first use. A new boat environment passes everything, and someone
+ * A job's environment, created on first use. A new boat environment passes everything, and someone
  * could switch a pass on in the dashboard later, so the flags are set on creation and put back whenever
  * they drift: a job's CLI runs without permission prompts and must not get the owner's logins.
  */
-export async function repoEnvironment(
+export async function jobEnvironment(
   boat: Boat,
   repoKey: string,
-  log: (event: string, fields: Record<string, unknown>) => void = () => undefined,
+  secrets: JobSecrets,
+  log: Log = () => undefined,
 ): Promise<Environment> {
-  const name = environmentName(repoKey);
+  const name = jobEnvironmentName(repoKey, secrets);
   let environment = (await boat.environments()).find((candidate) => candidate.name === name);
   if (!environment) {
     environment = await boat.createEnvironment(name);
-    log("secrets.environment_created", { repo: repoKey, environment: name });
+    log("secrets.environment_created", { repo: repoKey, secrets, environment: name });
   }
   const drift = flagsDrift(environment);
   if (drift.length > 0) {
@@ -102,18 +175,57 @@ export async function repoEnvironment(
   return environment;
 }
 
-export async function setSecret(boat: Boat, repoKey: string, name: string, value: string): Promise<void> {
-  const issue = secretNameIssue(name);
+export async function setSecret(
+  boat: Boat,
+  repoKey: string,
+  group: SecretGroup,
+  name: string,
+  value: string,
+): Promise<void> {
+  const issue = secretNameIssue(name, group);
   if (issue) throw new SecretError(issue);
   if (value.length === 0) throw new SecretError("the value is empty");
   if (/[\r\n]/.test(value)) throw new SecretError("the value must be one line");
-  const environment = await repoEnvironment(boat, repoKey);
+  const environment = await jobEnvironment(boat, repoKey, group);
   await boat.setVariable(environment.id, name, value);
 }
 
-/** The names of a repo's secrets. Never the values. */
-export async function secretNames(boat: Boat, repoKey: string): Promise<string[]> {
-  const name = environmentName(repoKey);
+/** Deletes a secret from a group. False when the group had no such secret. */
+export async function deleteSecret(
+  boat: Boat,
+  repoKey: string,
+  group: SecretGroup,
+  name: string,
+): Promise<boolean> {
+  const environment = (await boat.environments()).find(
+    (candidate) => candidate.name === environmentName(repoKey, group),
+  );
+  if (!environment || !variableNames(environment.envContents).includes(name)) return false;
+  await boat.deleteVariable(environment.id, name);
+  return true;
+}
+
+/** The names of a group's secrets, or of none for a job without secrets. Never the values. */
+export async function secretNames(boat: Boat, repoKey: string, secrets: JobSecrets): Promise<string[]> {
+  if (secrets === "none") return [];
+  const name = environmentName(repoKey, secrets);
   const environment = (await boat.environments()).find((candidate) => candidate.name === name);
   return environment ? variableNames(environment.envContents) : [];
+}
+
+/** The names in every group of a repo or project, from one read of boat. */
+export async function secretNamesByGroup(
+  boat: Boat,
+  repoKey: string,
+): Promise<Record<SecretGroup, string[]>> {
+  const environments = await boat.environments();
+  const namesIn = (group: SecretGroup) => {
+    const environment = environments.find((candidate) => candidate.name === environmentName(repoKey, group));
+    return environment ? variableNames(environment.envContents) : [];
+  };
+  return {
+    staging: namesIn("staging"),
+    "production-read": namesIn("production-read"),
+    "production-write": namesIn("production-write"),
+  };
 }

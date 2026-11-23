@@ -914,6 +914,23 @@ describe("harness adapters", () => {
     expect(buildPrompt({ ...spec, kind: "investigate" }, where, [])).toContain("Investigate and report.");
     expect(buildPrompt(spec, where, [])).toContain("QUESTION: ");
   });
+
+  it("lists a job's secrets with what they are, and keeps production ones away from the repo's own code", () => {
+    const where = { id: "1", github: "acme/web", branch: "kiln/1", resumed: false };
+    const production = buildPrompt(spec, where, [], undefined, [], {
+      group: "production-read",
+      secrets: { PROD_READ_DATABASE_URL: "Production database, read-only login." },
+    });
+    expect(production).toContain("- `PROD_READ_DATABASE_URL`: Production database, read-only login.");
+    expect(production).toContain('DATABASE_URL="$PROD_READ_DATABASE_URL"');
+    const staging = buildPrompt(spec, where, [], undefined, [], {
+      group: "staging",
+      secrets: { DATABASE_URL: "Staging database." },
+    });
+    expect(staging).toContain("- `DATABASE_URL`: Staging database.");
+    expect(staging).not.toContain("by accident");
+    expect(buildPrompt(spec, where, [])).not.toContain("# Secrets");
+  });
 });
 
 describe("failure reports", () => {

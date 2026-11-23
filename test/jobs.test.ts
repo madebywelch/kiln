@@ -200,7 +200,7 @@ describe("encodeJob and decodeJob", () => {
       harness: "claude",
       slack: "C0123/1731712345.000100",
     });
-    expect(decodeJob(encoded)).toEqual(spec);
+    expect(decodeJob(encoded)).toEqual({ ...spec, secrets: "none" });
   });
 
   it("round-trips a job without a model or an origin", () => {
@@ -208,7 +208,17 @@ describe("encodeJob and decodeJob", () => {
     const encoded = encodeJob(bare);
     expect(encoded.labels.model).toBeUndefined();
     expect(encoded.labels.slack).toBeUndefined();
-    expect(decodeJob(encoded)).toEqual(bare);
+    expect(decodeJob(encoded)).toEqual({ ...bare, secrets: "none" });
+  });
+
+  it("carries a job's secret group, and refuses one that isn't a group", () => {
+    const encoded = encodeJob({ ...spec, secrets: "production-read" });
+    expect(encoded.labels.secrets).toBe("production-read");
+    expect(decodeJob(encoded).secrets).toBe("production-read");
+    expect(encodeJob({ ...spec, secrets: "none" }).labels.secrets).toBeUndefined();
+    expect(() => decodeJob({ ...encoded, labels: { ...encoded.labels, secrets: "everything" } })).toThrow(
+      /secrets=everything/,
+    );
   });
 
   it("refuses to encode what a board label cannot hold", () => {
@@ -299,7 +309,7 @@ describe("the asker", () => {
     const withAsker = { ...spec, origin: { ...(spec.origin as NonNullable<JobSpec["origin"]>), asker } };
     const encoded = encodeJob(withAsker);
     expect(JSON.parse(encoded.labels.asker ?? "")).toEqual(asker);
-    expect(decodeJob(encoded)).toEqual(withAsker);
+    expect(decodeJob(encoded)).toEqual({ ...withAsker, secrets: "none" });
     expect(askerAuth(asker)).toEqual({
       authenticator: "slack-webhook",
       issuer: "slack:T0001",

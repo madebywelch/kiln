@@ -23,12 +23,14 @@ const failed = reportMessage(
     workKept: false,
     keptUntil: null,
     priority: false,
+    secrets: "staging",
   },
   "",
 );
 
 export default defineEval({
-  description: "A job paused for a missing secret gets a request_secret button tied to the job, not a retry.",
+  description:
+    "A job paused for a missing secret gets a request_secret button in the job's group, tied to the job, not a retry.",
   async test(t) {
     const session = await t.session({ stubs });
     const turn = await session.send(failed);
@@ -36,9 +38,10 @@ export default defineEval({
     turn.calledTool("request_secret", {
       count: 1,
       input: (input: unknown) => {
-        const asked = (input ?? {}) as { repo?: string; name?: string; job?: string };
+        const asked = (input ?? {}) as { repo?: string; group?: string; name?: string; job?: string };
         return (
           asked.repo === "web" &&
+          asked.group === "staging" &&
           asked.name === "LINEAR_API_KEY" &&
           asked.job?.replace(/^#/, "") === "b799f813"
         );

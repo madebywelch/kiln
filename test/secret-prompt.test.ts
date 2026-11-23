@@ -1,11 +1,15 @@
 import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
+  DELETE_ACTION_ID,
+  deleteBlocks,
   handleInteractivity,
   type InteractivityDeps,
   MODAL_CALLBACK_ID,
   OPEN_ACTION_ID,
   requestBlocks,
+  type SecretDeletion,
+  type SecretRequest,
   secretEditors,
   verifySlackSignature,
 } from "../agent/lib/secret-prompt.ts";
@@ -30,9 +34,10 @@ function signed(payload: unknown, at = NOW, secret = SECRET): Request {
 function harness(overrides: Partial<InteractivityDeps> = {}) {
   const calls = {
     views: [] as Record<string, unknown>[],
-    secrets: [] as [string, string, string][],
+    secrets: [] as [SecretRequest, string, string][],
+    deleted: [] as SecretDeletion[],
     posts: [] as string[],
-    resumed: [] as [string, string][],
+    resumed: [] as [string, string, string][],
     forwarded: 0,
     logs: [] as { event: string; fields?: Record<string, unknown> }[],
     pending: [] as Promise<unknown>[],
@@ -44,14 +49,18 @@ function harness(overrides: Partial<InteractivityDeps> = {}) {
     openView: async (_trigger, view) => {
       calls.views.push(view);
     },
-    setSecret: async (repo, name, value) => {
-      calls.secrets.push([repo, name, value]);
+    setSecret: async (request, value, savedBy) => {
+      calls.secrets.push([request, value, savedBy]);
+    },
+    deleteSecret: async (deletion) => {
+      calls.deleted.push(deletion);
+      return deletion.name !== "GONE";
     },
     postMessage: async (_channel, _thread, text) => {
       calls.posts.push(text);
     },
-    resumeJob: async (job, repo) => {
-      calls.resumed.push([job, repo]);
+    resumeJob: async (job, repo, group) => {
+      calls.resumed.push([job, repo, group]);
       return `Job #${job} is resuming.`;
     },
     forward: async () => {
@@ -68,7 +77,14 @@ function harness(overrides: Partial<InteractivityDeps> = {}) {
   return { deps, calls };
 }
 
-const click = (user: string, value = JSON.stringify({ repo: "web", name: "LINEAR_API_KEY" })) => ({
+const request: SecretRequest = {
+  repo: "web",
+  group: "staging",
+  name: "LINEAR_API_KEY",
+  description: "Linear, for its MCP server.",
+};
+
+const click = (user: string, value = JSON.stringify(request)) => ({
   type: "block_actions",
   trigger_id: "trig",
   user: { id: user },
@@ -82,12 +98,7 @@ const submit = (user: string, value: string) => ({
   user: { id: user },
   view: {
     callback_id: MODAL_CALLBACK_ID,
-    private_metadata: JSON.stringify({
-      repo: "web",
-      name: "LINEAR_API_KEY",
-      channel: "C1",
-      thread: "1.0",
-    }),
+    private_metadata: JSON.stringify({ ...request, channel: "C1", thread: "1.0" }),
     state: { values: { secret: { value: { value } } } },
   },
 });
@@ -128,8 +139,7 @@ describe("handleInteractivity", () => {
     expect(response.status).toBe(200);
     expect(calls.views[0]).toMatchObject({ callback_id: MODAL_CALLBACK_ID });
     expect(JSON.parse(String(calls.views[0]?.private_metadata))).toEqual({
-      repo: "web",
-      name: "LINEAR_API_KEY",
+      ...request,
       channel: "C1",
       thread: "1.0",
     });
@@ -145,7 +155,7 @@ describe("handleInteractivity", () => {
   it("refuses a button naming a repo kiln doesn't know", async () => {
     const { deps, calls } = harness();
     await handleInteractivity(
-      signed(click("U_ADMIN", JSON.stringify({ repo: "elsewhere", name: "K" }))),
+      signed(click("U_ADMIN", JSON.stringify({ ...request, repo: "elsewhere" }))),
       deps,
     );
     expect(JSON.stringify(calls.views[0])).toContain("no longer names a kiln repo");
@@ -155,10 +165,10 @@ describe("handleInteractivity", () => {
     const { deps, calls } = harness();
     const response = await handleInteractivity(signed(submit("U_ADMIN", " lin_secret ")), deps);
     expect(await response.json()).toEqual({ response_action: "clear" });
-    expect(calls.secrets).toEqual([["web", "LINEAR_API_KEY", "lin_secret"]]);
+    expect(calls.secrets).toEqual([[request, "lin_secret", "U_ADMIN"]]);
     await Promise.all(calls.pending);
     expect(calls.posts).toEqual([
-      "<@U_ADMIN> set `LINEAR_API_KEY` for *web*. New jobs on it get the new value.",
+      "<@U_ADMIN> set `LINEAR_API_KEY` in *web*'s *staging* secrets. Jobs started with its staging secrets get the new value.",
     ]);
     expect(JSON.stringify(calls.logs)).not.toContain("lin_secret");
   });
@@ -166,22 +176,18 @@ describe("handleInteractivity", () => {
   it("resumes the paused job the secret was asked for, and says so", async () => {
     const { deps, calls } = harness();
     const payload = submit("U_ADMIN", "lin_secret");
-    payload.view.private_metadata = JSON.stringify({
-      repo: "web",
-      name: "LINEAR_API_KEY",
-      channel: "C1",
-      thread: "1.0",
-      job: "813",
-    });
+    payload.view.private_metadata = JSON.stringify({ ...request, channel: "C1", thread: "1.0", job: "813" });
     await handleInteractivity(signed(payload), deps);
     await Promise.all(calls.pending);
-    expect(calls.resumed).toEqual([["813", "web"]]);
-    expect(calls.posts).toEqual(["<@U_ADMIN> set `LINEAR_API_KEY` for *web*. Job #813 is resuming."]);
+    expect(calls.resumed).toEqual([["813", "web", "staging"]]);
+    expect(calls.posts).toEqual([
+      "<@U_ADMIN> set `LINEAR_API_KEY` in *web*'s *staging* secrets. Job #813 is resuming.",
+    ]);
   });
 
   it("carries the job from the button into the form", async () => {
     const { deps, calls } = harness();
-    const value = JSON.stringify({ repo: "web", name: "LINEAR_API_KEY", job: "813" });
+    const value = JSON.stringify({ ...request, job: "813" });
     await handleInteractivity(signed(click("U_ADMIN", value)), deps);
     expect(JSON.parse(String(calls.views[0]?.private_metadata)).job).toBe("813");
   });
@@ -206,6 +212,37 @@ describe("handleInteractivity", () => {
     });
   });
 
+  const remove = (user: string, name = "HELLO_WORLD") => ({
+    type: "block_actions",
+    user: { id: user },
+    channel: { id: "C1" },
+    message: { ts: "2.0", thread_ts: "1.0" },
+    actions: [
+      { action_id: DELETE_ACTION_ID, value: JSON.stringify({ repo: "web", group: "staging", name }) },
+    ],
+  });
+
+  it("deletes a secret once its confirmed button is clicked, and tells the thread", async () => {
+    const { deps, calls } = harness();
+    const response = await handleInteractivity(signed(remove("U_ADMIN")), deps);
+    expect(response.status).toBe(200);
+    await Promise.all(calls.pending);
+    expect(calls.deleted).toEqual([{ repo: "web", group: "staging", name: "HELLO_WORLD" }]);
+    expect(calls.posts).toEqual([
+      "<@U_ADMIN> deleted `HELLO_WORLD` from *web*'s *staging* secrets. Jobs that start now don't have it.",
+    ]);
+  });
+
+  it("says when there was nothing to delete, and refuses someone who may not edit", async () => {
+    const { deps, calls } = harness();
+    await handleInteractivity(signed(remove("U_ADMIN", "GONE")), deps);
+    await handleInteractivity(signed(remove("U_STRANGER")), deps);
+    await Promise.all(calls.pending);
+    expect(calls.deleted).toEqual([{ repo: "web", group: "staging", name: "GONE" }]);
+    expect(calls.posts[0]).toContain("wasn't in *web*'s *staging* secrets");
+    expect(calls.posts[1]).toContain("U_STRANGER");
+  });
+
   it("forwards every other payload to eve unchanged", async () => {
     const { deps, calls } = harness();
     const response = await handleInteractivity(
@@ -223,12 +260,22 @@ describe("handleInteractivity", () => {
 });
 
 describe("requestBlocks", () => {
-  it("names the repo, the secret, and where it's stored, with a button carrying no value", () => {
-    const blocks = JSON.stringify(
-      requestBlocks({ repo: "web", name: "LINEAR_API_KEY" }, "For Linear's MCP server."),
-    );
-    expect(blocks).toContain("kiln-web");
+  it("names the repo, the group, the secret, what it is, and where it's stored, with a button carrying no value", () => {
+    const blocks = JSON.stringify(requestBlocks({ ...request, expires: "2026-12-01" }));
+    expect(blocks).toContain("kiln-web-staging");
     expect(blocks).toContain(OPEN_ACTION_ID);
-    expect(blocks).toContain("For Linear's MCP server.");
+    expect(blocks).toContain("Linear, for its MCP server.");
+    expect(blocks).toContain("Expires 2026-12-01.");
+  });
+});
+
+describe("deleteBlocks", () => {
+  it("asks Slack to confirm before the delete reaches kiln", () => {
+    const [, actions] = deleteBlocks(
+      { repo: "web", group: "production-read", name: "HELLO_WORLD" },
+      "A test value.",
+    );
+    expect(JSON.stringify(actions)).toContain('"confirm":{');
+    expect(JSON.stringify(actions)).toContain("kiln-web-production-read");
   });
 });

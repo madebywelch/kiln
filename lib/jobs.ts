@@ -15,6 +15,7 @@ import {
   type Selection,
 } from "./config.ts";
 import type { RepoConfig } from "./deployment.ts";
+import { JOB_SECRETS, type JobSecrets } from "./secrets.ts";
 
 export { type JobKind, KINDS };
 
@@ -41,6 +42,8 @@ export const BRANCH_LABEL = "branch";
 /** A queued job with this label starts before older ones, after jobs with work to continue. */
 export const PRIORITY_LABEL = "priority";
 export const PRIORITY_HIGH = "high";
+/** Which of its project's secret groups a job's machine gets; absent means none. */
+export const SECRETS_LABEL = "secrets";
 /** A job blocked with this kind waits for the inference endpoint, not for a person. */
 export const INFERENCE_KIND = "inference";
 /** When the agent next checks whether the endpoint is back, as an ISO time. */
@@ -168,6 +171,8 @@ export interface JobSpec extends Selection {
   readonly origin: SlackOrigin | undefined;
   /** Starts before older queued jobs: for a job that can't wait its turn. */
   readonly priority?: boolean | undefined;
+  /** The secret group its machine gets. Default: none. */
+  readonly secrets?: JobSecrets | undefined;
 }
 
 export class JobError extends Error {
@@ -296,6 +301,7 @@ export function encodeJob(spec: JobSpec): EncodedJob {
     labels.slack = labelValue("slack origin", `${spec.origin.channelId}/${spec.origin.threadTs}`);
   if (spec.origin?.asker) labels.asker = labelValue("asker", JSON.stringify(spec.origin.asker));
   if (spec.priority) labels[PRIORITY_LABEL] = PRIORITY_HIGH;
+  if (spec.secrets && spec.secrets !== "none") labels[SECRETS_LABEL] = spec.secrets;
   return { text: `## ${title}\n\n${brief}`, labels };
 }
 
@@ -337,6 +343,8 @@ export function decodeJob(root: {
     harness: oneOf("harness", labels.harness, HARNESSES),
     effort: oneOf("effort", labels.effort, EFFORTS),
     model: labels.model,
+    secrets:
+      labels[SECRETS_LABEL] === undefined ? "none" : oneOf(SECRETS_LABEL, labels[SECRETS_LABEL], JOB_SECRETS),
   };
 }
 

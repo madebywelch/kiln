@@ -9,7 +9,9 @@ export const stubsFor = (runsOn: string): ToolStub[] => [
   {
     id: "start-job",
     tool: "start_job",
-    outcome: { response: { job: "#b799fe5c", state: "ready", runsOn, reportsTo: "this thread" } },
+    outcome: {
+      response: { job: "#b799fe5c", state: "ready", runsOn, secrets: "none", reportsTo: "this thread" },
+    },
   },
   { id: "list-jobs", tool: "list_jobs", outcome: { response: { jobs: [] } } },
   {
@@ -42,7 +44,12 @@ export const stubsFor = (runsOn: string): ToolStub[] => [
   {
     id: "request-secret",
     tool: "request_secret",
-    outcome: { response: { asked: "LINEAR_API_KEY", repo: "web" } },
+    outcome: { response: { asked: "LINEAR_API_KEY", repo: "web", group: "staging" } },
+  },
+  {
+    id: "delete-secret",
+    tool: "delete_secret",
+    outcome: { response: { offered: "HELLO_WORLD", repo: "web", group: "staging" } },
   },
   { id: "drive-list", tool: "drive_list", outcome: { response: { files: [] } } },
   {
@@ -63,7 +70,13 @@ export const stubsFor = (runsOn: string): ToolStub[] => [
   {
     id: "list-secrets",
     tool: "list_secrets",
-    outcome: { response: { repo: "web", set: [], missingForMcp: [] } },
+    outcome: {
+      response: {
+        repo: "web",
+        groups: { staging: [], "production-read": [], "production-write": [] },
+        mcpServers: {},
+      },
+    },
   },
 ];
 

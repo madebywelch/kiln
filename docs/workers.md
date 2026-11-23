@@ -84,21 +84,34 @@ Claude jobs run Claude Code against the deployment's inference endpoint, `INFERE
 
 ## Repo secrets
 
-Each repo's secrets live in its own boat environment, `kiln-<repo>`. kiln creates the environment on first use. The environment passes secrets and nothing else: no GitHub login, no boat key, no agent logins. If someone switches one of those on in the dashboard, kiln switches it off again before the next launch.
+A repo's or project's secrets live in three groups, by how far they reach, each its own boat environment, `kiln-<key>-<group>` (`lib/secrets.ts`):
 
-- **Setting one.** Ask the agent in Slack ("set the Linear key for the website"), or it asks when a job is paused for one. It posts a button, and the button opens a Slack form. The value goes from the form to boat; the agent never sees it. Anyone in the workspace can set them until `KILN_SECRET_ADMINS` lists Slack user IDs; then only those can, and anyone else who clicks is shown their ID to pass on.
-- **Using one.** Jobs get the repo's secrets as environment variables, so MCP servers, tests, and dev servers can read them. A new value reaches the next job; a running one keeps what it started with.
-- **Hidden in output.** The agent gives the worker the names of the job's secrets (`KILN_SECRET_NAMES`, never values), and the worker replaces each value with `[NAME hidden]` in everything that leaves the machine or outlives the run: the job update and settle message, returned files that are text, the pull request description, its own log, the job's logs, and the CLI's own logs and sessions on the machine (`worker/mask.ts`). It hides the value as is, URL-encoded, and base64-encoded, a URL's password on its own, and long tokens inside a structured or base64 value (a kubeconfig's token). Values under 8 characters are left alone. When it hid something, the update starts with **Secrets hidden** and the names. It refuses to push commits that hold a secret's value and fails the job, naming the secret.
-- **Seeing them.** The agent's `list_secrets` shows names only. `boat env info kiln-<repo>` shows everything.
+| Group | Holds |
+|---|---|
+| `staging` | staging and development: test databases, sandbox and staging API keys, keys that only spend money |
+| `production-read` | production, read only: read-only database logins, read-only API keys, billing and analytics reads |
+| `production-write` | production, able to change it: write database logins, deploy tokens, cluster credentials, admin API keys |
+
+A job names one group in its `secrets` label, or none, the default, and its machine starts in that group's environment, or in `kiln-none`, which holds nothing. kiln creates each environment on first use. They pass secrets and nothing else: no GitHub login, no boat key, no agent logins. If someone switches one of those on in the dashboard, kiln switches it off again before the next launch.
+
+Each group has a fixed name prefix (`GROUP_PREFIX`): staging names are plain (`DATABASE_URL`), production-read names start `PROD_READ_` (`PROD_READ_DATABASE_URL`), production-write names start `PROD_WRITE_`. The rest of the name says what the secret is, with no other environment word (`DEV`, `STAGING`, `PROD`, `READONLY`, and the like), and kiln refuses a name that doesn't fit its group. A name and its group can't disagree, and the same name means the same thing in every project. The prefix also keeps production away from a repo's own code, which reads plain names: a job with production secrets is told to pass one, under the name the code reads, to the one command that needs it.
+
+What a secret is, who saved it, when, and its expiry are kept beside it in the agent's Blob store (`kiln/secrets/secret-labels.json`, `lib/secret-labels.ts`), because boat keeps names and values only. A label holds no value.
+
+- **Setting one.** Ask the agent in Slack ("set the Linear key for the website"), or it asks when a job is paused for one. It names the group, a description, and an expiry if there is one, and posts a button that opens a Slack form. The value goes from the form to boat; the agent never sees it. Anyone in the workspace can set them until `KILN_SECRET_ADMINS` lists Slack user IDs; then only those can, and anyone else who clicks is shown their ID to pass on.
+- **Using one.** A job gets its group's secrets as environment variables, so tests and dev servers can read them, and its prompt lists their names and descriptions. It gets only the MCP servers whose every `${NAME}` its group holds. A new value reaches the next job; a running one keeps what it started with.
+- **Deleting one.** The agent's `delete_secret` posts a Delete button that Slack asks the person to confirm; the delete and its label go together.
+- **Hidden in output.** The agent gives the worker the names and descriptions of the job's secrets (`KILN_SECRETS`, never values), and the worker replaces each value with `[NAME hidden]` in everything that leaves the machine or outlives the run: the job update and settle message, returned files that are text, the pull request description, its own log, the job's logs, and the CLI's own logs and sessions on the machine (`worker/mask.ts`). It hides the value as is, URL-encoded, and base64-encoded, a URL's password on its own, and long tokens inside a structured or base64 value (a kubeconfig's token). Values under 8 characters are left alone. When it hid something, the update starts with **Secrets hidden** and the names. It refuses to push commits that hold a secret's value and fails the job, naming the secret.
+- **Seeing them.** The agent's `list_secrets` shows each group's names, descriptions, who saved them, and expiry; never values. `boat env info kiln-<key>-<group>` shows everything.
 
 ### Paused for secrets
 
-A job pauses, instead of failing, when its repo lacks a secret it needs:
+A job pauses, instead of failing, when its group lacks a secret it needs:
 
-- **Before it runs:** its MCP servers name a secret (`${NAME}`) the repo doesn't have. The worker checks before the CLI starts.
+- **Before it runs:** an MCP server it was given names a secret its environment lacks. The agent gives a job only servers its group holds every secret for, so this means the secret was deleted after launch.
 - **Mid-run:** the CLI ends with `SECRET: NAME, OTHER_NAME: what for`. Every job's prompt tells it to name the variable and never ask for the value. The work so far stays on the machine.
 
-The worker blocks the job with kind `needs_secret` and labels it `needs_secrets=NAME,OTHER_NAME`. The agent posts a "Set NAME" button for each name, tied to the job. Saving the last missing one unblocks the job, and within a minute its machine resumes, upgraded to the environment's latest version so the secret is in its environment, and continues the session. A job that paused before anything ran gets a fresh machine. Until then the thread says which names are still missing.
+The worker blocks the job with kind `needs_secret` and labels it `needs_secrets=NAME,OTHER_NAME`. The agent posts a "Set NAME" button for each name, in the job's group, tied to the job. A job with no secrets can't gain a group on its machine, so it is started again with one instead. Saving the last missing one unblocks the job, and within a minute its machine resumes, upgraded to the environment's latest version so the secret is in its environment, and continues the session. A job that paused before anything ran gets a fresh machine. Until then the thread says which names are still missing.
 - Names a secret can't take: the worker's own settings (`GH_TOKEN`, `BOARD_TOKEN`, model credentials), anything starting `KILN_` or `GIT_`, `PATH`, `HOME`, `NODE_OPTIONS`, and boat's reserved names.
 
 ## Skills, house rules, and MCP

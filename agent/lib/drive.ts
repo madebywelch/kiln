@@ -16,7 +16,7 @@ export function versionOf(etag: string): string {
   return etag.replace(/^W\//, "");
 }
 
-export function blobDrive(storeId: string): DriveStore {
+export function blobDrive(storeId: string, root = ROOT): DriveStore {
   const options = { storeId };
   return {
     async list(prefix) {
@@ -24,14 +24,14 @@ export function blobDrive(storeId: string): DriveStore {
       let cursor: string | undefined;
       do {
         const page = await list({
-          prefix: `${ROOT}${prefix}`,
+          prefix: `${root}${prefix}`,
           limit: 1000,
           ...(cursor ? { cursor } : {}),
           ...options,
         });
         for (const blob of page.blobs) {
           entries.push({
-            path: blob.pathname.slice(ROOT.length),
+            path: blob.pathname.slice(root.length),
             size: blob.size,
             updatedAt: blob.uploadedAt.toISOString(),
           });
@@ -41,7 +41,7 @@ export function blobDrive(storeId: string): DriveStore {
       return entries;
     },
     async read(path) {
-      const result = await get(`${ROOT}${path}`, { access: "private", useCache: false, ...options });
+      const result = await get(`${root}${path}`, { access: "private", useCache: false, ...options });
       if (!result || result.statusCode !== 200) return null;
       return {
         bytes: new Uint8Array(await new Response(result.stream).arrayBuffer()),
@@ -51,7 +51,7 @@ export function blobDrive(storeId: string): DriveStore {
     },
     async write(path, bytes, contentType, ifVersion) {
       try {
-        await put(`${ROOT}${path}`, Buffer.from(bytes), {
+        await put(`${root}${path}`, Buffer.from(bytes), {
           access: "private",
           addRandomSuffix: false,
           allowOverwrite: true,
@@ -66,12 +66,24 @@ export function blobDrive(storeId: string): DriveStore {
       }
     },
     async remove(path) {
-      await del(`${ROOT}${path}`, options);
+      await del(`${root}${path}`, options);
     },
   };
 }
 
 let local: DriveStore | undefined;
+let localLabels: DriveStore | undefined;
+
+/**
+ * Where kiln keeps what it knows about each secret (lib/secret-labels.ts): beside the drive, not in it, so
+ * the agent's drive tools never edit it.
+ */
+export function secretLabelStore(): DriveStore {
+  const storeId = process.env.EVE_MEMORY_BLOB_STORE_ID;
+  if (storeId) return blobDrive(storeId, "kiln/secrets/");
+  localLabels ??= memoryDrive();
+  return localLabels;
+}
 let defaults: Promise<void> | undefined;
 
 /** The drive, with its default files in place. */

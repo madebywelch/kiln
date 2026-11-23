@@ -25,6 +25,7 @@ import {
   type SlackOrigin,
 } from "./jobs.ts";
 import { FAILED_STARTS_LABEL } from "./machines.ts";
+import type { JobSecrets } from "./secrets.ts";
 
 export interface JobView {
   /** The board's ID, for board operations. Show people `ref`. */
@@ -52,6 +53,8 @@ export interface JobView {
   readonly keptUntil: string | null;
   /** Whether it starts before older queued jobs. */
   readonly priority: boolean;
+  /** The secret group its machine gets. */
+  readonly secrets: JobSecrets;
 }
 
 export function viewJob(root: MessageView): JobView {
@@ -76,6 +79,7 @@ export function viewJob(root: MessageView): JobView {
     workKept: root.labels[RESUME_LABEL] !== undefined,
     keptUntil: root.labels[KEPT_UNTIL_LABEL] ?? null,
     priority: root.labels[PRIORITY_LABEL] === PRIORITY_HIGH,
+    secrets: spec.secrets ?? "none",
   };
 }
 
@@ -370,10 +374,14 @@ export function reportMessage(job: JobView, lastReport: string, files: readonly 
     `Job #${job.ref} "${job.title}" on ${job.repo} (${job.runsOn}, ${job.kind}) is ${job.state}.`,
   ];
   if (job.state === "blocked" && job.secretsNeeded?.length) {
-    lines.push(`It is paused until ${job.repo} has these secrets: ${job.secretsNeeded.join(", ")}.`);
+    lines.push(
+      `It is paused until ${job.repo}'s ${job.secrets} secrets have: ${job.secretsNeeded.join(", ")}.`,
+    );
     if (job.question) lines.push(`The worker says: ${job.question}`);
     lines.push(
-      `Call request_secret for each one with job "#${job.ref}". Saving the last one resumes the job on its own; nobody needs to say retry. Never ask for a value in the thread.`,
+      job.secrets === "none"
+        ? `It runs with no secrets, so saving one can't resume it. Ask which group the secret belongs in, have it saved there with request_secret (no job), then cancel this job and start it again with that group.`
+        : `Call request_secret for each one, in group ${job.secrets}, with job "#${job.ref}". Saving the last one resumes the job on its own; nobody needs to say retry. Never ask for a value in the thread.`,
     );
   } else if (job.state === "blocked") {
     lines.push(`The worker asks: ${job.question ?? "(no question given)"}`);

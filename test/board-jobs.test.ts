@@ -323,6 +323,7 @@ describe("reportMessage", () => {
     workKept: false,
     keptUntil: null,
     priority: false,
+    secrets: "none" as const,
   };
 
   it("tells the agent to relay a question and how to answer it", () => {
@@ -331,11 +332,17 @@ describe("reportMessage", () => {
     expect(message).toContain("answer_job");
   });
 
-  it("tells the agent to ask for each missing secret with the job, and that saving resumes it", () => {
-    const message = reportMessage({ ...job, secretsNeeded: ["LINEAR_API_KEY"] }, "");
-    expect(message).toContain("paused until r has these secrets: LINEAR_API_KEY");
-    expect(message).toContain('request_secret for each one with job "#7"');
+  it("tells the agent to ask for each missing secret in the job's group, with the job, and that saving resumes it", () => {
+    const message = reportMessage({ ...job, secrets: "staging", secretsNeeded: ["LINEAR_API_KEY"] }, "");
+    expect(message).toContain("paused until r's staging secrets have: LINEAR_API_KEY");
+    expect(message).toContain('request_secret for each one, in group staging, with job "#7"');
     expect(message).not.toContain("answer_job");
+  });
+
+  it("tells the agent a job with no secrets can't be resumed by saving one", () => {
+    const message = reportMessage({ ...job, secretsNeeded: ["LINEAR_API_KEY"] }, "");
+    expect(message).toContain("It runs with no secrets, so saving one can't resume it");
+    expect(message).toContain("start it again with that group");
   });
 
   it("clips a long report", () => {

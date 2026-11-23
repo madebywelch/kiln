@@ -14,6 +14,7 @@ import { z } from "zod";
 import { HARNESSES } from "../lib/config.ts";
 import { McpServerSchema } from "../lib/deployment.ts";
 import { WORKER_SETTINGS_PATH } from "../lib/machines.ts";
+import { JOB_SECRETS } from "../lib/secrets.ts";
 import { type Exec, exec, run } from "./exec.ts";
 import { CLAIM_LOST, harnessEnv, type Logger, type OpenPullRequest, runJob, SHUTDOWN } from "./job.ts";
 import { type Mask, noMask, secretMask } from "./mask.ts";
@@ -69,16 +70,25 @@ const Config = z
         ctx.addIssue({ code: "custom", message: "not a map of MCP servers" });
         return z.NEVER;
       }),
-    /** The names of the secrets in the job's environment, comma-separated: their values are hidden in its output. */
-    KILN_SECRET_NAMES: z
+    /** The job's secret group and each secret's name and description, as JSON from the agent. Never values. */
+    KILN_SECRETS: z
       .string()
       .optional()
-      .transform((value) =>
-        (value ?? "")
-          .split(",")
-          .map((name) => name.trim())
-          .filter(Boolean),
-      ),
+      .transform((value, ctx) => {
+        if (!value) return { group: "none" as const, secrets: {} };
+        let json: unknown;
+        try {
+          json = JSON.parse(value);
+        } catch {
+          json = undefined;
+        }
+        const parsed = z
+          .object({ group: z.enum(JOB_SECRETS), secrets: z.record(z.string(), z.string()) })
+          .safeParse(json);
+        if (parsed.success) return parsed.data;
+        ctx.addIssue({ code: "custom", message: "not {group, secrets: {NAME: description}}" });
+        return z.NEVER;
+      }),
     WORK_DIR: z.string().default("/work"),
     JOB_TIMEOUT_MINUTES: z.coerce.number().int().positive().default(180),
     /** Commit identity. Not GIT_AUTHOR_*: git reads those itself, and an empty one breaks every commit. */
@@ -208,6 +218,7 @@ async function work(config: Config, team: Board, shutdown: AbortSignal, guidance
         : {}),
       gitIdentity: commitIdentity(config, owner),
       mask: logMask,
+      secrets: config.KILN_SECRETS,
       // Claude Code's sessions and logs, OpenCode's, and Codex's: whichever this job's CLI keeps.
       sessionLogs: [".claude/projects", ".local/share/opencode", ".codex/sessions"].map((dir) =>
         join(homedir(), dir),
@@ -283,8 +294,11 @@ async function main(): Promise<void> {
     process.exit(2);
   }
   const config = parsed.data;
-  logMask = secretMask(process.env, config.KILN_SECRET_NAMES);
-  log("secrets.masking", { names: config.KILN_SECRET_NAMES });
+  logMask = secretMask(process.env, Object.keys(config.KILN_SECRETS.secrets));
+  log("secrets.masking", {
+    group: config.KILN_SECRETS.group,
+    names: Object.keys(config.KILN_SECRETS.secrets),
+  });
   if (config.WORKER_HARNESS === "codex" && !existsSync(join(homedir(), ".codex", "auth.json"))) {
     log("config.invalid", {
       field: "codex login",

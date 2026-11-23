@@ -12,7 +12,9 @@ import {
   type MachineDeps,
   reconcileMachines,
 } from "../../lib/machines.ts";
+import { readSecretLabels } from "../../lib/secret-labels.ts";
 import { team } from "./board.ts";
+import { secretLabelStore } from "./drive.ts";
 import { DEFAULT_INFERENCE_MODEL } from "./inference.ts";
 import { slackApi } from "./slack.ts";
 
@@ -83,6 +85,7 @@ export function machineDeps(): MachineDeps | string {
     log,
     notices: slackNotices,
     probeModel: process.env.KILN_MODEL || DEFAULT_INFERENCE_MODEL,
+    secretLabels: () => readSecretLabels(secretLabelStore()),
   };
 }
 

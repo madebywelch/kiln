@@ -5,7 +5,7 @@ kiln runs an AI teammate in Slack. It thinks through ideas with you, keeps one d
 ```
 Slack ──> agent (eve on Vercel) ──start_job──> Vercel Board "jobs" <──claim── one boat.dev machine per job
   ^          drive, skills, tools   │                 │                         Claude Code on your endpoint     
-  │                                 └─ launches ──────┼───────────────────────> the repo's secrets only
+  │                                 └─ launches ──────┼───────────────────────> one group of the repo's secrets, or none
   │                                                   │ report=pending          clone, run, push, draft PR, files
   └───── job-reports schedule, every minute ──────────┘                         stopped while paused, deleted when done
 ```
@@ -13,7 +13,7 @@ Slack ──> agent (eve on Vercel) ──start_job──> Vercel Board "jobs" <
 - **The agent** is an [eve](https://vercel.com/docs/eve) agent on Vercel. It hears Slack, decides when to speak, react, or start a job, and follows the jobs it starts.
 - **Jobs** are tasks on a [Vercel Board](https://vercel.com/docs/board): the brief in the text; repo, kind, harness, model, and effort in the labels.
 - **Workers** run on [boat.dev](https://boat.dev) machines, one per job, launched by the agent when it starts the job and deleted when the job settles, or stopped with the work on them while it is paused. A stopped machine costs nothing; with no jobs running, nothing is billed. A worker claims its job, runs the coding CLI headless in a fresh clone, pushes a branch and opens a draft PR for a change, attaches any files the CLI saved, and settles the job.
-- **Repo secrets** live in a boat environment per repo. A job's machine gets its own repo's secrets and nothing else. People set them through a Slack form the agent never sees.
+- **Repo secrets** live in three groups per repo or project, by how far they reach: staging, production-read, production-write, each a boat environment. A job gets one group's secrets, or none by default. People set them through a Slack form the agent never sees.
 - **Reports** come back through the board. Within a minute of a job settling, the agent's schedule saves the worker's files in its drive and hands the result to the agent in the Slack thread that asked, as the person who asked, so the agent can schedule a check-back from it. The agent relays the result and shares a file only when someone needs to see it.
 - **The wish list** is where the agent reports limitations it runs into in kiln or eve itself: a task per wish in the board's `wishes` channel, for whoever builds kiln to review (`vb read wishes`). Complete a wish when it is built, or fail it with the reason it won't be.
 
@@ -43,7 +43,7 @@ The drive is the agent's only memory: a folder of files it organizes however it 
 - **Questions:** a CLI that needs a person ends with `QUESTION: ...`. The worker blocks the job and its work stays on its machine, which is stopped; the agent asks in the thread, passes the answer back, and the machine resumes with the same Claude Code session, answer in hand. Nothing unfinished is pushed.
 - **Rate limits:** when the inference endpoint runs out, a job pauses instead of failing, its work kept on its stopped machine, and no new Claude job starts. The agent checks the endpoint when the limit says it resets and continues every paused job once it answers. Each asker gets one DM about it, updated when it's over. A job that waits a day fails, its work still kept.
 - **Kept work:** a job that fails after 10 minutes of work keeps its machine, stopped, for 3 days. `retry_job` continues it in the same session, or starts over with `fresh`.
-- **Secrets:** a job whose repo lacks a secret it needs pauses. That includes an MCP server's key, or a credential the CLI asks for by name with `SECRET: NAME`. The agent posts a button for it, and saving the value in the private form resumes the job.
+- **Secrets:** a job whose group lacks a secret it needs, a credential the CLI asks for by name with `SECRET: NAME`, pauses. The agent posts a button for it, and saving the value in the private form resumes the job. A value a job prints becomes `[NAME hidden]` before it leaves the machine.
 
 Say the model in Slack, or don't:
 
@@ -73,7 +73,7 @@ What you ask for wins over the repo's defaults for that kind of job, which win o
 | The workers' house rules | [worker/instructions.md](worker/instructions.md) | `pnpm run deploy` |
 | The workers' skills | [skills/workers/](skills/workers) | `pnpm run deploy` |
 | Worker credentials | `WORKER_*` on the Vercel project; see [docs/workers.md](docs/workers.md) | `pnpm run deploy` |
-| A repo's secrets | Ask the agent in Slack | nothing: the next job gets them |
+| A repo's secrets | Ask the agent in Slack, naming the group | nothing: the next job with that group gets them |
 
 `pnpm run deploy` deploys the agent and pins the code job machines download to the same commit, so commit and push first. It also checks `kiln.config.yaml` and sends it to the Vercel project as `KILN_CONFIG`; a broken file stops the deploy before anything changes.
 
@@ -117,7 +117,7 @@ pnpm exec vb inspect             # the board's UI, served from your machine
 - Anyone in the Slack workspace can talk to the agent and start jobs, and it has one drive for everyone. Restrict senders in `agent/channels/slack.ts` if the workspace stops being private.
 - Other people's messages reach the model as conversation, and its instructions say so. That is a soft boundary.
 - Coding CLIs run with permission prompts off, alone on their job's machine, without the worker's GitHub or Board credentials. Protect each repo's default branch: workers push only `<login>/*` branches, `<login>` being the account behind their `GH_TOKEN`, and never one that existed before their job.
-- A job's machine has its own repo's secrets and none of another repo's, and none of your boat, GitHub, or agent logins. The coding CLI can read its repo's secrets; that is what they are for.
+- A job's machine has one group of its own repo's secrets, or none, and none of another repo's or group's, and none of your boat, GitHub, or agent logins. The coding CLI can read the secrets it was given; that is what they are for.
 - Secret values go from a Slack form to boat. They never reach the agent's model, its logs, or the board. A worker hides them as `[NAME hidden]` in everything a job posts or keeps, and never pushes a commit that holds one. Anyone in the workspace can set them until `KILN_SECRET_ADMINS` lists who may.
 
 ## Develop it

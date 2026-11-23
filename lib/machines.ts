@@ -12,8 +12,10 @@ import { enabledHarnesses, type Harness, keptMachineDays, machineLimits, machine
 import {
   DEFAULT_AGENT_NAME,
   type Deployment,
+  type McpServer,
   parseDeployment,
   projectsOf,
+  secretsNamedBy,
   serversFor,
 } from "./deployment.ts";
 import { type Inference, inferenceFrom, type ProbeResult, probeInference } from "./inference.ts";
@@ -36,7 +38,8 @@ import {
   WAIT_SINCE_LABEL,
   WAIT_UNTIL_LABEL,
 } from "./jobs.ts";
-import { environmentName, repoEnvironment } from "./secrets.ts";
+import type { SecretLabels } from "./secret-labels.ts";
+import { type JobSecrets, jobEnvironment, jobEnvironmentName } from "./secrets.ts";
 
 /** Machine labels: every kiln job machine has kiln=worker, its job's ID, and its harness. */
 export const MACHINE_LABEL = { kiln: "worker" } as const;
@@ -153,6 +156,44 @@ export function harnessIssue(harness: Harness, config: LaunchConfig): string | n
 }
 
 /**
+ * A job's secrets as its worker learns them: the group, and each secret's name with what it is. Names
+ * only: the worker hides their values in everything the job posts and keeps, and tells the CLI what it has.
+ */
+export interface JobSecretsSettings {
+  readonly group: JobSecrets;
+  readonly secrets: Readonly<Record<string, string>>;
+}
+
+/** The MCP servers a job can sign in to: those whose every ${NAME} is among its secrets. */
+export function serversWithSecrets(
+  servers: Readonly<Record<string, McpServer>>,
+  names: readonly string[],
+): Record<string, McpServer> {
+  return Object.fromEntries(
+    Object.entries(servers).filter(([key, server]) =>
+      secretsNamedBy({ [key]: server }).every((name) => names.includes(name)),
+    ),
+  );
+}
+
+/** What the worker learns about a job's secrets, from its environment and the labels kiln keeps. */
+async function jobSecrets(deps: MachineDeps, spec: JobSpec): Promise<JobSecretsSettings> {
+  const group = spec.secrets ?? "none";
+  const environment = await jobEnvironment(deps.boat, spec.repo, group, deps.log);
+  let labels: SecretLabels = {};
+  try {
+    labels = (await deps.secretLabels?.()) ?? {};
+  } catch (error) {
+    deps.log("machines.secret_labels_unreadable", { error: String(error) }); // the job runs without descriptions
+  }
+  const about = labels[environment.name] ?? {};
+  const secrets = Object.fromEntries(
+    variableNames(environment.envContents).map((name) => [name, about[name]?.description ?? ""]),
+  );
+  return { group, secrets };
+}
+
+/**
  * The worker's settings for one job: the shared ones, its harness's credential, and the job. A Claude
  * job gets the inference endpoint.
  */
@@ -161,9 +202,11 @@ export function workerSettings(
   harness: Harness,
   config: LaunchConfig,
   repo?: string,
-  secretNames: readonly string[] = [],
+  secrets: JobSecretsSettings = { group: "none", secrets: {} },
 ): Record<string, string> {
-  const servers = repo ? serversFor(config.deployment, repo) : {};
+  const servers = repo
+    ? serversWithSecrets(serversFor(config.deployment, repo), Object.keys(secrets.secrets))
+    : {};
   const project = repo ? projectsOf(config.deployment)[repo] : undefined;
   const own = KEY_CREDENTIAL[harness];
   const shared = Object.fromEntries(
@@ -188,7 +231,7 @@ export function workerSettings(
       : {}),
     KILN_AGENT_NAME: config.deployment.name ?? DEFAULT_AGENT_NAME,
     // Names only: the worker hides these secrets' values in everything the job posts and keeps.
-    ...(secretNames.length > 0 ? { KILN_SECRET_NAMES: secretNames.join(",") } : {}),
+    ...(Object.keys(secrets.secrets).length > 0 ? { KILN_SECRETS: JSON.stringify(secrets) } : {}),
     ...(Object.keys(servers).length > 0 ? { KILN_MCP_SERVERS: JSON.stringify(servers) } : {}),
     BOARD_PROFILE: harness,
     WORKER_HARNESS: harness,
@@ -243,6 +286,8 @@ export interface MachineDeps {
   /** The model to check the endpoint with when the refusal named none: the agent's own. */
   readonly probeModel?: string;
   readonly notices?: InferenceNotices;
+  /** What kiln records about each secret (lib/secret-labels.ts), for the descriptions a job is told. */
+  readonly secretLabels?: () => Promise<SecretLabels>;
 }
 
 const shortId = (jobId: string) =>
@@ -289,12 +334,13 @@ export async function launchMachine(
   const launches = Number(job.labels[LAUNCHES_LABEL] ?? 0);
   // Before the machine exists, so a second pass at once reuses its idempotency key rather than launching another.
   await team.label(job.id, { set: { [LAUNCHES_LABEL]: String(launches + 1) } });
-  const environment = await repoEnvironment(boat, spec.repo, log);
+  const secrets = await jobSecrets(deps, spec);
+  const environment = jobEnvironmentName(spec.repo, secrets.group);
   const create = (snapshots: boolean) =>
     boat.createMachine({
       name: `kiln-${spec.harness}-${shortId(job.id)}`,
       type: machineType,
-      environment: environment.name,
+      environment,
       ttlSeconds: (config.jobTimeoutMinutes + 30) * 60,
       labels: {
         ...MACHINE_LABEL,
@@ -305,9 +351,7 @@ export async function launchMachine(
       files: [
         {
           path: WORKER_SETTINGS_PATH,
-          content: JSON.stringify(
-            workerSettings(job.id, spec.harness, config, spec.repo, variableNames(environment.envContents)),
-          ),
+          content: JSON.stringify(workerSettings(job.id, spec.harness, config, spec.repo, secrets)),
         },
       ],
       setupScript: setupScript(config.code),
@@ -331,7 +375,8 @@ export async function launchMachine(
     job: job.id,
     machine: machine.id,
     harness: spec.harness,
-    environment: environmentName(spec.repo),
+    environment,
+    secrets: Object.keys(secrets.secrets),
     launch: launches + 1,
   });
   return { machine };
@@ -455,13 +500,11 @@ async function startResumed(deps: MachineDeps, config: LaunchConfig, machine: Ma
   );
   if (claimed !== "start") return;
   const spec = decodeJob(job);
-  const environment = await repoEnvironment(deps.boat, spec.repo, deps.log);
+  const secrets = await jobSecrets(deps, spec);
   await deps.boat.writeFile(
     machine.id,
     WORKER_SETTINGS_PATH,
-    JSON.stringify(
-      workerSettings(job.id, spec.harness, config, spec.repo, variableNames(environment.envContents)),
-    ),
+    JSON.stringify(workerSettings(job.id, spec.harness, config, spec.repo, secrets)),
   );
   await deps.boat.startCommand(machine.id, setupScript(config.code));
   deps.log("machines.worker_started", { job: job.id, machine: machine.id });
@@ -470,7 +513,7 @@ async function startResumed(deps: MachineDeps, config: LaunchConfig, machine: Ma
 /** Resumes a job's stopped machine on the latest version of its secrets, so it continues where it stopped. */
 async function resumeMachine(deps: MachineDeps, config: LaunchConfig, machine: Machine, job: MessageView) {
   const spec = decodeJob(job);
-  const environment = await repoEnvironment(deps.boat, spec.repo, deps.log);
+  const environment = await jobEnvironment(deps.boat, spec.repo, spec.secrets ?? "none", deps.log);
   try {
     await deps.boat.upgradeEnvironment(environment.id, machine.id);
   } catch (error) {

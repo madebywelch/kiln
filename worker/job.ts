@@ -31,6 +31,8 @@ import {
   WAIT_SINCE_LABEL,
   WAIT_UNTIL_LABEL,
 } from "../lib/jobs.ts";
+import type { JobSecretsSettings } from "../lib/machines.ts";
+import { GROUP_MEANING, GROUP_PREFIX } from "../lib/secrets.ts";
 import { type Exec, run } from "./exec.ts";
 import { type HarnessBins, harnessInvocation, MissingSecrets, resolveMcp } from "./harness.ts";
 import { type Mask, maskBytes, maskFiles, noMask } from "./mask.ts";
@@ -101,6 +103,8 @@ export interface JobDeps {
   readonly mcpServers?: Readonly<Record<string, McpServer>>;
   /** Hides the job's secrets in what it posts and keeps. Default: hides nothing. */
   readonly mask?: Mask;
+  /** The job's secret group and what each of its secrets is, for the CLI's prompt. */
+  readonly secrets?: JobSecretsSettings;
   /** Where the coding CLI keeps its own logs and sessions, masked after each run along with the job's logs. */
   readonly sessionLogs?: readonly string[];
   /** The deployment's inference endpoint (INFERENCE_*), which a Claude job runs on. */
@@ -466,6 +470,7 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string, progress:
         earlier,
         deps.guidance,
         inputs,
+        deps.secrets,
       );
   const reportFile = join(deps.workDir, "logs", `${id}.report.md`);
   // Claude Code's own settings for the deployment's Anthropic-compatible endpoint: the host without /v1, and the key.
@@ -652,6 +657,7 @@ export function buildPrompt(
   earlier: readonly { readonly text: string }[],
   guidance?: string,
   inputs: readonly string[] = [],
+  secrets?: JobSecretsSettings,
 ): string {
   const repos = where.repos ?? [];
   const project = repos.length > 1;
@@ -687,6 +693,25 @@ export function buildPrompt(
       "",
     );
   }
+  const names = Object.entries(secrets?.secrets ?? {});
+  if (secrets && secrets.group !== "none" && names.length > 0) {
+    lines.push(
+      "# Secrets",
+      "",
+      `This job has its ${secrets.group} secrets (${GROUP_MEANING[secrets.group]}) as environment variables:`,
+      "",
+      ...names.map(([name, about]) => `- \`${name}\`${about ? `: ${about}` : ""}`),
+      "",
+      ...(GROUP_PREFIX[secrets.group]
+        ? [
+            `Their names start \`${GROUP_PREFIX[secrets.group]}\` so the repo's own code, which reads plain names such as \`DATABASE_URL\`, never reaches production by accident. Pass one on purpose, under the name the code reads, to the one command that needs it, such as \`DATABASE_URL="$${GROUP_PREFIX[secrets.group]}DATABASE_URL" node scripts/report.ts\`. Never export it for the whole session or write it into a file the tests read.`,
+            "",
+          ]
+        : []),
+      "Use them by name. Never print, log, save, or commit a value, and catch errors that would echo one, such as a URL that fails to parse. Values that show up anyway are hidden in everything that leaves this machine, and commits that hold one are not pushed.",
+      "",
+    );
+  }
   if (guidance?.trim()) lines.push("# House rules", "", guidance.trim(), "");
   lines.push("# How to work", "");
   const prFile = project
@@ -716,7 +741,7 @@ export function buildPrompt(
   lines.push(
     "- Run the checks that cover what you touched, when the repo has them.",
     `- Save a file in \`${ARTIFACTS_DIR}/\` at ${root} only when the brief asks for one, or when people must see it to judge your work, such as a screenshot of a UI change. Never save logs, test output, or machine-readable reports there: say what they showed in your report. Files there, subfolders included, go back to the agent with your report and are never committed. Up to ${MAX_ARTIFACTS} files, ${MAX_ARTIFACT_MB} MB each; anything over is named in your update but not sent.`,
-    "- If you need a credential your environment doesn't have, such as an API key or a database URL, stop and make your final message `SECRET: ` followed by the environment variable names it should have and what for, like `SECRET: STRIPE_API_KEY: read the customer's payment history`. Never ask for a secret's value; people set it privately and the job resumes with it in your environment.",
+    "- If you need a credential your environment doesn't have, such as an API key or a database URL, stop and make your final message `SECRET: ` followed by the environment variable names it should have and what for, like `SECRET: STRIPE_API_KEY: read the customer's payment history`. A secret's name says what it is; a production one starts `PROD_READ_` (read only) or `PROD_WRITE_` (can change production), like `SECRET: PROD_READ_DATABASE_URL: count last week's signups`. Never ask for a secret's value; people set it privately and the job resumes with it in your environment.",
     "- If you cannot go on without an answer from a person, stop and make your final message `QUESTION: ` followed by the question.",
     "- Otherwise your final message is the report people read in Slack: what you did or found, how you verified it, and what is left open. Under 400 words.",
   );

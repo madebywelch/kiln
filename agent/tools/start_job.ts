@@ -15,6 +15,7 @@ import {
   MAX_TITLE_CHARS,
   resolveSelection,
 } from "../../lib/jobs.ts";
+import { JOB_SECRETS } from "../../lib/secrets.ts";
 import { team } from "../lib/board.ts";
 import { drive } from "../lib/drive.ts";
 import { launchNow } from "../lib/machines.ts";
@@ -101,6 +102,16 @@ export default defineDynamic(() => {
           "Where the job's updates go, when not this thread: a Slack channel ID, such as a project's channel. " +
             "Without thread_ts, a short opener is posted there and its thread holds the updates.",
         ),
+      secrets: z
+        .enum(JOB_SECRETS)
+        .default("none")
+        .describe(
+          "Which of the project's secret groups the job's machine gets as environment variables, and so which MCP " +
+            "servers it can sign in to (list_secrets shows both). none, the default, for most jobs. staging for jobs " +
+            "that need test or staging services. production-read for a job that must read production, never one " +
+            "that runs code nobody vetted, such as third-party mods or new packages. production-write only when the " +
+            "person asked for this job to change production. Name the secrets it should use in the brief.",
+        ),
       priority: z
         .boolean()
         .optional()
@@ -138,6 +149,7 @@ export default defineDynamic(() => {
           brief: input.brief,
           origin: thread ? { ...thread, ...(asker ? { asker } : {}) } : undefined,
           priority: input.priority,
+          secrets: input.secrets,
         },
         files,
       );
@@ -146,6 +158,7 @@ export default defineDynamic(() => {
         job: `#${job.ref}`,
         state: job.state,
         runsOn: job.runsOn,
+        secrets: job.secrets,
         reportsTo: reportsTo(job.origin, here),
         ...(files.length ? { files: files.map((file) => file.name) } : {}),
       };
