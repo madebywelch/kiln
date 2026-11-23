@@ -8,11 +8,13 @@ import { keptMachineDays } from "../lib/config.ts";
 import { agentName, type McpServer, type RepoConfig } from "../lib/deployment.ts";
 import { type Inference, inferenceHost, rateLimitOf } from "../lib/inference.ts";
 import {
+  BRANCH_LABEL,
   decodeJob,
   describeSelection,
   INFERENCE_KIND,
   type JobSpec,
   jobBranch,
+  jobBranchTaken,
   MAX_JOB_FILE_BYTES,
   MAX_JOB_FILES,
   NEEDS_SECRET_KIND,
@@ -56,10 +58,12 @@ export type RegistryEntry =
   | { readonly repos: readonly JobRepo[] };
 
 /** One cloned repo of a job: where it is, its branch's starting point, and whether an earlier run pushed it. */
+type Git = (args: readonly string[]) => Promise<string>;
+
 interface Checkout extends JobRepo {
   readonly base: string;
   readonly dir: string;
-  readonly git: (args: readonly string[]) => Promise<string>;
+  readonly git: Git;
   readonly startSha: string;
   readonly resumed: boolean;
 }
@@ -80,6 +84,8 @@ export interface JobDeps {
   /** The job's repo or project, from the agent (KILN_REPO). */
   readonly registry?: Readonly<Record<string, RegistryEntry>>;
   readonly gitIdentity?: { readonly name: string; readonly email: string };
+  /** Who the job's branches are named for, as in `<owner>/<title>`: the GitHub login that pushes them. Default: kiln. */
+  readonly branchOwner?: string;
   /** The coding CLI's environment. Default: the worker's, without its credentials (see harnessEnv). */
   readonly harnessEnv?: NodeJS.ProcessEnv;
   /** Your own guidance for every job, from worker/instructions.md. */
@@ -311,7 +317,8 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string, progress:
   if (repos.length === 0) throw new Error(`project "${spec.repo}" has no repos`);
   // One repo is cloned into the job's folder itself; a project's repos into subfolders named by key.
   const single = repos.length === 1;
-  const branch = jobBranch(id, spec.title);
+  // Chosen on the job's first run and labeled on it; every later run uses the same one.
+  let branch = claim.task.labels[BRANCH_LABEL];
 
   await board.reply(
     id,
@@ -346,11 +353,14 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string, progress:
     email: "kiln@users.noreply.github.com",
   };
   const checkouts: Checkout[] = [];
+  const cloned: { repo: JobRepo; base: string; dir: string; git: Git }[] = [];
   for (const repo of repos) {
     const dir = single ? jobDir : join(jobDir, repo.key);
-    const git = (args: readonly string[]) => run(exec, "git", args, { cwd: dir, signal });
+    const git: Git = (args) => run(exec, "git", args, { cwd: dir, signal });
     const base = repo.baseBranch ?? "main";
     if (progress.continued) {
+      // Work kept from before branches were labeled is on the branch it was checked out on.
+      branch ??= await git(["branch", "--show-current"]);
       // The clone is as the last run left it; its origin refs are from when it was cloned.
       const pushed =
         (await exec("git", ["rev-parse", "--verify", "--quiet", `origin/${branch}`], { cwd: dir })).code ===
@@ -372,9 +382,20 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string, progress:
     await git(["config", "user.email", identity.email]);
     // .kiln holds the job's files both ways: inputs from the agent, artifacts for the report. Never committed.
     await appendFile(join(dir, ".git", "info", "exclude"), `\n${ARTIFACTS_DIR.split("/")[0]}/\n`);
-    // A job that blocked for an answer pushed its work; the next run continues from it.
-    const resumed =
-      (await exec("git", ["ls-remote", "--exit-code", "--heads", "origin", branch], { cwd: dir })).code === 0;
+    cloned.push({ repo, base, dir, git });
+  }
+  const onRemote = async (dir: string, name: string) =>
+    (await exec("git", ["ls-remote", "--exit-code", "--heads", "origin", name], { cwd: dir })).code === 0;
+  if (branch === undefined) {
+    // The worker force-pushes its branch, so it must not be anyone else's: a taken name gets the job's reference.
+    const name = jobBranch(deps.branchOwner ?? "kiln", spec.title);
+    const taken = (await Promise.all(cloned.map(({ dir }) => onRemote(dir, name)))).some(Boolean);
+    branch = taken ? jobBranchTaken(name, id) : name;
+  }
+  if (claim.task.labels[BRANCH_LABEL] !== branch) await board.label(id, { set: { [BRANCH_LABEL]: branch } });
+  for (const { repo, base, dir, git } of cloned) {
+    // An earlier run of this job pushed this branch; continue from it.
+    const resumed = await onRemote(dir, branch);
     await git(["switch", "--quiet", "-c", branch, resumed ? `origin/${branch}` : `origin/${base}`]);
     checkouts.push({ ...repo, base, dir, git, resumed, startSha: await git(["rev-parse", "HEAD"]) });
   }

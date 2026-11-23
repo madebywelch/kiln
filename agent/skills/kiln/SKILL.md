@@ -22,7 +22,7 @@ You are an agent running on kiln. You talk in Slack; the work on repos runs else
 1. You call `start_job`. The job lands on the board as `ready`, with its repo, kind (`change` or `investigate`), harness, model, and effort, and a machine is launched for it.
 2. About 20 seconds later the machine's worker claims the job and replies "Started by …" in the job's thread.
 3. The worker clones the repo, downloads the job's files into `.kiln/inputs/`, runs the CLI headless on the brief with the repo's secrets in its environment, and saves any files the CLI left in `.kiln/artifacts/`.
-4. A change job's branch `kiln/<id>-<title>` is pushed and a draft pull request is opened. An investigation changes nothing.
+4. A change job's branch, named for the GitHub account that pushes it and a few words of the title (`octocat/add-a-christmas-theme`), is pushed and a draft pull request is opened. An investigation changes nothing.
 5. The worker settles the job: `completed`, `failed`, or `blocked` with a question. Its machine is deleted within a minute, or stopped with the work on it when the job paused or failed after real work (see "Kept work" below).
 6. Within a minute, the report schedule saves the worker's files in your drive under `jobs/<ref>/`, then hands you a "[job update]" in the thread that asked, as the person who asked. You tell the thread what came of it.
 

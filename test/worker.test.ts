@@ -8,10 +8,11 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { answerJob, postJob, readJob } from "../lib/board-jobs.ts";
 import type { McpServer, RepoConfig } from "../lib/deployment.ts";
 import {
+  BRANCH_LABEL,
   INFERENCE_KIND,
   JOBS_CHANNEL,
   type JobSpec,
-  jobBranch,
+  jobRef,
   REPORT_LABEL,
   RESUME_LABEL,
   WAIT_MODEL_LABEL,
@@ -153,6 +154,7 @@ async function work(
     timeoutMs: options.timeoutMs ?? 30_000,
     signal: options.signal ?? new AbortController().signal,
     log: () => {},
+    branchOwner: "octo",
     registry: options.registry ?? registry,
     ...(options.harnessEnv ? { harnessEnv: options.harnessEnv } : {}),
     ...(options.guidance ? { guidance: options.guidance } : {}),
@@ -180,6 +182,9 @@ async function work(
 async function rootOf(id: string) {
   return (await team.thread(id, { limit: 1 })).message;
 }
+
+/** The branch every job here gets: its owner, then its title ("Add snow"). Each test has a fresh remote. */
+const BRANCH = "octo/add-snow";
 
 function remoteFiles(branch: string): string[] {
   return git(["--git-dir", remote, "ls-tree", "-r", "--name-only", branch]).split("\n");
@@ -241,11 +246,39 @@ describe("failure paths", () => {
   });
 });
 
+describe("branch names", () => {
+  it("names the branch for its owner and title, and labels the job with it for later runs", async () => {
+    const job = await postJob(team, spec);
+    await work({ mode: "change" });
+    expect((await rootOf(job.id)).labels[BRANCH_LABEL]).toBe(BRANCH);
+    expect(remoteFiles(BRANCH)).toContain("theme.css");
+  });
+
+  it("adds the job's reference when the name is someone else's branch, and leaves theirs alone", async () => {
+    git(["--git-dir", remote, "branch", BRANCH, "main"]);
+    const before = git(["--git-dir", remote, "rev-parse", BRANCH]);
+    const job = await postJob(team, spec);
+    await work({ mode: "change" });
+    const branch = `${BRANCH}-${jobRef(job.id)}`;
+    expect((await rootOf(job.id)).labels[BRANCH_LABEL]).toBe(branch);
+    expect(remoteFiles(branch)).toContain("theme.css");
+    expect(git(["--git-dir", remote, "rev-parse", BRANCH])).toBe(before);
+  });
+
+  it("keeps the branch a job was labeled with, even when its title would name another", async () => {
+    const job = await postJob(team, spec);
+    await team.label(job.id, { set: { [BRANCH_LABEL]: "octo/earlier-name" } });
+    await work({ mode: "change" });
+    expect(remoteFiles("octo/earlier-name")).toContain("theme.css");
+    expect(() => remoteFiles(BRANCH)).toThrow();
+  });
+});
+
 describe("change jobs", () => {
   it("commits, pushes the job's branch, opens a draft PR, and completes", async () => {
     const job = await postJob(team, spec);
     const { outcome, record } = await work({ mode: "change" });
-    const branch = jobBranch(job.id, spec.title);
+    const branch = BRANCH;
 
     expect(outcome).toMatchObject({
       kind: "completed",
@@ -285,7 +318,7 @@ describe("change jobs", () => {
   it("keeps commits the harness made itself", async () => {
     const job = await postJob(team, spec);
     await work({ mode: "commit" });
-    const branch = jobBranch(job.id, spec.title);
+    const branch = BRANCH;
     expect(git(["--git-dir", remote, "log", "-1", "--format=%s", branch])).toBe("Add snow");
     expect(pullRequests).toHaveLength(1);
   });
@@ -295,14 +328,14 @@ describe("change jobs", () => {
     const { outcome } = await work({ mode: "nothing" });
     expect(outcome).toMatchObject({ kind: "completed", result: "No changes made." });
     expect(pullRequests).toEqual([]);
-    expect(() => remoteFiles(jobBranch(job.id, spec.title))).toThrow();
+    expect(() => remoteFiles(BRANCH)).toThrow();
   });
 
   it("blocks on a question, keeps the work on its machine unpushed, and continues the session with the answer", async () => {
     const job = await postJob(team, spec);
     const first = await work({ mode: "question" });
     expect(first.outcome).toMatchObject({ kind: "blocked", question: "Which colors should the theme use?" });
-    const branch = jobBranch(job.id, spec.title);
+    const branch = BRANCH;
     expect(() => remoteFiles(branch)).toThrow(); // nothing unfinished reaches GitHub
     await expect(stat(join(root, "work", "jobs", job.id, "draft.css"))).resolves.toBeDefined();
     const blocked = await rootOf(job.id);
@@ -335,7 +368,7 @@ describe("change jobs", () => {
     expect(second.record.stdin).toContain(spec.brief);
     expect(second.record.stdin).toContain("Red and green.");
     expect(second.outcome).toMatchObject({ kind: "completed" });
-    expect(remoteFiles(jobBranch(job.id, spec.title))).not.toContain("draft.css");
+    expect(remoteFiles(BRANCH)).not.toContain("draft.css");
   });
 });
 
@@ -374,7 +407,7 @@ describe("project jobs", () => {
     expect(record.stdin).toContain("- `web/`: acme/web");
     expect(record.stdin).toContain("- `cloud/`: acme/cloud");
     expect(record.stdin).toContain("opens a draft pull request for each");
-    const branch = jobBranch(job.id, shopSpec.title);
+    const branch = BRANCH;
     expect(remoteFiles(branch)).toContain("theme.css");
     expect(git(["--git-dir", cloud, "ls-tree", "-r", "--name-only", branch]).split("\n")).toContain(
       "theme.css",
@@ -395,7 +428,7 @@ describe("project jobs", () => {
       registry: project,
       cloneUrl: (github) => (github === "acme/cloud" ? cloud : remote),
     });
-    const branch = jobBranch(job.id, shopSpec.title);
+    const branch = BRANCH;
     expect(pullRequests.map((pr) => pr.github)).toEqual(["acme/web"]);
     expect(() => git(["--git-dir", cloud, "rev-parse", "--verify", branch])).toThrow();
     expect(outcome.kind === "completed" && outcome.result).toBe(
@@ -451,7 +484,7 @@ describe("credentials", () => {
     const { outcome, record } = await work({ mode: "change", harnessEnv: harnessEnv(workerEnv) });
     expect(record.env).toMatchObject({ GH_TOKEN: null, BOARD_TOKEN: null });
     expect(outcome).toMatchObject({ kind: "completed" });
-    expect(remoteFiles(jobBranch(job.id, spec.title))).toContain("theme.css");
+    expect(remoteFiles(BRANCH)).toContain("theme.css");
   });
 
   it("gives the coding CLI the read-only token as its GH_TOKEN", async () => {
@@ -477,7 +510,7 @@ describe("investigate jobs on codex", () => {
     expect(record.args).not.toContain("-m");
     expect(record.stdin).toContain("Do not commit, push, or open pull requests.");
     expect(pullRequests).toEqual([]);
-    expect(() => remoteFiles(jobBranch(job.id, spec.title))).toThrow();
+    expect(() => remoteFiles(BRANCH)).toThrow();
     const { log } = await readJob(team, job.id);
     expect(log.at(-1)?.text).toBe(
       "**Done.**\n\nAdded snow to the landing page.\n\nVerified with the unit tests.",
@@ -501,7 +534,7 @@ describe("artifacts", () => {
       kind: "completed",
       result: "Draft PR: https://github.com/acme/web/pull/7",
     });
-    const files = remoteFiles(jobBranch(job.id, spec.title));
+    const files = remoteFiles(BRANCH);
     expect(files).toContain("theme.css");
     expect(files.some((file) => file.startsWith(".kiln"))).toBe(false);
     const { replies } = await team.thread(job.id, { limit: 10 });
@@ -527,7 +560,7 @@ describe("artifacts", () => {
     expect(outcome).toMatchObject({ kind: "completed" });
     expect(record.stdin).toContain("# Files for this job");
     expect(record.stdin).toContain("`.kiln/inputs/favicon.ico`");
-    const branch = jobBranch(job.id, spec.title);
+    const branch = BRANCH;
     const files = remoteFiles(branch);
     expect(files).toContain("public/favicon.ico");
     expect(files.some((file) => file.startsWith(".kiln"))).toBe(false);

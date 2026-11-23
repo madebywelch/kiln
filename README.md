@@ -36,7 +36,7 @@ The drive is the agent's only memory: a folder of files it organizes however it 
 
 ## Jobs and models
 
-- **change** jobs commit to `kiln/<id>-<title>`, push it, and open a draft PR. Workers never merge; the agent can, with `gh`, when you ask it to.
+- **change** jobs commit to a branch named for the GitHub account that pushes it and a few words of the job's title, such as `octocat/add-a-christmas-theme`, push it, and open a draft PR. Workers never merge; the agent can, with `gh`, when you ask it to.
 - **Projects** group repos that change together, such as an app and its hosted service. A job on a project clones all of its repos side by side, works across them, and opens a draft PR in each repo it changed. Projects, like repos, have their own defaults, MCP servers, and secrets.
 - **investigate** jobs report findings and change nothing.
 - **Files go both ways.** Drop a file in Slack and the agent keeps it in its drive, works on it in its sandbox (ImageMagick, zip, Python), or hands it to a job: the worker finds it in `.kiln/inputs/`, and it lands in the repo only where the brief says. Files a job's CLI saves in `.kiln/artifacts/`, such as screenshots, come back posted in the Slack thread and saved in the drive under `jobs/<id>/`. They ride on the job's Board task as attachments, never signed URLs, and workers never get drive access. Up to 10 files of 25 MB each way.
@@ -116,7 +116,7 @@ pnpm exec vb inspect             # the board's UI, served from your machine
 
 - Anyone in the Slack workspace can talk to the agent and start jobs, and it has one drive for everyone. Restrict senders in `agent/channels/slack.ts` if the workspace stops being private.
 - Other people's messages reach the model as conversation, and its instructions say so. That is a soft boundary.
-- Coding CLIs run with permission prompts off, alone on their job's machine, without the worker's GitHub or Board credentials. Protect each repo's default branch: workers push only `kiln/*` branches.
+- Coding CLIs run with permission prompts off, alone on their job's machine, without the worker's GitHub or Board credentials. Protect each repo's default branch: workers push only `<login>/*` branches, `<login>` being the account behind their `GH_TOKEN`, and never one that existed before their job.
 - A job's machine has its own repo's secrets and none of another repo's, and none of your boat, GitHub, or agent logins. The coding CLI can read its repo's secrets; that is what they are for.
 - Secret values go from a Slack form to boat. They never reach the agent's model, its logs, or the board. Anyone in the workspace can set them until `KILN_SECRET_ADMINS` lists who may.
 

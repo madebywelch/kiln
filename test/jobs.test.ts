@@ -12,6 +12,7 @@ import {
   JobError,
   type JobSpec,
   jobBranch,
+  jobBranchTaken,
   jobRef,
   resolveSelection,
 } from "../lib/jobs.ts";
@@ -239,9 +240,16 @@ describe("naming", () => {
   });
 
   it("makes a readable, safe branch name", () => {
-    expect(jobBranch("812", "Add a Christmas theme!")).toBe("kiln/812-add-a-christmas-theme");
-    expect(jobBranch("9", "???")).toBe("kiln/9");
-    expect(jobBranch("9", "a".repeat(80))).toBe(`kiln/9-${"a".repeat(40)}`);
+    expect(jobBranch("octo", "Add a Christmas theme!")).toBe("octo/add-a-christmas-theme");
+    // Cut at a word, never mid-word, at 40 characters.
+    expect(jobBranch("octo", "Stop a stray noise or okay from derailing the voice turn")).toBe(
+      "octo/stop-a-stray-noise-or-okay-from",
+    );
+    expect(jobBranch("octo", "???")).toBe("octo/job");
+    expect(jobBranch("octo", "a".repeat(80))).toBe(`octo/${"a".repeat(40)}`);
+    expect(jobBranchTaken("octo/add-snow", "msg_b799fe5c-0000-4000-8000-000000000000_1")).toBe(
+      "octo/add-snow-b799fe5c",
+    );
   });
 });
 

@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { type Board, board } from "@vercel/board";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { postJob, sweepReports } from "../lib/board-jobs.ts";
-import { type JobSpec, jobBranch, REPORT_LABEL } from "../lib/jobs.ts";
+import { BRANCH_LABEL, type JobSpec, REPORT_LABEL } from "../lib/jobs.ts";
 
 const repoRoot = join(import.meta.dirname, "..");
 const fixtures = join(import.meta.dirname, "fixtures");
@@ -156,14 +156,15 @@ it("claims its job, opens a PR, settles it for the agent's report, and exits", a
   });
   expect(settled.task?.result).toBe("Draft PR: https://github.com/acme/web/pull/1");
   expect(settled.labels[REPORT_LABEL]).toBe("pending");
-  expect(git(["--git-dir", remote, "ls-tree", "-r", "--name-only", jobBranch(job.id, spec.title)])).toContain(
-    "theme.css",
-  );
+  // Named for the token's owner, as the worker found it from GitHub.
+  expect(settled.labels[BRANCH_LABEL]).toMatch(/^octo\//);
+  const branch = settled.labels[BRANCH_LABEL] ?? "";
+  expect(git(["--git-dir", remote, "ls-tree", "-r", "--name-only", branch])).toContain("theme.css");
 
   const seen = JSON.parse(await readFile(record, "utf8")).env;
   expect(seen.GH_TOKEN).toBeNull(); // the worker held GH_TOKEN=test; the coding CLI must not
   // The token's owner authored the work, not the agent.
-  expect(git(["--git-dir", remote, "log", "-1", "--format=%an <%ae>", jobBranch(job.id, spec.title)])).toBe(
+  expect(git(["--git-dir", remote, "log", "-1", "--format=%an <%ae>", branch])).toBe(
     "octo <42+octo@users.noreply.github.com>",
   );
 

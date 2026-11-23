@@ -171,6 +171,7 @@ async function work(config: Config, team: Board, shutdown: AbortSignal, guidance
   shutdown.addEventListener("abort", onShutdown, { once: true });
   const stop = keepAlive(claim, job);
   log("job.claimed", { task: claim.task.id });
+  const owner = await tokenOwner();
   try {
     await runJob({
       board: team,
@@ -192,7 +193,8 @@ async function work(config: Config, team: Board, shutdown: AbortSignal, guidance
       ...(config.KILN_REPO
         ? { registry: { [config.KILN_REPO.key]: { repos: config.KILN_REPO.repos } } }
         : {}),
-      gitIdentity: await commitIdentity(config),
+      gitIdentity: commitIdentity(config, owner),
+      ...(owner ? { branchOwner: owner.login } : {}),
     });
   } finally {
     stop();
@@ -217,32 +219,41 @@ export function parseConfig(env: NodeJS.ProcessEnv) {
   return Config.safeParse(Object.fromEntries(Object.entries(env).filter(([, value]) => value !== "")));
 }
 
+interface TokenOwner {
+  readonly login: string;
+  readonly id: number;
+}
+
+/** The GitHub account behind GH_TOKEN, which pushes the job's branches. Undefined when GitHub can't say. */
+async function tokenOwner(): Promise<TokenOwner | undefined> {
+  try {
+    const user = JSON.parse(
+      await run(exec, "gh", ["api", "user", "--jq", "{login, id}"]),
+    ) as Partial<TokenOwner>;
+    if (user.login && user.id) return { login: user.login, id: user.id };
+    log("github.owner_unknown", { error: "gh api user returned no login" });
+  } catch (error) {
+    log("github.owner_unknown", { error: String(error) });
+  }
+  return undefined;
+}
+
 /**
  * Who the job's commits are by: KILN_GIT_NAME and KILN_GIT_EMAIL when both are set, else the owner
  * of GH_TOKEN (their login, and GitHub's noreply address that links to their account), since that
  * token pushes the commits. Undefined only when GitHub can't say, and the job falls back to the agent.
  */
-export async function commitIdentity(config: {
-  readonly KILN_GIT_NAME?: string | undefined;
-  readonly KILN_GIT_EMAIL?: string | undefined;
-}): Promise<{ name: string; email: string } | undefined> {
+export function commitIdentity(
+  config: { readonly KILN_GIT_NAME?: string | undefined; readonly KILN_GIT_EMAIL?: string | undefined },
+  owner: TokenOwner | undefined,
+): { name: string; email: string } | undefined {
   if (config.KILN_GIT_NAME && config.KILN_GIT_EMAIL) {
     log("git.identity", { source: "settings" });
     return { name: config.KILN_GIT_NAME, email: config.KILN_GIT_EMAIL };
   }
-  try {
-    const user = JSON.parse(await run(exec, "gh", ["api", "user", "--jq", "{login, id}"])) as {
-      login?: string;
-      id?: number;
-    };
-    if (user.login && user.id) {
-      log("git.identity", { source: "token owner", login: user.login });
-      return { name: user.login, email: `${user.id}+${user.login}@users.noreply.github.com` };
-    }
-  } catch (error) {
-    log("git.identity_unknown", { error: String(error) });
-  }
-  return undefined;
+  if (!owner) return undefined;
+  log("git.identity", { source: "token owner", login: owner.login });
+  return { name: owner.login, email: `${owner.id}+${owner.login}@users.noreply.github.com` };
 }
 
 async function main(): Promise<void> {

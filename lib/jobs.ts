@@ -36,6 +36,8 @@ export const NEEDS_SECRET_KIND = "needs_secret";
  */
 export const RESUME_LABEL = "resume";
 export const RESUME_DISK = "disk";
+/** The job's branch, chosen on its first run, so every later run pushes to the same one. */
+export const BRANCH_LABEL = "branch";
 /** A job blocked with this kind waits for the inference endpoint, not for a person. */
 export const INFERENCE_KIND = "inference";
 /** When the agent next checks whether the endpoint is back, as an ISO time. */
@@ -329,13 +331,31 @@ export function jobRef(id: string): string {
   return /^msg_([0-9a-f]{8})-/.exec(id)?.[1] ?? id;
 }
 
-/** A branch name that is unique per job and readable in a PR list. */
-export function jobBranch(taskId: string, title: string): string {
-  const slug = title
+/** The longest description a branch name gets, cut at a word. */
+const BRANCH_WORDS_MAX = 40;
+
+/**
+ * A job's branch: its owner, then a few words of its title, as in `octocat/add-a-christmas-theme`.
+ * The owner is whoever pushes it. Not unique on its own: the worker adds the job's reference when the
+ * name is taken (`jobBranchTaken`).
+ */
+export function jobBranch(owner: string, title: string): string {
+  const words = title
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 40)
-    .replace(/-+$/g, "");
-  return slug ? `kiln/${taskId}-${slug}` : `kiln/${taskId}`;
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+  let slug = "";
+  for (const word of words) {
+    const next = slug ? `${slug}-${word}` : word;
+    if (next.length > BRANCH_WORDS_MAX) break;
+    slug = next;
+  }
+  // A first word longer than the limit is cut rather than dropped.
+  slug ||= (words[0] ?? "").slice(0, BRANCH_WORDS_MAX);
+  return `${owner}/${slug || "job"}`;
+}
+
+/** The branch for a job whose name (`jobBranch`) is already someone else's branch. */
+export function jobBranchTaken(name: string, taskId: string): string {
+  return `${name}-${jobRef(taskId)}`;
 }
