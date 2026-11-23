@@ -11,6 +11,7 @@ export default defineEval({
     );
     turn.expectOk();
     turn.notCalledTool("start_job");
-    turn.messageIncludes("sonnet");
+    // "Claude Sonnet" offers it as much as "sonnet" does.
+    turn.messageIncludes(/sonnet/i);
   },
 });
