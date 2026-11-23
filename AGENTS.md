@@ -36,7 +36,7 @@ kiln runs an AI teammate in Slack (the agent) and the coding workers it hands re
 
 - Keep the docs current in the same change as the code: `README.md`, `docs/`, this file, and the agent's own `agent/skills/kiln/SKILL.md`, which is how the agent explains kiln to people. A change that makes any of them wrong is not done.
 - `pnpm check` must pass: biome, tsc, vitest. Tests need no network or keys; keep it that way.
-- Run `pnpm eval` on at least two vendors after changing the starter prompt (`lib/agents-starter.ts`) or tool descriptions. Evals run on the starter, not on a deployment's drive.
+- Run `pnpm eval` on at least two vendors after changing the starter prompt (`lib/agents-starter.ts`) or tool descriptions. Evals run on the starter, not on a deployment's drive: `pnpm eval` clears `EVE_MEMORY_BLOB_STORE_ID`, which eve would otherwise load from `.env.local`. Every tool that leaves the process has a stub in `evals/stubs.ts`.
 - The repo is public. Never commit secrets, account IDs, or private repo details; secrets live in `.env` (ignored) and the Vercel project.
 - The coding CLI never gets worker credentials (`GH_TOKEN`, `BOARD_TOKEN`); see `harnessEnv` in `worker/job.ts`. They reach a machine in a settings file the worker deletes, never in boat's per-machine `env`, which boat exports into every login shell.
 - Secret values never pass through the model, logs, or the board. Tools return secret names only. The agent's GitHub token reaches GitHub through its sandbox's firewall, never inside the sandbox (`agent/sandbox/sandbox.ts`).
