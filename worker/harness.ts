@@ -201,16 +201,23 @@ export function harnessInvocation(
 
 /** `claude -p --output-format stream-json` prints one event per line; the last `result` holds the final message. */
 export function claudeReport(stdout: string): string {
-  let parsed: { result?: unknown; is_error?: unknown } | undefined;
+  const results: { result?: unknown; is_error?: unknown }[] = [];
   for (const line of stdout.split("\n")) {
     const event = parseLine(line);
-    if (event?.type === "result" || (event && "is_error" in event)) parsed = event;
+    if (event?.type === "result" || (event && "is_error" in event)) results.push(event);
   }
-  if (!parsed) throw new Error(`claude printed no JSON result: ${stdout.trim().slice(-200)}`);
-  const { result, is_error } = parsed;
-  if (is_error === true) throw new Error(`claude reported an error: ${String(result).slice(0, 500)}`);
-  if (typeof result !== "string") throw new Error("claude's JSON result has no text");
-  return result.trim();
+  const last = results.at(-1);
+  if (!last) throw new Error(`claude printed no JSON result: ${stdout.trim().slice(-200)}`);
+  if (last.is_error === true)
+    throw new Error(`claude reported an error: ${String(last.result).slice(0, 500)}`);
+  // One result per turn. A background command that finishes after the final message starts another
+  // turn, whose short reply ("the report above stands") must not replace the report: keep them all.
+  const texts = results
+    .filter((event) => event.is_error !== true && typeof event.result === "string")
+    .map((event) => (event.result as string).trim())
+    .filter(Boolean);
+  if (texts.length === 0) throw new Error("claude's JSON result has no text");
+  return texts.join("\n\n");
 }
 
 /** The session Claude Code worked in: every stream-json event names it, the first one before any model call. */

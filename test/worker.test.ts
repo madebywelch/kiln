@@ -715,6 +715,18 @@ describe("harness adapters", () => {
     expect(() => claudeReport("not json")).toThrow(/no JSON result/);
     expect(() => claudeReport('{"result":"quota","is_error":true}')).toThrow(/quota/);
     expect(() => claudeReport('{"is_error":false}')).toThrow(/no text/);
+    // A background command finishing after the final message starts a short extra turn: both stay.
+    const turns = [
+      { type: "result", is_error: false, result: "Fixed the flaky test.\n\nValue to apply: 42." },
+      {
+        type: "result",
+        is_error: false,
+        result: "That was my wait loop timing out. The report above stands.",
+      },
+    ];
+    expect(claudeReport(turns.map((t) => JSON.stringify(t)).join("\n"))).toBe(
+      "Fixed the flaky test.\n\nValue to apply: 42.\n\nThat was my wait loop timing out. The report above stands.",
+    );
   });
 
   it("reads opencode's last message and refuses errors and silence", () => {
