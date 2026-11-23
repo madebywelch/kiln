@@ -5,11 +5,16 @@ import {
   answerJob,
   cancelJob,
   listJobs,
+  MAX_REPORT_RETRIES,
   postJob,
+  REPORT_AFTER_LABEL,
+  REPORT_RETRY_LABEL,
   readJob,
+  reportBackoffMs,
   reportMessage,
   resolveJobId,
   resumeAfterSecrets,
+  retryReport,
   sweepReports,
 } from "../lib/board-jobs.ts";
 import { JOBS_CHANNEL, type JobSpec, REPORT_LABEL, REPORT_PENDING } from "../lib/jobs.ts";
@@ -332,5 +337,49 @@ describe("resolveJobId", () => {
     expect(await resolveJobId(team, job.ref)).toBe(job.id);
     expect(await resolveJobId(team, "msg_whatever_1")).toBe("msg_whatever_1");
     await expect(resolveJobId(team, "#deadbeef")).rejects.toThrow(/no job #deadbeef/);
+  });
+});
+
+describe("a report whose turn failed", () => {
+  async function settledJob() {
+    const job = await postJob(team, spec);
+    const claim = await claimAs(worker);
+    await worker.reply(job.id, "**Done.** Added snow.");
+    await worker.label(job.id, { set: { [REPORT_LABEL]: REPORT_PENDING } });
+    await claim.complete("Added snow.");
+    return job;
+  }
+
+  it("goes back in the outbox, waits out its backoff, then is handed over again under a new key", async () => {
+    const job = await settledJob();
+    const keys: string[] = [];
+    const deliver = async (_origin: unknown, _message: string, key: string, jobId: string) => {
+      expect(jobId).toBe(job.id);
+      keys.push(key);
+    };
+    const t0 = Date.parse("2026-11-22T22:00:00Z");
+    await sweepReports(team, deliver, undefined, t0);
+    expect(await retryReport(team, job.id, t0)).toBe("retrying");
+    const { message } = await team.thread(job.id, { limit: 1 });
+    expect(message.labels).toMatchObject({
+      [REPORT_LABEL]: REPORT_PENDING,
+      [REPORT_RETRY_LABEL]: "1",
+      [REPORT_AFTER_LABEL]: "2026-11-22T22:01:00.000Z",
+    });
+
+    const early = await sweepReports(team, deliver, undefined, t0 + 30_000);
+    expect(early.skipped).toEqual([job.id]);
+    const due = await sweepReports(team, deliver, undefined, t0 + 60_000);
+    expect(due.delivered).toEqual([job.id]);
+    expect(keys).toEqual([`job:${job.id}:completed:1`, `job:${job.id}:completed:1:retry1`]);
+  });
+
+  it("backs off 1, 2, 4, 8, 16, then 30 minutes, and gives up after a day of tries", async () => {
+    expect([1, 2, 3, 4, 5, 6, 7].map((retry) => reportBackoffMs(retry) / 60_000)).toEqual([
+      1, 2, 4, 8, 16, 30, 30,
+    ]);
+    const job = await settledJob();
+    await team.label(job.id, { set: { [REPORT_RETRY_LABEL]: String(MAX_REPORT_RETRIES) } });
+    expect(await retryReport(team, job.id)).toBe("gave_up");
   });
 });

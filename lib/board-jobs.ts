@@ -162,7 +162,40 @@ export type DeliverReport = (
   origin: SlackOrigin,
   message: string,
   idempotencyKey: string,
+  jobId: string,
 ) => Promise<unknown>;
+
+/** How many times a report whose turn failed was handed to the agent again, and when the next try may run. */
+export const REPORT_RETRY_LABEL = "report-retry";
+export const REPORT_AFTER_LABEL = "report-after";
+/** A day of retries at most: 1, 2, 4, 8, 16, then every 30 minutes. */
+export const MAX_REPORT_RETRIES = 50;
+
+export function reportBackoffMs(retry: number): number {
+  return Math.min(2 ** (retry - 1), 30) * 60_000;
+}
+
+/**
+ * Puts a report back in the outbox after the agent's turn on it failed, such as when inference is down, so
+ * the next sweep after its backoff hands it over again. Gives up after MAX_REPORT_RETRIES.
+ */
+export async function retryReport(
+  team: Board,
+  id: string,
+  now: number = Date.now(),
+): Promise<"retrying" | "gave_up"> {
+  const { message } = await team.thread(id, { limit: 1 });
+  const retry = Number(message.labels[REPORT_RETRY_LABEL] ?? 0) + 1;
+  if (retry > MAX_REPORT_RETRIES) return "gave_up";
+  await team.label(id, {
+    set: {
+      [REPORT_LABEL]: REPORT_PENDING,
+      [REPORT_RETRY_LABEL]: String(retry),
+      [REPORT_AFTER_LABEL]: new Date(now + reportBackoffMs(retry)).toISOString(),
+    },
+  });
+  return "retrying";
+}
 
 /**
  * Handles one file the worker attached to a settled job: the agent saves it in its drive under
@@ -189,6 +222,7 @@ export async function sweepReports(
   team: Board,
   deliver: DeliverReport,
   keep?: KeepFile,
+  now: number = Date.now(),
 ): Promise<SweepResult> {
   const { tasks } = await team.tasks.list({
     channel: JOBS_CHANNEL,
@@ -220,6 +254,11 @@ export async function sweepReports(
         result.skipped.push(id); // re-queued after the label was set; the next settle sets it again
         continue;
       }
+      const after = message.labels[REPORT_AFTER_LABEL];
+      if (after && Date.parse(after) > now) {
+        result.skipped.push(id); // its last hand-off failed; waiting out the backoff
+        continue;
+      }
       const { replies } = await team.thread(id, { limit: 100 });
       const last = replies.at(-1);
       // Files first, so the agent can share them in its reply, and kept even for a job with no thread.
@@ -231,10 +270,13 @@ export async function sweepReports(
         kept.push(attachment.name);
       }
       if (job.origin) {
+        // A retry needs its own key: the session drops a hand-off it has seen.
+        const retry = Number(message.labels[REPORT_RETRY_LABEL] ?? 0);
         await deliver(
           job.origin,
           reportMessage(job, last?.text ?? "", kept),
-          `job:${id}:${job.state}:${message.task?.epoch ?? 0}`,
+          `job:${id}:${job.state}:${message.task?.epoch ?? 0}${retry ? `:retry${retry}` : ""}`,
+          id,
         );
       }
       await team.label(id, { unset: [REPORT_LABEL], if: { [REPORT_LABEL]: REPORT_PENDING } });

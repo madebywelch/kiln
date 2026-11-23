@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { CHANNEL_GUIDANCE, type RouteInput, route, THREAD_GUIDANCE } from "../agent/lib/route.ts";
+import {
+  announcesFailure,
+  CHANNEL_GUIDANCE,
+  ROUTE_ATTRIBUTE,
+  type RouteInput,
+  route,
+  THREAD_GUIDANCE,
+  withRoute,
+} from "../agent/lib/route.ts";
 
 const auth = { authenticator: "slack", principalType: "user", principalId: "U1", attributes: {} } as const;
 const history = [{ role: "user" as const, text: "Ada <@U2>: should we theme the site for christmas?" }];
@@ -121,5 +129,22 @@ describe("nameMatcher", () => {
     expect(name.test("evebots are great")).toBe(false);
     expect(name.test("Eve's bot")).toBe(false);
     expect(nameMatcher("a.b").test("axb")).toBe(false);
+  });
+});
+
+describe("failed turns", () => {
+  it("tag the turn's auth with its route, keeping the sender's attributes", () => {
+    const tagged = withRoute({ auth: { ...auth, attributes: { user_id: "U1" } } }, "ambient");
+    expect(tagged.auth?.attributes).toEqual({ user_id: "U1", [ROUTE_ATTRIBUTE]: "ambient" });
+    expect(withRoute({ auth: null }, "addressed")).toEqual({ auth: null });
+  });
+
+  it("tell the thread only when a person spoke to the agent, never from a schedule", () => {
+    expect(announcesFailure({ scheduled: false, route: "addressed" })).toBe(true);
+    expect(announcesFailure({ scheduled: false, route: "followed-thread" })).toBe(true);
+    expect(announcesFailure({ scheduled: false, route: "ambient" })).toBe(false);
+    expect(announcesFailure({ scheduled: false, route: "edit" })).toBe(false);
+    expect(announcesFailure({ scheduled: false, route: undefined })).toBe(false);
+    expect(announcesFailure({ scheduled: true, route: "addressed" })).toBe(false);
   });
 });

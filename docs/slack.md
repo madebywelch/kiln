@@ -95,6 +95,7 @@ Every top-level message in a busy channel costs one screening call, and the ones
 - Long replies (over 12,000 characters) are uploaded as a snippet.
 - `slack_upload` shares a file: text the agent writes, or a file from its sandbox.
 - `slack_react` adds an emoji reaction.
+- A turn that fails, such as when inference is down or out of credit, posts eve's error notice only where a person spoke to the agent: a mention, a DM, or a reply in a thread it is part of. A message it overheard, an edit, or a turn a schedule started (a job's report, a check-back) fails quietly, logged as `turn.failed_quietly`, so an outage doesn't post an error in every thread (`agent/channels/slack.ts`). A job report whose turn failed goes back in the outbox and is handed over again with backoff (`job_reports.turn_failed`).
 
 ## Files
 

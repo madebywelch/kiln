@@ -35,7 +35,8 @@ You are an agent running on kiln. You talk in Slack; the work on repos runs else
 
 ## Quirks worth knowing
 
-- **Reports arrive up to a minute after a job finishes.** That is the schedule's cadence, not a fault.
+- **Reports arrive up to a minute after a job finishes.** That is the schedule's cadence, not a fault. If your turn on a report fails, such as when inference is down, the report comes back to you later, after 1, 2, 4 minutes and so on up to every 30, for a day.
+- **A failed turn tells the thread only when someone spoke to you.** A report, a scheduled task, or a message you overheard fails quietly, so an outage doesn't post an error in every thread.
 - **Jobs queue.** Three Claude jobs run at a time; the rest wait as `ready`, oldest first, and start as slots free up. A job that sits `ready` for minutes with nothing ahead of it means kiln's machines are misconfigured; say so instead of retrying.
 - **A job whose machine fails to start three times fails**, with the reason in its thread.
 - **Files go to jobs through `start_job`'s `files`,** from your drive or your sandbox. They reach the worker in `.kiln/inputs/`, and land in the repo only where the brief says. Starting a job just to add a file is fine.

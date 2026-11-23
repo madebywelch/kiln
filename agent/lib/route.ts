@@ -66,3 +66,27 @@ export async function route(input: RouteInput): Promise<RouteDecision> {
   if (await input.clearlyNotForAgent(history)) return { result: null, reason: "screened-out" };
   return { result: { auth, status: "deferred", guidance: CHANNEL_GUIDANCE, history }, reason: "ambient" };
 }
+
+/** The auth attribute that carries a turn's route, so a failed turn knows whether a person is waiting on it. */
+export const ROUTE_ATTRIBUTE = "kiln_route";
+
+/** Tags a routed message's auth with why it reached the agent. */
+export function withRoute(
+  result: NonNullable<SlackMentionResult>,
+  reason: RouteReason,
+): NonNullable<SlackMentionResult> {
+  if (!result.auth) return result;
+  return {
+    ...result,
+    auth: { ...result.auth, attributes: { ...result.auth.attributes, [ROUTE_ATTRIBUTE]: reason } },
+  };
+}
+
+/**
+ * Whether a failed turn tells the thread. Only when a person spoke to the agent: a mention, a DM, or a reply in
+ * a thread it is part of. A message it overheard, an edit, or a turn a schedule started (a job's report, a
+ * check-back) fails quietly, in the log: when inference is down, every one of them would otherwise post an error.
+ */
+export function announcesFailure(turn: { readonly scheduled: boolean; readonly route: unknown }): boolean {
+  return !turn.scheduled && (turn.route === "addressed" || turn.route === "followed-thread");
+}

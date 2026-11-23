@@ -6,7 +6,7 @@
 // needs to see it.
 
 import { defineSchedule } from "eve/schedules";
-import { jobFilesFolder, sweepReports } from "../../lib/board-jobs.ts";
+import { jobFilesFolder, retryReport, sweepReports } from "../../lib/board-jobs.ts";
 import { driveName, writeFile } from "../../lib/drive.ts";
 import { askerAuth } from "../../lib/jobs.ts";
 import slack from "../channels/slack.ts";
@@ -19,13 +19,23 @@ export default defineSchedule({
     waitUntil(
       sweepReports(
         team,
-        (origin, message, idempotencyKey) =>
+        async (origin, message, idempotencyKey, jobId) => {
           // As the person who asked, when there was one: eve lets a person, not the app, set the
           // check-back a report so often calls for.
-          to(slack, { channelId: origin.channelId, threadTs: origin.threadTs }).send(message, {
-            auth: origin.asker ? askerAuth(origin.asker) : appAuth,
-            idempotencyKey,
-          }),
+          const delivery = await to(slack, { channelId: origin.channelId, threadTs: origin.threadTs }).send(
+            message,
+            { auth: origin.asker ? askerAuth(origin.asker) : appAuth, idempotencyKey },
+          );
+          // A failed turn, such as one with inference down, posts nothing (agent/channels/slack.ts), so the
+          // report would be lost: put it back for a later sweep.
+          waitUntil(
+            delivery.result().then(async ({ outcome }) => {
+              if (outcome !== "failed") return;
+              const retry = await retryReport(team, jobId);
+              console.warn(JSON.stringify({ event: "job_reports.turn_failed", job: jobId, retry }));
+            }),
+          );
+        },
         async (job, file) => {
           await writeFile(await drive(), `${jobFilesFolder(job.id)}${driveName(file.name)}`, file.bytes);
         },
