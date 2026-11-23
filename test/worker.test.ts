@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -102,6 +103,7 @@ async function claim(): Promise<ClaimedTask> {
 }
 
 interface RunOptions {
+  pushRetryDelaysMs?: readonly number[];
   mode: string;
   /** The machine's work directory: the same one again is the same machine, resumed. */
   workDir?: string;
@@ -158,6 +160,7 @@ async function work(
     registry: options.registry ?? registry,
     ...(options.harnessEnv ? { harnessEnv: options.harnessEnv } : {}),
     ...(options.guidance ? { guidance: options.guidance } : {}),
+    pushRetryDelaysMs: options.pushRetryDelaysMs ?? [],
     ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
     ...(options.inference ? { inference: options.inference } : {}),
   });
@@ -271,6 +274,34 @@ describe("branch names", () => {
     await work({ mode: "change" });
     expect(remoteFiles("octo/earlier-name")).toContain("theme.css");
     expect(() => remoteFiles(BRANCH)).toThrow();
+  });
+});
+
+describe("pushing", () => {
+  /** Makes the remote refuse the next `times` pushes, as GitHub does now and then with "(failed)". */
+  function refusePushes(times: number) {
+    const count = join(root, "refused");
+    writeFileSync(
+      join(remote, "hooks", "pre-receive"),
+      `#!/bin/sh\nn=$(cat ${count} 2>/dev/null || echo 0)\nif [ "$n" -lt ${times} ]; then echo $((n + 1)) > ${count}; echo refused >&2; exit 1; fi\n`,
+      { mode: 0o755 },
+    );
+  }
+
+  it("retries a refused push and completes", async () => {
+    refusePushes(1);
+    await postJob(team, spec);
+    const { outcome } = await work({ mode: "change", pushRetryDelaysMs: [0, 0] });
+    expect(outcome).toMatchObject({ kind: "completed" });
+    expect(remoteFiles(BRANCH)).toContain("theme.css");
+  });
+
+  it("fails with git's error once the retries run out", async () => {
+    refusePushes(3);
+    await postJob(team, spec);
+    const { outcome } = await work({ mode: "change", pushRetryDelaysMs: [0, 0] });
+    expect(outcome).toMatchObject({ kind: "failed" });
+    expect(JSON.stringify(outcome)).toContain("pre-receive hook declined");
   });
 });
 

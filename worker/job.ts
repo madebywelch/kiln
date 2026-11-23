@@ -77,6 +77,8 @@ export interface JobDeps {
   readonly cloneUrl: (github: string) => string;
   readonly openPullRequest: OpenPullRequest;
   readonly timeoutMs: number;
+  /** How long to wait before each retry of a failed push. Default: PUSH_RETRY_DELAYS_MS. */
+  readonly pushRetryDelaysMs?: readonly number[];
   /** Aborted with SHUTDOWN or CLAIM_LOST as its reason. */
   readonly signal: AbortSignal;
   readonly log: Logger;
@@ -409,7 +411,13 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string, progress:
   const pushAll = async () => {
     const pushed: Checkout[] = [];
     for (const checkout of checkouts) {
-      if (await pushWork(checkout.git, spec.title, checkout.startSha, branch)) pushed.push(checkout);
+      const retry = {
+        delaysMs: deps.pushRetryDelaysMs ?? PUSH_RETRY_DELAYS_MS,
+        log: deps.log,
+        task: id,
+        signal,
+      };
+      if (await pushWork(checkout.git, spec.title, checkout.startSha, branch, retry)) pushed.push(checkout);
     }
     return pushed;
   };
@@ -561,11 +569,15 @@ export async function refreshMirror(
 }
 
 /** Commits what the harness left uncommitted and pushes the branch. Returns whether it had new commits. */
+/** GitHub refuses a push now and then ("remote rejected ... (failed)") and takes the same push moments later. */
+export const PUSH_RETRY_DELAYS_MS: readonly number[] = [5_000, 20_000, 60_000];
+
 async function pushWork(
-  git: (args: readonly string[]) => Promise<string>,
+  git: Git,
   title: string,
   startSha: string,
   branch: string,
+  retry: { delaysMs: readonly number[]; log: Logger; task: string; signal: AbortSignal },
 ): Promise<boolean> {
   if ((await git(["status", "--porcelain"])) !== "") {
     await git(["add", "-A"]);
@@ -574,8 +586,22 @@ async function pushWork(
   const ahead = Number(await git(["rev-list", "--count", `${startSha}..HEAD`]));
   if (ahead === 0) return false;
   // The branch belongs to this job, so overwriting it is safe.
-  await git(["push", "--quiet", "--force", "-u", "origin", branch]);
-  return true;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await git(["push", "--quiet", "--force", "-u", "origin", branch]);
+      return true;
+    } catch (error) {
+      const delay = retry.delaysMs[attempt];
+      if (delay === undefined || retry.signal.aborted) throw error;
+      retry.log("git.push_retry", {
+        task: retry.task,
+        attempt: attempt + 1,
+        inMs: delay,
+        error: String(error).slice(-500),
+      });
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
 }
 
 export function buildPrompt(
