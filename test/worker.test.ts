@@ -10,6 +10,7 @@ import { answerJob, postJob, readJob } from "../lib/board-jobs.ts";
 import type { McpServer, RepoConfig } from "../lib/deployment.ts";
 import {
   BRANCH_LABEL,
+  FULL_REPORT_FILE,
   INFERENCE_KIND,
   JOBS_CHANNEL,
   type JobSpec,
@@ -577,6 +578,16 @@ describe("artifacts", () => {
     expect(report?.attachments.map((attachment) => attachment.name)).toEqual(["home.png"]);
     const bytes = new Uint8Array(await (await team.download(report!.attachments[0]!.id)).arrayBuffer());
     expect([...bytes]).toEqual([0x89, 0x50, 0x4e, 0x47]);
+  });
+
+  it("attaches a report too long for the job update whole, ahead of the CLI's files", async () => {
+    const job = await postJob(team, { ...spec, kind: "investigate" });
+    const { outcome } = await work({ mode: "long-report" });
+    expect(outcome).toMatchObject({ kind: "completed" });
+    const report = (await team.thread(job.id, { limit: 10 })).replies.at(-1);
+    expect(report?.attachments.map((attachment) => attachment.name)).toEqual([FULL_REPORT_FILE]);
+    const text = await (await team.download(report!.attachments[0]!.id)).text();
+    expect(text.endsWith("The proposal is at the end.")).toBe(true);
   });
 
   it("tells the CLI to return files only when asked or when people must see them, never logs", async () => {

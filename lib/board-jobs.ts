@@ -7,6 +7,7 @@ import {
   decodeJob,
   describeSelection,
   encodeJob,
+  FULL_REPORT_FILE,
   INFERENCE_KIND,
   JOBS_CHANNEL,
   JobError,
@@ -14,6 +15,7 @@ import {
   jobRef,
   KEPT_UNTIL_LABEL,
   NEEDS_SECRETS_LABEL,
+  REPORT_INLINE_CHARS,
   REPORT_LABEL,
   REPORT_PENDING,
   RESUME_LABEL,
@@ -195,7 +197,6 @@ export async function answerJob(team: Board, id: string, answer: string): Promis
 }
 
 const SETTLED_STATES = new Set(["completed", "failed", "blocked"]);
-const MAX_REPORT_CHARS = 6_000;
 
 export type DeliverReport = (
   origin: SlackOrigin,
@@ -357,8 +358,13 @@ export function reportMessage(job: JobView, lastReport: string, files: readonly 
   }
   const report = lastReport.trim();
   if (report) {
+    const whole = files.includes(FULL_REPORT_FILE)
+      ? `: the whole report is in your drive at ${jobFilesFolder(job.id)}${FULL_REPORT_FILE}`
+      : "";
     const clipped =
-      report.length > MAX_REPORT_CHARS ? `${report.slice(0, MAX_REPORT_CHARS)}\n[report clipped]` : report;
+      report.length > REPORT_INLINE_CHARS
+        ? `${report.slice(0, REPORT_INLINE_CHARS)}\n[report clipped${whole}]`
+        : report;
     lines.push("", "Worker's last message:", clipped);
   }
   return lines.join("\n");

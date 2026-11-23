@@ -19,6 +19,7 @@ import {
   sweepReports,
 } from "../lib/board-jobs.ts";
 import {
+  FULL_REPORT_FILE,
   INFERENCE_KIND,
   JOBS_CHANNEL,
   type JobSpec,
@@ -339,6 +340,15 @@ describe("reportMessage", () => {
     const message = reportMessage({ ...job, state: "completed", question: null }, "x".repeat(10_000));
     expect(message).toContain("[report clipped]");
     expect(message.length).toBeLessThan(7_000);
+  });
+
+  it("points a clipped report to the whole one in the drive when the worker attached it", () => {
+    const message = reportMessage({ ...job, state: "completed", question: null }, "x".repeat(10_000), [
+      FULL_REPORT_FILE,
+    ]);
+    expect(message).toContain(
+      `[report clipped: the whole report is in your drive at jobs/${job.ref}/full-report.md]`,
+    );
   });
 });
 

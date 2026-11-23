@@ -60,6 +60,12 @@ export const MAX_TITLE_CHARS = 120;
  * artifacts out. The same limits each way, sized to what Slack hands the agent (eve's 25 MB).
  */
 export const MAX_JOB_FILES = 10;
+/**
+ * How much of a worker's report reaches the agent in its job update. A longer report is attached
+ * whole as FULL_REPORT_FILE, which lands in the agent's drive with the job's other files.
+ */
+export const REPORT_INLINE_CHARS = 6_000;
+export const FULL_REPORT_FILE = "full-report.md";
 export const MAX_JOB_FILE_BYTES = 25 * 1024 * 1024;
 
 export interface SlackOrigin {

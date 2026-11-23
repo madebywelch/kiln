@@ -127,6 +127,10 @@ switch (mode) {
   case "nothing":
     finish("Nothing needed changing.");
     break;
+  case "long-report":
+    // An investigation whose final message is the whole deliverable, longer than a job update carries.
+    finish(`Findings.\n\n${"A finding worth reading. ".repeat(600)}\n\nThe proposal is at the end.`);
+    break;
   case "question":
     writeFileSync(join(cwd, "draft.css"), "/* half done */\n");
     finish("QUESTION: Which colors should the theme use?");

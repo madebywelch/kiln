@@ -11,6 +11,7 @@ import {
   BRANCH_LABEL,
   decodeJob,
   describeSelection,
+  FULL_REPORT_FILE,
   INFERENCE_KIND,
   type JobSpec,
   jobBranch,
@@ -19,6 +20,7 @@ import {
   MAX_JOB_FILES,
   NEEDS_SECRET_KIND,
   NEEDS_SECRETS_LABEL,
+  REPORT_INLINE_CHARS,
   REPORT_LABEL,
   REPORT_PENDING,
   RESUME_DISK,
@@ -829,8 +831,17 @@ async function settle(
       await claim.block(`Waiting for inference: rate limited until about ${until}`, { kind: INFERENCE_KIND });
       return;
     }
+    // A report too long for the job update travels whole as a file, ahead of the CLI's own.
+    const report = outcome.kind === "blocked" ? "" : outcome.report;
+    const files =
+      report.length > REPORT_INLINE_CHARS
+        ? [{ name: FULL_REPORT_FILE, bytes: new TextEncoder().encode(report) }, ...artifacts].slice(
+            0,
+            MAX_ARTIFACTS,
+          )
+        : artifacts;
     const attachments = [];
-    for (const artifact of artifacts) {
+    for (const artifact of files) {
       try {
         attachments.push(await board.upload({ data: artifact.bytes, name: artifact.name }));
       } catch (error) {
