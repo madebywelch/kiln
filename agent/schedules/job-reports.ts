@@ -8,7 +8,7 @@
 import { defineSchedule } from "eve/schedules";
 import { jobFilesFolder, retryReport, sweepReports } from "../../lib/board-jobs.ts";
 import { driveName, writeFile } from "../../lib/drive.ts";
-import { askerAuth } from "../../lib/jobs.ts";
+import { artifactPath, askerAuth } from "../../lib/jobs.ts";
 import slack from "../channels/slack.ts";
 import { team } from "../lib/board.ts";
 import { drive } from "../lib/drive.ts";
@@ -37,7 +37,8 @@ export default defineSchedule({
           );
         },
         async (job, file) => {
-          await writeFile(await drive(), `${jobFilesFolder(job.id)}${driveName(file.name)}`, file.bytes);
+          const path = artifactPath(file.name).split("/").map(driveName).join("/");
+          await writeFile(await drive(), `${jobFilesFolder(job.id)}${path}`, file.bytes);
         },
       ).then((result) => {
         if (result.delivered.length || result.failed.length) {

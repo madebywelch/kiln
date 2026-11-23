@@ -4,6 +4,7 @@
 import type { Board, MessageView } from "@vercel/board";
 import type { JobFile } from "./job-files.ts";
 import {
+  artifactPath,
   decodeJob,
   describeSelection,
   encodeJob,
@@ -342,7 +343,7 @@ export async function sweepReports(
       for (const attachment of keep ? (last?.attachments ?? []) : []) {
         const response = await team.download(attachment.id);
         await keep?.(job, { name: attachment.name, bytes: new Uint8Array(await response.arrayBuffer()) });
-        kept.push(attachment.name);
+        kept.push(artifactPath(attachment.name));
       }
       if (job.origin) {
         // A retry needs its own key: the session drops a hand-off it has seen.

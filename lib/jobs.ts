@@ -71,6 +71,13 @@ export const REPORT_INLINE_CHARS = 6_000;
 export const FULL_REPORT_FILE = "full-report.md";
 export const MAX_JOB_FILE_BYTES = 25 * 1024 * 1024;
 
+/**
+ * A returned file's attachment name. The board keeps only the last part of a name with a "/", so a file
+ * from a subfolder of the artifacts folder travels with its slashes encoded, and artifactPath restores them.
+ */
+export const artifactName = (path: string) => path.replaceAll("%", "%25").replaceAll("/", "%2F");
+export const artifactPath = (name: string) => name.replaceAll("%2F", "/").replaceAll("%25", "%");
+
 export interface SlackOrigin {
   readonly channelId: string;
   readonly threadTs: string;

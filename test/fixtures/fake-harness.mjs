@@ -101,6 +101,13 @@ switch (mode) {
     writeFileSync(join(cwd, ".kiln", "artifacts", "home.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
     finish("Added snow. Screenshot attached.");
     break;
+  case "nested-artifacts":
+    // An investigation that saves its results in a subfolder, an archive among them.
+    mkdirSync(join(cwd, ".kiln", "artifacts", "trial"), { recursive: true });
+    writeFileSync(join(cwd, ".kiln", "artifacts", "trial", "report.md"), "# Trial\n");
+    writeFileSync(join(cwd, ".kiln", "artifacts", "trial", "data.tar.gz"), Buffer.from([0x1f, 0x8b]));
+    finish("Ran the trial. Results are in .kiln/artifacts/trial/.");
+    break;
   case "place-input": {
     // Does what a brief asks of an attached file: put it in the repo, at public/.
     const name = readdirSync(join(cwd, ".kiln", "inputs"))[0];
@@ -130,6 +137,13 @@ switch (mode) {
   case "long-report":
     // An investigation whose final message is the whole deliverable, longer than a job update carries.
     finish(`Findings.\n\n${"A finding worth reading. ".repeat(600)}\n\nThe proposal is at the end.`);
+    break;
+  case "long-report-many-files":
+    // Ten files of its own, and a report long enough to travel as an eleventh.
+    mkdirSync(join(cwd, ".kiln", "artifacts"), { recursive: true });
+    for (let index = 0; index < 10; index++)
+      writeFileSync(join(cwd, ".kiln", "artifacts", `x${String(index).padStart(2, "0")}.txt`), "x");
+    finish(`Findings.\n\n${"A finding worth reading. ".repeat(600)}`);
     break;
   case "question":
     writeFileSync(join(cwd, "draft.css"), "/* half done */\n");

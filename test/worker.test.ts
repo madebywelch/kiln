@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Board, board, type ClaimedTask } from "@vercel/board";
@@ -9,6 +9,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { answerJob, postJob, readJob } from "../lib/board-jobs.ts";
 import type { McpServer, RepoConfig } from "../lib/deployment.ts";
 import {
+  artifactPath,
   BRANCH_LABEL,
   FULL_REPORT_FILE,
   INFERENCE_KIND,
@@ -630,16 +631,36 @@ describe("artifacts", () => {
     ).rejects.toThrow(/could not download the job's file logo.svg: HTTP 404/);
   });
 
-  it("takes at most ten files, and nothing from a missing folder", async () => {
+  it("takes at most ten files, names the rest and any too large, and nothing from a missing folder", async () => {
     const dir = join(root, "artifacts");
-    await mkdir(dir);
-    for (let index = 0; index < 12; index++)
+    await mkdir(join(dir, "deep"), { recursive: true });
+    for (let index = 0; index < 11; index++)
       await writeFile(join(dir, `f${String(index).padStart(2, "0")}.txt`), "x");
-    const artifacts = await collectArtifacts(dir);
+    await writeFile(join(dir, "deep", "huge.bin"), "");
+    await truncate(join(dir, "deep", "huge.bin"), 26 * 1024 * 1024);
+    const { artifacts, skipped } = await collectArtifacts(dir);
     expect(artifacts.map((artifact) => artifact.name)).toEqual(
       Array.from({ length: 10 }, (_, index) => `f${String(index).padStart(2, "0")}.txt`),
     );
-    expect(await collectArtifacts(join(root, "nowhere"))).toEqual([]);
+    expect(skipped).toEqual(["deep/huge.bin (over 25 MB)", "f10.txt (over the 10-file limit)"]);
+    expect(await collectArtifacts(join(root, "nowhere"))).toEqual({ artifacts: [], skipped: [] });
+  });
+
+  it("returns files from subfolders under their paths, archives too", async () => {
+    const job = await postJob(team, { ...spec, kind: "investigate" });
+    await work({ mode: "nested-artifacts" });
+    const report = (await team.thread(job.id, { limit: 10 })).replies.at(-1);
+    const names = report?.attachments.map((attachment) => attachment.name) ?? [];
+    expect(names.map(artifactPath)).toEqual(["trial/data.tar.gz", "trial/report.md"]);
+    expect(report?.text).not.toContain("Files not attached");
+  });
+
+  it("names in the update the files it couldn't send", async () => {
+    const job = await postJob(team, { ...spec, kind: "investigate" });
+    await work({ mode: "long-report-many-files" });
+    const report = (await team.thread(job.id, { limit: 10 })).replies.at(-1);
+    expect(report?.attachments).toHaveLength(10);
+    expect(report?.text).toMatch(/\*\*Files not attached:\*\* x09\.txt \(over the 10-file limit\)\./);
   });
 });
 

@@ -2,12 +2,14 @@
 // harness, push and open a draft PR (for changes), report, settle.
 
 import { access, appendFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, relative, sep } from "node:path";
 import type { Attachment, Board, ClaimedTask } from "@vercel/board";
 import { keptMachineDays } from "../lib/config.ts";
 import { agentName, type McpServer, type RepoConfig } from "../lib/deployment.ts";
 import { type Inference, inferenceHost, rateLimitOf } from "../lib/inference.ts";
 import {
+  artifactName,
+  artifactPath,
   BRANCH_LABEL,
   decodeJob,
   describeSelection,
@@ -198,25 +200,37 @@ export interface Artifact {
   readonly bytes: Uint8Array<ArrayBuffer>;
 }
 
-/** The files the CLI left to share: top-level files only, the first ten by name, none over the size cap. */
-export async function collectArtifacts(dir: string): Promise<Artifact[]> {
-  let names: string[];
+export interface Collected {
+  readonly artifacts: Artifact[];
+  /** Files left out, each with why, for the job update: before the machine goes, people can still ask. */
+  readonly skipped: string[];
+}
+
+/**
+ * The files the CLI left to share, in subfolders too: the first ten by path, none over the size cap.
+ * A file in a subfolder travels under its path (artifactName), so it lands at the same path in the drive.
+ */
+export async function collectArtifacts(dir: string): Promise<Collected> {
+  let paths: string[];
   try {
-    const entries = await readdir(dir, { withFileTypes: true });
-    names = entries
+    const entries = await readdir(dir, { withFileTypes: true, recursive: true });
+    paths = entries
       .filter((entry) => entry.isFile())
-      .map((entry) => entry.name)
+      .map((entry) => relative(dir, join(entry.parentPath, entry.name)).split(sep).join("/"))
       .sort();
   } catch {
-    return [];
+    return { artifacts: [], skipped: [] };
   }
   const artifacts: Artifact[] = [];
-  for (const name of names.slice(0, MAX_ARTIFACTS)) {
-    const path = join(dir, name);
-    if ((await stat(path)).size > MAX_ARTIFACT_MB * 1024 * 1024) continue;
-    artifacts.push({ name, bytes: new Uint8Array(await readFile(path)) });
+  const skipped: string[] = [];
+  for (const path of paths) {
+    if ((await stat(join(dir, path))).size > MAX_ARTIFACT_MB * 1024 * 1024)
+      skipped.push(`${path} (over ${MAX_ARTIFACT_MB} MB)`);
+    else if (artifacts.length >= MAX_ARTIFACTS)
+      skipped.push(`${path} (over the ${MAX_ARTIFACTS}-file limit)`);
+    else artifacts.push({ name: artifactName(path), bytes: new Uint8Array(await readFile(join(dir, path))) });
   }
-  return artifacts;
+  return { artifacts, skipped };
 }
 
 function clip(text: string, max: number): string {
@@ -293,17 +307,18 @@ export async function runJob(deps: JobDeps): Promise<Outcome> {
   }
 
   const keep = keepFor(outcome, progress);
-  const artifacts =
+  const collected =
     outcome.kind === "abandoned" || outcome.kind === "paused"
-      ? []
+      ? { artifacts: [], skipped: [] }
       : await collectArtifacts(join(jobDir, ARTIFACTS_DIR));
   log("job.outcome", {
     task: id,
     outcome: outcome.kind,
-    artifacts: artifacts.length,
+    artifacts: collected.artifacts.length,
+    ...(collected.skipped.length ? { skipped: collected.skipped } : {}),
     kept: keep !== undefined,
   });
-  await settle(deps, outcome, artifacts, keep);
+  await settle(deps, outcome, collected, keep);
   // Kept work stays where the next run finds it: the agent stops this machine and resumes it for the job.
   if (keep === undefined) await rm(jobDir, { recursive: true, force: true });
   else await rm(join(jobDir, ARTIFACTS_DIR), { recursive: true, force: true });
@@ -683,7 +698,7 @@ export function buildPrompt(
   }
   lines.push(
     "- Run the checks that cover what you touched, when the repo has them.",
-    `- Save a file in \`${ARTIFACTS_DIR}/\` at ${root} only when the brief asks for one, or when people must see it to judge your work, such as a screenshot of a UI change. Never save logs, test output, or machine-readable reports there: say what they showed in your report. Files there go back to the agent with your report and are never committed. Up to ${MAX_ARTIFACTS} files, ${MAX_ARTIFACT_MB} MB each.`,
+    `- Save a file in \`${ARTIFACTS_DIR}/\` at ${root} only when the brief asks for one, or when people must see it to judge your work, such as a screenshot of a UI change. Never save logs, test output, or machine-readable reports there: say what they showed in your report. Files there, subfolders included, go back to the agent with your report and are never committed. Up to ${MAX_ARTIFACTS} files, ${MAX_ARTIFACT_MB} MB each; anything over is named in your update but not sent.`,
     "- If you need a credential your environment doesn't have, such as an API key or a database URL, stop and make your final message `SECRET: ` followed by the environment variable names it should have and what for, like `SECRET: STRIPE_API_KEY: read the customer's payment history`. Never ask for a secret's value; people set it privately and the job resumes with it in your environment.",
     "- If you cannot go on without an answer from a person, stop and make your final message `QUESTION: ` followed by the question.",
     "- Otherwise your final message is the report people read in Slack: what you did or found, how you verified it, and what is left open. Under 400 words.",
@@ -801,7 +816,7 @@ async function logTail(logFile: string): Promise<string> {
 async function settle(
   deps: JobDeps,
   outcome: Outcome,
-  artifacts: readonly Artifact[] = [],
+  collected: Collected = { artifacts: [], skipped: [] },
   keep?: string,
 ): Promise<void> {
   const { board, claim, log } = deps;
@@ -833,23 +848,27 @@ async function settle(
     }
     // A report too long for the job update travels whole as a file, ahead of the CLI's own.
     const report = outcome.kind === "blocked" ? "" : outcome.report;
-    const files =
+    const all =
       report.length > REPORT_INLINE_CHARS
-        ? [{ name: FULL_REPORT_FILE, bytes: new TextEncoder().encode(report) }, ...artifacts].slice(
-            0,
-            MAX_ARTIFACTS,
-          )
-        : artifacts;
+        ? [{ name: FULL_REPORT_FILE, bytes: new TextEncoder().encode(report) }, ...collected.artifacts]
+        : collected.artifacts;
+    const skipped = [
+      ...collected.skipped,
+      ...all
+        .slice(MAX_ARTIFACTS)
+        .map((file) => `${artifactPath(file.name)} (over the ${MAX_ARTIFACTS}-file limit)`),
+    ];
     const attachments = [];
-    for (const artifact of files) {
+    for (const artifact of all.slice(0, MAX_ARTIFACTS)) {
       try {
         attachments.push(await board.upload({ data: artifact.bytes, name: artifact.name }));
       } catch (error) {
         log("job.artifact_failed", { task: id, file: artifact.name, error: String(error) });
+        skipped.push(`${artifactPath(artifact.name)} (its upload failed)`);
       }
     }
     await board.reply(id, {
-      text: replyText(outcome, keep !== undefined),
+      text: replyText(outcome, keep !== undefined, skipped),
       ...(attachments.length ? { attachments } : {}),
     });
     await board.label(id, { set: { [REPORT_LABEL]: REPORT_PENDING } });
@@ -869,19 +888,25 @@ async function settle(
   }
 }
 
-function replyText(outcome: Exclude<Outcome, { kind: "abandoned" | "paused" }>, kept: boolean): string {
+function replyText(
+  outcome: Exclude<Outcome, { kind: "abandoned" | "paused" }>,
+  kept: boolean,
+  skipped: readonly string[] = [],
+): string {
+  // Ahead of the report, so clipping a long report never drops it.
+  const notAttached = skipped.length ? `\n\n**Files not attached:** ${skipped.join(", ")}.` : "";
   switch (outcome.kind) {
     case "completed": {
       // An investigation's result is its report's first line; don't say it twice.
       const lead = outcome.report.includes(outcome.result) ? "**Done.**" : `**Done.** ${outcome.result}`;
-      return clip(`${lead}\n\n${outcome.report}`, MAX_REPLY_CHARS);
+      return clip(`${lead}${notAttached}\n\n${outcome.report}`, MAX_REPLY_CHARS);
     }
     case "failed": {
       const keptNote = kept
         ? `\n\nIts machine is kept with the work for ${keptMachineDays} days: retry_job continues from where it stopped.`
         : "";
       return clip(
-        `**Failed:** ${outcome.reason}${keptNote}${outcome.report ? `\n\n\`\`\`\n${outcome.report}\n\`\`\`` : ""}`,
+        `**Failed:** ${outcome.reason}${keptNote}${notAttached}${outcome.report ? `\n\n\`\`\`\n${outcome.report}\n\`\`\`` : ""}`,
         MAX_REPLY_CHARS,
       );
     }
