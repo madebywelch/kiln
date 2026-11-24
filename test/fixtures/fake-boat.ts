@@ -166,7 +166,8 @@ export class FakeBoat {
         vars: {},
       };
       this.environments.push(environment);
-      return ok({ environment: { ...environment, envContents: "" } });
+      // Real boat doesn't answer a create with { environment }; kiln must not depend on its shape.
+      return ok({ ok: true, type: "environment", id: environment.id });
     }
     const envPath = /^\/environments\/([^/]+)$/.exec(path);
     if (method === "PUT" && envPath) {

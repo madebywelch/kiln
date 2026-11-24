@@ -170,9 +170,13 @@ export class Boat {
     return (await this.#call<{ environments: Environment[] }>("GET", "/environments")).environments;
   }
 
+  /** Creates an environment and reads it back by name: boat's answer to a create doesn't carry it. */
   async createEnvironment(name: string): Promise<Environment> {
-    const { environment } = await this.#call<{ environment: Environment }>("POST", "/environments", { name });
-    return environment;
+    await this.#call("POST", "/environments", { name });
+    const created = (await this.environments()).find((environment) => environment.name === name);
+    if (!created)
+      throw new BoatError("POST /environments", 200, "not_listed", `created ${name}, but it isn't listed`);
+    return created;
   }
 
   async updateEnvironment(id: string, flags: EnvironmentFlags): Promise<void> {
