@@ -4,14 +4,20 @@
 // ran it, and every later turn sends those results back. When the turn lands on
 // another account, such as when the inference router moves to its next
 // credential because the first ran out, or after the agent moved off AI
-// Gateway, the endpoint refuses the whole request ("Invalid `encrypted_content`
-// in `search_result` block") on every try, and eve gives up on the thread. Here
-// that one refusal is answered by sending the request again with each earlier
-// search as plain text: what was searched, and each result's title and link.
-// The model loses the pages' text from those old searches, not the thread.
+// Gateway, the endpoint refuses the whole request on every try, and eve gives
+// up on the thread. Two parts are tied to the account: the results themselves
+// ("Invalid `encrypted_content` in `search_result` block") and the citations of
+// them in the model's replies ("Invalid `encrypted_index` in `text` block").
+// Either refusal is answered by sending the request again with each earlier
+// search as plain text (what was searched, and each result's title and link)
+// and the replies' search citations dropped, their text kept. The model loses
+// the pages' text from those old searches, not the thread.
 
-/** The endpoint's refusal of a search result encrypted for another account. */
-const FOREIGN_SEARCH_RESULT = /Invalid `encrypted_content` in `(?:web_)?search_result` block/;
+/** The endpoint's refusal of a search result, or a citation of one, encrypted for another account. */
+const FOREIGN_SEARCH =
+  /Invalid `encrypted_content` in `(?:web_)?search_result` block|Invalid `encrypted_index` in `text` block/;
+
+/** A citation that points into a search result by an index encrypted for the account that ran it. */
 
 type Block = Record<string, unknown>;
 interface MessagesBody {
@@ -19,6 +25,8 @@ interface MessagesBody {
 }
 
 const isBlock = (value: unknown): value is Block => typeof value === "object" && value !== null;
+
+const isSearchCitation = (citation: unknown) => isBlock(citation) && "encrypted_index" in citation;
 
 /** What a web search found, as text: the query, and each result's title and link. */
 function searchAsText(query: string | undefined, content: unknown): string {
@@ -34,10 +42,14 @@ function searchAsText(query: string | undefined, content: unknown): string {
 }
 
 /**
- * The request with each web search (its call and its encrypted results) replaced by a text block, and how
- * many were replaced. Everything else is left as it was.
+ * The request with each web search (its call and its encrypted results) replaced by a text block and each
+ * search citation dropped from the text that made it, and how many of each. Everything else is left as it was.
  */
-export function withSearchesAsText(body: MessagesBody): { body: MessagesBody; replaced: number } {
+export function withSearchesAsText(body: MessagesBody): {
+  body: MessagesBody;
+  replaced: number;
+  citations: number;
+} {
   const queries = new Map<string, string | undefined>();
   for (const message of body.messages ?? [])
     if (Array.isArray(message.content))
@@ -53,6 +65,7 @@ export function withSearchesAsText(body: MessagesBody): { body: MessagesBody; re
             isBlock(block.input) && typeof block.input.query === "string" ? block.input.query : undefined,
           );
   let replaced = 0;
+  let citations = 0;
   const messages = (body.messages ?? []).map((message) => {
     if (!Array.isArray(message.content)) return message;
     const content: unknown[] = [];
@@ -72,16 +85,23 @@ export function withSearchesAsText(body: MessagesBody): { body: MessagesBody; re
         replaced++;
         continue;
       }
+      if (isBlock(block) && block.type === "text" && Array.isArray(block.citations)) {
+        const kept = block.citations.filter((citation) => !isSearchCitation(citation));
+        citations += block.citations.length - kept.length;
+        const { citations: _all, ...text } = block;
+        content.push(kept.length > 0 ? { ...text, citations: kept } : text);
+        continue;
+      }
       content.push(block);
     }
     return { ...message, content };
   });
-  return { body: { ...body, messages }, replaced };
+  return { body: { ...body, messages }, replaced, citations };
 }
 
 /**
- * A fetch for the Messages API that, when the endpoint refuses a request for a search result encrypted for
- * another account, sends it once more with the conversation's searches as text.
+ * A fetch for the Messages API that, when the endpoint refuses a request for a search result or citation
+ * encrypted for another account, sends it once more with the conversation's searches as text.
  */
 export function searchSafeFetch(
   base: typeof globalThis.fetch,
@@ -90,15 +110,15 @@ export function searchSafeFetch(
   return async (input, init) => {
     const response = await base(input, init);
     if (response.status !== 400 || typeof init?.body !== "string") return response;
-    if (!FOREIGN_SEARCH_RESULT.test(await response.clone().text())) return response;
+    if (!FOREIGN_SEARCH.test(await response.clone().text())) return response;
     let rewritten: ReturnType<typeof withSearchesAsText>;
     try {
       rewritten = withSearchesAsText(JSON.parse(init.body) as MessagesBody);
     } catch {
       return response;
     }
-    if (rewritten.replaced === 0) return response;
-    log("model.searches_sent_as_text", { replaced: rewritten.replaced });
+    if (rewritten.replaced === 0 && rewritten.citations === 0) return response;
+    log("model.searches_sent_as_text", { replaced: rewritten.replaced, citations: rewritten.citations });
     return base(input, { ...init, body: JSON.stringify(rewritten.body) });
   };
 }
