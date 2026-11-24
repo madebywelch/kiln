@@ -176,17 +176,17 @@ importers:
         specifier: 2.9.0
         version: 2.9.0
       '@vercel/board':
-        specifier: 0.54.0
-        version: 0.54.0(@vercel/connect@2.9.5(ai@7.0.179(zod@4.6.7))(eve@1.3.0(ai@7.0.179(zod@4.6.7))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.27.0)(tsx@4.21.0)(yaml@2.9.1))))
+        specifier: 0.56.1
+        version: 0.56.1(@vercel/connect@2.9.5(ai@7.0.179(zod@4.6.7))(eve@1.4.0(ai@7.0.179(zod@4.6.7))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.27.0)(tsx@4.21.0)(yaml@2.9.1))))
       '@vercel/connect':
         specifier: ^2.9.5
-        version: 2.9.5(ai@7.0.179(zod@4.6.7))(eve@1.3.0(ai@7.0.179(zod@4.6.7))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.27.0)(tsx@4.21.0)(yaml@2.9.1)))
+        version: 2.9.5(ai@7.0.179(zod@4.6.7))(eve@1.4.0(ai@7.0.179(zod@4.6.7))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.27.0)(tsx@4.21.0)(yaml@2.9.1)))
       ai:
         specifier: ^7.0.179
         version: 7.0.179(zod@4.6.7)
       eve:
-        specifier: 1.3.0
-        version: 1.3.0(ai@7.0.179(zod@4.6.7))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.27.0)(tsx@4.21.0)(yaml@2.9.1))
+        specifier: 1.4.0
+        version: 1.4.0(ai@7.0.179(zod@4.6.7))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.27.0)(tsx@4.21.0)(yaml@2.9.1))
       libsodium-wrappers:
         specifier: 0.7.15
         version: 0.7.15
@@ -1358,8 +1358,8 @@ packages:
     resolution: {integrity: sha512-o+1CMRlT8/RvGo1aGkFv40F7v3MLdSOaVaIccepBXWrXgonKId3hHKSKGQ+iBDPoSe03crmHfhpHtTs0CCXiig==}
     engines: {node: '>=20.0.0'}
 
-  '@vercel/board@0.54.0':
-    resolution: {integrity: sha512-JPsKFnPVgSQpZGxtj/8TrPbHnJzebIMXXdzDeAZkfkXq9B0d0L3diAq5TByWtvP+4nDgrOqCHQxnzxdvsFNJ2A==}
+  '@vercel/board@0.56.1':
+    resolution: {integrity: sha512-fevWChw7CaZ0hIEMh8g8L8cHudzw/vqO9IfWWUxZCjzgAQ0hMxR1pv+QnM2FIMZLiO9WXJR+UD1onw0xOA/pSg==}
     engines: {node: '>=22.18'}
     hasBin: true
     peerDependencies:
@@ -1853,8 +1853,8 @@ packages:
     resolution: {integrity: sha512-aIL5Fx7mawVa300al2BnEE4iNvo1qETxLrPI/o05L7z6go7fCw1J6EQmbK4FmJ2AS7kgVF/KEZWufBfdClMcPg==}
     engines: {node: '>= 0.6'}
 
-  eve@1.3.0:
-    resolution: {integrity: sha512-cL1aaSwPLiUYPIp5ksivpd7GJpnl3H7xptT8/31utYC6HLWHJkf9gut++p46LaI2DhmVY1AdrrJ254BZGtlD6Q==}
+  eve@1.4.0:
+    resolution: {integrity: sha512-se+2rYc0RFaKokwR18eta9JIanzW90qEuwdIhdztlpaUTYYjug81FTSDI+szeXrgXabGiD3lWBC5tuzAuBttfg==}
     engines: {node: '>=24'}
     hasBin: true
     peerDependencies:
@@ -3563,13 +3563,13 @@ snapshots:
       throttleit: 2.1.0
       undici: 6.29.1
 
-  '@vercel/board@0.54.0(@vercel/connect@2.9.5(ai@7.0.179(zod@4.6.7))(eve@1.3.0(ai@7.0.179(zod@4.6.7))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.27.0)(tsx@4.21.0)(yaml@2.9.1))))':
+  '@vercel/board@0.56.1(@vercel/connect@2.9.5(ai@7.0.179(zod@4.6.7))(eve@1.4.0(ai@7.0.179(zod@4.6.7))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.27.0)(tsx@4.21.0)(yaml@2.9.1))))':
     dependencies:
       '@vercel/oidc': 3.8.10
       jose: 6.2.18
       zod: 4.6.7
     optionalDependencies:
-      '@vercel/connect': 2.9.5(ai@7.0.179(zod@4.6.7))(eve@1.3.0(ai@7.0.179(zod@4.6.7))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.27.0)(tsx@4.21.0)(yaml@2.9.1)))
+      '@vercel/connect': 2.9.5(ai@7.0.179(zod@4.6.7))(eve@1.4.0(ai@7.0.179(zod@4.6.7))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.27.0)(tsx@4.21.0)(yaml@2.9.1)))
 
   '@vercel/build-utils@15.5.0':
     dependencies:
@@ -3664,12 +3664,12 @@ snapshots:
       - utf-8-validate
     optional: true
 
-  '@vercel/connect@2.9.5(ai@7.0.179(zod@4.6.7))(eve@1.3.0(ai@7.0.179(zod@4.6.7))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.27.0)(tsx@4.21.0)(yaml@2.9.1)))':
+  '@vercel/connect@2.9.5(ai@7.0.179(zod@4.6.7))(eve@1.4.0(ai@7.0.179(zod@4.6.7))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.27.0)(tsx@4.21.0)(yaml@2.9.1)))':
     dependencies:
       '@vercel/oidc': 4.0.9
     optionalDependencies:
       ai: 7.0.179(zod@4.6.7)
-      eve: 1.3.0(ai@7.0.179(zod@4.6.7))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.27.0)(tsx@4.21.0)(yaml@2.9.1))
+      eve: 1.4.0(ai@7.0.179(zod@4.6.7))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.27.0)(tsx@4.21.0)(yaml@2.9.1))
 
   '@vercel/container@27.0.0(@vercel/build-utils@15.5.0)':
     dependencies:
@@ -4290,7 +4290,7 @@ snapshots:
   etag@1.8.1:
     optional: true
 
-  eve@1.3.0(ai@7.0.179(zod@4.6.7))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.27.0)(tsx@4.21.0)(yaml@2.9.1)):
+  eve@1.4.0(ai@7.0.179(zod@4.6.7))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.27.0)(tsx@4.21.0)(yaml@2.9.1)):
     dependencies:
       ai: 7.0.179(zod@4.6.7)
       nitro: 3.0.261103-rc
