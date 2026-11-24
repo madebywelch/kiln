@@ -160,6 +160,19 @@ describe("workerSettings", () => {
     expect(workerSettings("msg_1", "claude", config).KILN_SECRETS).toBeUndefined();
   });
 
+  it("sends a job's machine its servers without what only the agent uses", () => {
+    const withAgent = launchConfig({
+      ...env,
+      KILN_CONFIG: JSON.stringify({
+        repos: { web: { github: "acme/web", description: "games", mcp: ["sentry"] } },
+        mcpServers: { sentry: { url: "https://mcp.sentry.dev/mcp", description: "Sentry", agent: true } },
+      }),
+    }) as LaunchConfig;
+    expect(JSON.parse(workerSettings("msg_1", "claude", withAgent, "web").KILN_MCP_SERVERS ?? "{}")).toEqual({
+      sentry: { url: "https://mcp.sentry.dev/mcp" },
+    });
+  });
+
   it("gives a job only the MCP servers its group holds every secret for", () => {
     const servers = {
       linear: {

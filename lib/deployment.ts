@@ -10,7 +10,9 @@
 // servers, and secrets are keyed by the project.
 //
 // MCP values may name the repo's secrets as ${NAME}; the worker fills them in
-// from the machine's environment, so no secret is in the file.
+// from the machine's environment, so no secret is in the file. A hosted server
+// marked `agent` is also the agent's own connection, once per project that
+// lists it (lib/agent-connections.ts); kiln fills its ${NAME}s from boat.
 
 import { z } from "zod";
 import { EFFORTS, HARNESSES, KINDS } from "./config.ts";
@@ -18,11 +20,32 @@ import { EFFORTS, HARNESSES, KINDS } from "./config.ts";
 const text = z.string().min(1);
 const strings = z.record(z.string(), z.string());
 
+/** Which of a server's tools the agent sees: exactly one of `allow` or `block`, by tool name. */
+const ToolFilterSchema = z.union([
+  z.strictObject({ allow: z.array(text).min(1) }),
+  z.strictObject({ block: z.array(text).min(1) }),
+]);
+export type ToolFilter = z.infer<typeof ToolFilterSchema>;
+
 export const McpServerSchema = z.union([
-  z.strictObject({ url: text, headers: strings.optional() }),
+  z.strictObject({
+    url: text,
+    headers: strings.optional(),
+    /** What the server is for, in a sentence: the agent reads it to pick a connection. Needed with `agent`. */
+    description: text.optional(),
+    /** Also the agent's own connection, for every project that lists the server; optionally only some tools. */
+    agent: z.union([z.literal(true), z.strictObject({ tools: ToolFilterSchema })]).optional(),
+  }),
   z.strictObject({ command: text, args: z.array(z.string()).optional(), env: strings.optional() }),
 ]);
 export type McpServer = z.infer<typeof McpServerSchema>;
+
+/** A server as a job's machine gets it: without what only the agent uses. */
+export function workerServer(server: McpServer): McpServer {
+  if (!("url" in server)) return server;
+  const { agent: _agent, description: _description, ...rest } = server;
+  return rest;
+}
 
 const SelectionOverride = z.strictObject({
   harness: z.enum(HARNESSES).optional(),
@@ -79,6 +102,22 @@ export const DeploymentSchema = z
         }
       }
     };
+    for (const [key, server] of Object.entries(config.mcpServers)) {
+      if (!("url" in server) || !server.agent) continue;
+      const path = ["mcpServers", key];
+      if (!server.description)
+        ctx.addIssue({
+          code: "custom",
+          path,
+          message: "an agent server needs a description the agent can choose it by",
+        });
+      if (/\$\{/.test(server.url))
+        ctx.addIssue({
+          code: "custom",
+          path,
+          message: "an agent server's url can't name a secret; put it in a header",
+        });
+    }
     for (const [repo, { mcp }] of Object.entries(config.repos)) checkServers(["repos", repo, "mcp"], mcp);
     const inProject = new Map<string, string>();
     for (const [project, { repos, mcp }] of Object.entries(config.projects)) {

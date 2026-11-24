@@ -41,6 +41,19 @@ mcpServers:
     headers:
       Authorization: Bearer ${LINEAR_API_KEY}
 
+  # A hosted server the agent uses too (`agent`), once per project that lists it,
+  # to look things up without starting a job. It needs a description the agent
+  # picks it by, and its secrets go in headers. This one reads errors with a
+  # read-only token, in the production-read group; with PROD_WRITE_ secrets,
+  # a person approves each call. `agent: { tools: { allow: [...] } }` limits it
+  # to some tools.
+  sentry:
+    url: https://mcp.sentry.dev/mcp?skills=inspect
+    headers:
+      Authorization: Sentry-Bearer ${PROD_READ_SENTRY_TOKEN}
+    description: Sentry, read only: the project's errors, their events, and traces.
+    agent: true
+
   # A server the job's machine runs itself (Node 24 is installed).
   postgres:
     command: npx

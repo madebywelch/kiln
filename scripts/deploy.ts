@@ -12,6 +12,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
+import { connectionNameIssues } from "../lib/agent-connections.ts";
 import { DeploymentSchema, describeIssues } from "../lib/deployment.ts";
 
 const CONFIG_FILE = join(import.meta.dirname, "..", "kiln.config.yaml");
@@ -28,6 +29,8 @@ export function configSetting(yaml: string): string {
   }
   const parsed = DeploymentSchema.safeParse(raw);
   if (!parsed.success) throw new Error(`kiln.config.yaml: ${describeIssues(parsed.error)}`);
+  const names = connectionNameIssues(parsed.data);
+  if (names.length > 0) throw new Error(`kiln.config.yaml: ${names.join("; ")}`);
   return JSON.stringify(parsed.data);
 }
 

@@ -1,6 +1,13 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
-import { configuredProjects, deployment, secretsNamedBy, serversFor } from "../../lib/deployment.ts";
+import { hasSecrets, plannedConnections } from "../../lib/agent-connections.ts";
+import {
+  configuredProjects,
+  deployment,
+  secretsNamedBy,
+  serversFor,
+  workerServer,
+} from "../../lib/deployment.ts";
 import { describeCopy } from "../../lib/github-secrets.ts";
 import { daysUntil, EXPIRY_WARNING_DAYS, readSecretLabels } from "../../lib/secret-labels.ts";
 import { environmentName, SECRET_GROUPS, secretNamesByGroup } from "../../lib/secrets.ts";
@@ -14,11 +21,12 @@ export default defineDynamic(() => {
 
   return defineTool({
     description:
-      "List a repo's or project's secrets by group: each one's name, what it is, who saved it and when, and when it " +
-      "expires (expiresInDays when it's within two weeks, expired once it has passed), and where it's copied in GitHub " +
-      "Actions. Also its MCP servers and which " +
-      "group can sign in to each: a job gets a server only when its group holds every secret the server needs. Names " +
-      "only; values never leave boat. For a secret that expires, set yourself a task to remind people before it does.",
+      "List a repo's or project's secrets by group: each one's name, what it is, who saved it and when, when it " +
+      "expires (expiresInDays within two weeks, expired once it has passed), and where it's copied in GitHub " +
+      "Actions. Also its MCP servers: which groups hold every secret each needs (a job gets a server only when " +
+      "its group does), and, for a server that is also yours, its connection name (find its tools with eve__search), " +
+      "whether its secrets are set, and asksFirst when a person approves each call. Names only; values never leave " +
+      "boat. For a secret that expires, set yourself a task to remind people before it does.",
     inputSchema: z.object({ repo: z.enum(repoKeys) }),
     label: false,
     async execute({ repo }) {
@@ -58,14 +66,25 @@ export default defineDynamic(() => {
         }),
       );
       const servers = serversFor(config, repo);
+      const connections = plannedConnections(config).filter((connection) => connection.project === repo);
       const mcpServers = Object.fromEntries(
         Object.entries(servers).map(([key, server]) => {
-          const needs = secretsNamedBy({ [key]: server });
+          const needs = secretsNamedBy({ [key]: workerServer(server) });
+          const connection = connections.find((candidate) => candidate.server === key);
           return [
             key,
             {
               needs,
               groups: SECRET_GROUPS.filter((group) => needs.every((name) => names[group].includes(name))),
+              ...(connection
+                ? {
+                    yours: {
+                      connection: connection.name,
+                      ready: hasSecrets(connection, names),
+                      ...(connection.approval === "always" ? { asksFirst: true } : {}),
+                    },
+                  }
+                : {}),
             },
           ];
         }),

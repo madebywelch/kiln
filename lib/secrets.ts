@@ -94,6 +94,13 @@ export const GROUP_PREFIX: Readonly<Record<SecretGroup, string>> = {
   "production-write": "PROD_WRITE_",
 };
 
+/** The group a secret's name puts it in: its prefix, or staging for a plain name. */
+export function groupOfSecret(name: string): SecretGroup {
+  if (name.startsWith(GROUP_PREFIX["production-write"])) return "production-write";
+  if (name.startsWith(GROUP_PREFIX["production-read"])) return "production-read";
+  return "staging";
+}
+
 /** Words that say where a secret reaches, which only a group's prefix may say. */
 const WHERE_WORDS = new Set([
   "DEV",

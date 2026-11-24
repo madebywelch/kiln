@@ -17,6 +17,7 @@ import {
   projectsOf,
   secretsNamedBy,
   serversFor,
+  workerServer,
 } from "./deployment.ts";
 import { type Inference, inferenceFrom, type ProbeResult, probeInference } from "./inference.ts";
 import {
@@ -205,7 +206,15 @@ export function workerSettings(
   secrets: JobSecretsSettings = { group: "none", secrets: {} },
 ): Record<string, string> {
   const servers = repo
-    ? serversWithSecrets(serversFor(config.deployment, repo), Object.keys(secrets.secrets))
+    ? serversWithSecrets(
+        Object.fromEntries(
+          Object.entries(serversFor(config.deployment, repo)).map(([key, server]) => [
+            key,
+            workerServer(server),
+          ]),
+        ),
+        Object.keys(secrets.secrets),
+      )
     : {};
   const project = repo ? projectsOf(config.deployment)[repo] : undefined;
   const own = KEY_CREDENTIAL[harness];
