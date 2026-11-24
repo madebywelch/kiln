@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { agentName, parseDeployment, projectsOf, secretsNamedBy, serversFor } from "../lib/deployment.ts";
 import { configSetting } from "../scripts/deploy.ts";
@@ -47,6 +48,14 @@ describe("kiln.config.yaml", () => {
     expect(() => configSetting(`${repo}    defaults:\n      change: { harness: antigravity }\n`)).toThrow(
       /harness/,
     );
+  });
+
+  it("deploys kiln.config.example.yaml as it is, so a copy of it works", () => {
+    const example = parseDeployment(
+      configSetting(readFileSync(new URL("../kiln.config.example.yaml", import.meta.url), "utf8")),
+    );
+    if (typeof example === "string") throw new Error(example);
+    expect(Object.keys(example.mcpServers)).toContain("sentry");
   });
 
   it("names broken YAML instead of deploying it", () => {

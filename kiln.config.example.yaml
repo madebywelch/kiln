@@ -51,7 +51,7 @@ mcpServers:
     url: https://mcp.sentry.dev/mcp?skills=inspect
     headers:
       Authorization: Sentry-Bearer ${PROD_READ_SENTRY_TOKEN}
-    description: Sentry, read only: the project's errors, their events, and traces.
+    description: "Sentry, read only: the project's errors, their events, and traces."
     agent: true
 
   # A server the job's machine runs itself (Node 24 is installed).
