@@ -3,7 +3,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadSettingsFile, parseConfig } from "../worker/main.ts";
+import type { Exec } from "../worker/exec.ts";
+import { ghPullRequest, loadSettingsFile, parseConfig } from "../worker/main.ts";
 
 const base = {
   BOARD_PROFILE: "claude-1",
@@ -68,5 +69,57 @@ describe("loadSettingsFile", () => {
     expect(existsSync(path)).toBe(false);
     expect(loadSettingsFile(path, env)).toBe(false);
     await rm(dir, { recursive: true });
+  });
+});
+
+describe("ghPullRequest", () => {
+  /** A fake gh over a repo's pull requests, answering the way gh does. */
+  function fakeGh(prs: { url: string; head: string; state: "OPEN" | "CLOSED" | "MERGED" }[]) {
+    const created: string[][] = [];
+    const exec: Exec = async (_command, args) => {
+      const ok = (stdout: string) => ({ code: 0, stdout, stderr: "", timedOut: false, aborted: false });
+      const arg = (flag: string) => args[args.indexOf(flag) + 1];
+      if (args[1] === "view") {
+        // `gh pr view <branch>` finds the branch's latest pull request, in any state.
+        const pr = prs.findLast((candidate) => candidate.head === args[2]);
+        return pr ? ok(`${pr.url}\n`) : { ...ok(""), code: 1 };
+      }
+      if (args[1] === "list") {
+        const state = arg("--state")?.toUpperCase();
+        const pr = prs.find(
+          (candidate) => candidate.head === arg("--head") && (!state || candidate.state === state),
+        );
+        return ok(pr ? `${pr.url}\n` : "");
+      }
+      if (args[1] === "create") {
+        created.push([...args]);
+        return ok("https://github.com/acme/web/pull/9\n");
+      }
+      throw new Error(`unexpected gh ${args.join(" ")}`);
+    };
+    return { exec, created };
+  }
+  const request = {
+    cwd: "/w",
+    github: "acme/web",
+    base: "main",
+    head: "octo/fix-it",
+    title: "Fix it",
+    body: "b",
+  };
+
+  it("opens a new draft PR when the branch's only PR is closed, instead of reporting the closed one", async () => {
+    const gh = fakeGh([{ url: "https://github.com/acme/web/pull/1", head: "octo/fix-it", state: "CLOSED" }]);
+    expect(await ghPullRequest(gh.exec)(request)).toBe("https://github.com/acme/web/pull/9");
+    expect(gh.created).toHaveLength(1);
+  });
+
+  it("reuses the branch's open PR, as a resumed job's", async () => {
+    const gh = fakeGh([
+      { url: "https://github.com/acme/web/pull/1", head: "octo/fix-it", state: "MERGED" },
+      { url: "https://github.com/acme/web/pull/4", head: "octo/fix-it", state: "OPEN" },
+    ]);
+    expect(await ghPullRequest(gh.exec)(request)).toBe("https://github.com/acme/web/pull/4");
+    expect(gh.created).toHaveLength(0);
   });
 });

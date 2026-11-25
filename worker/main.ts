@@ -121,12 +121,25 @@ const log: Logger = (event, fields = {}) => {
 
 export function ghPullRequest(execFn: Exec): OpenPullRequest {
   return async ({ cwd, github, base, head, title, body }) => {
+    // Only an open pull request is this job's: a closed or merged one on a branch of the same name is
+    // earlier work, whose branch was deleted and whose name the job then took.
     const existing = await execFn(
       "gh",
-      ["pr", "view", head, "--repo", github, "--json", "url", "--jq", ".url"],
-      {
-        cwd,
-      },
+      [
+        "pr",
+        "list",
+        "--repo",
+        github,
+        "--head",
+        head,
+        "--state",
+        "open",
+        "--json",
+        "url",
+        "--jq",
+        ".[0].url // empty",
+      ],
+      { cwd },
     );
     if (existing.code === 0 && existing.stdout.trim()) return existing.stdout.trim();
     const created = await run(
