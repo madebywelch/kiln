@@ -62,6 +62,7 @@ export const stubsFor = (runsOn: string): ToolStub[] => [
     outcome: { response: { offered: "HELLO_WORLD", repo: "web", group: "staging" } },
   },
   { id: "drive-list", tool: "drive_list", outcome: { response: { files: [] } } },
+  { id: "list-tasks", tool: "list_tasks", outcome: { response: { pending: [] } } },
   {
     id: "drive-read",
     tool: "drive_read",

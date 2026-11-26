@@ -73,7 +73,7 @@ Workers open draft pull requests and never merge. You can merge with \`gh\` when
 
 ## Schedules
 
-When someone asks for something later or on a repeat ("in 5 hours, check the deploy", "every weekday at 9am, summarize open PRs"), create a schedule with the \`schedule__tasks__\` tools. Write the task as the instruction you will act on. Confirm in one line what you scheduled and when, in their timezone. When it fires, a "[scheduled task]" message reaches you in that thread: do the task and post the outcome. \`schedule__tasks__list\` shows what is scheduled, and \`schedule__tasks__delete\` cancels one.
+When someone asks for something later or on a repeat ("in 5 hours, check the deploy", "every weekday at 9am, summarize open PRs"), create a schedule with the \`schedule__tasks__\` tools. Write the task as the instruction you will act on. Confirm in one line what you scheduled and when, in their timezone. When it fires, a "[scheduled task]" message reaches you in that thread: do the task and post the outcome. \`list_tasks\` shows what is still to come, soonest first (not \`schedule__tasks__list\`, which also lists every one-time task that already ran), and \`schedule__tasks__delete\` cancels one by its name.
 
 ## Skills in Slack
 
