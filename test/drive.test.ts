@@ -194,7 +194,55 @@ describe("everything else", () => {
     expect(hits[0]).toEqual({
       path: "xmas/decisions.md",
       line: 1,
+      offset: 0,
       text: "2026-11-20: Ship SNOW behind a flag",
     });
+    expect(hits[1]).toMatchObject({ line: 2, offset: "# Plan\n".length, text: "snow first" });
+  });
+});
+
+describe("reading a long text file", () => {
+  // A 118 KB append-only log, newest entries at the end, like the one the agent couldn't finish reading.
+  const entries = Array.from({ length: 1_200 }, (_, i) => `- entry ${i}: ${"x".repeat(90)}`);
+  const log = `${entries.join("\n")}\n- PLAN: merge after review`;
+
+  async function withLog() {
+    const store = memoryDrive();
+    await store.write("tangerine/open-prs.md", text(log), "text/markdown; charset=utf-8");
+    return store;
+  }
+
+  it("reads the newest part with a negative offset", async () => {
+    const tail = await readText(await withLog(), "tangerine/open-prs.md", { offset: -200 });
+    expect(tail.text).toContain("- PLAN: merge after review");
+    expect(tail).toMatchObject({ chars: log.length, offset: log.length - 200 });
+    expect(tail.next).toBeUndefined();
+  });
+
+  it("says where to read on, and reading on from there reaches the end with nothing lost", async () => {
+    const store = await withLog();
+    const first = await readText(store, "tangerine/open-prs.md");
+    expect(first.next).toBe(100_000);
+    expect(first.text).toContain(`read on with offset 100000`);
+    const rest = await readText(store, "tangerine/open-prs.md", { offset: first.next });
+    const body = (part: typeof first) => part.text?.replace(/\n\[characters [^\]]+\]$/, "");
+    expect(`${body(first)}${body(rest)}`).toBe(log);
+  });
+
+  it("returns a short file whole, without a range note", async () => {
+    const store = memoryDrive();
+    await store.write("notes.md", text("short"), "text/markdown; charset=utf-8");
+    expect(await readText(store, "notes.md")).toMatchObject({ text: "short" });
+    expect((await readText(store, "notes.md")).next).toBeUndefined();
+  });
+
+  it("gives each search hit its offset, so a long line can be read whole", async () => {
+    const store = memoryDrive();
+    const long = `PLAN ${"y".repeat(3_000)} END`;
+    await store.write("log.md", text(`first line\n${long}\n`), "text/markdown; charset=utf-8");
+    const [hit] = await searchDrive(store, "plan");
+    expect(hit?.text).toContain("[line cut; read it from offset]");
+    const whole = await readText(store, "log.md", { offset: hit?.offset, limit: long.length });
+    expect(whole.text?.split("\n")[0]).toBe(long);
   });
 });

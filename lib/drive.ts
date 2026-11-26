@@ -51,9 +51,12 @@ const MAX_TURN_CHARS = 24_000;
 export const HISTORY_FOLDER = ".history/";
 /** Matches what a job takes and returns (MAX_JOB_FILE_BYTES), so any file can move between them. */
 export const MAX_FILE_BYTES = 25 * 1024 * 1024;
-const MAX_TEXT_READ = 100_000;
+/** The most text one read returns; a longer file is read in parts with an offset. */
+export const MAX_TEXT_READ = 100_000;
 const MAX_SEARCH_FILES = 500;
 const MAX_SEARCH_HITS = 40;
+/** How much of a matching line a search hit shows; the hit's offset reads the rest with drive_read. */
+const MAX_HIT_CHARS = 1_000;
 
 const TEXT_TYPES: Readonly<Record<string, string>> = {
   md: "text/markdown; charset=utf-8",
@@ -201,23 +204,43 @@ function edited(path: string, file: StoredFile | null, replace: string, find: st
   return next;
 }
 
+/** Which part of a text file to read, in characters: from `offset` (negative counts from the end), up to `limit`. */
+export interface TextRange {
+  readonly offset?: number | undefined;
+  readonly limit?: number | undefined;
+}
+
 export async function readText(
   store: DriveStore,
   raw: string,
-): Promise<{ path: string; text?: string; contentType: string; size: number }> {
+  range: TextRange = {},
+): Promise<{
+  path: string;
+  text?: string;
+  contentType: string;
+  size: number;
+  chars?: number;
+  offset?: number;
+  next?: number;
+}> {
   const path = drivePath(raw);
   const file = await store.read(path);
   if (!file) throw new DriveError(`no file at ${path}`);
   if (!isText(path)) return { path, contentType: file.contentType, size: file.bytes.byteLength };
   const text = new TextDecoder().decode(file.bytes);
+  const limit = Math.min(Math.max(1, Math.floor(range.limit ?? MAX_TEXT_READ)), MAX_TEXT_READ);
+  const asked = Math.floor(range.offset ?? 0);
+  const start = asked < 0 ? Math.max(0, text.length + asked) : Math.min(asked, text.length);
+  const end = Math.min(start + limit, text.length);
+  const whole = start === 0 && end === text.length;
   return {
     path,
     contentType: file.contentType,
     size: file.bytes.byteLength,
-    text:
-      text.length > MAX_TEXT_READ
-        ? `${text.slice(0, MAX_TEXT_READ)}\n[cut at ${MAX_TEXT_READ} characters]`
-        : text,
+    text: whole
+      ? text
+      : `${text.slice(start, end)}\n[characters ${start} to ${end} of ${text.length}${end < text.length ? `; read on with offset ${end}` : ""}]`,
+    ...(whole ? {} : { chars: text.length, offset: start, ...(end < text.length ? { next: end } : {}) }),
   };
 }
 
@@ -251,6 +274,8 @@ export async function turnContext(store: DriveStore): Promise<string> {
 export interface SearchHit {
   readonly path: string;
   readonly line: number;
+  /** Where the line starts in the file, in characters: drive_read's offset for the whole line and what follows. */
+  readonly offset?: number;
   readonly text: string;
 }
 
@@ -270,13 +295,24 @@ export async function searchDrive(
     if (entry.path.toLowerCase().includes(needle)) hits.push({ path: entry.path, line: 0, text: "(path)" });
     const file = await store.read(entry.path);
     if (!file) continue;
+    let offset = 0;
     new TextDecoder()
       .decode(file.bytes)
       .split("\n")
       .forEach((text, index) => {
         if (hits.length < MAX_SEARCH_HITS && text.toLowerCase().includes(needle)) {
-          hits.push({ path: entry.path, line: index + 1, text: text.trim().slice(0, 300) });
+          const line = text.trim();
+          hits.push({
+            path: entry.path,
+            line: index + 1,
+            offset,
+            text:
+              line.length > MAX_HIT_CHARS
+                ? `${line.slice(0, MAX_HIT_CHARS)} [line cut; read it from offset]`
+                : line,
+          });
         }
+        offset += text.length + 1;
       });
     if (hits.length >= MAX_SEARCH_HITS) break;
   }
