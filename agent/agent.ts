@@ -10,8 +10,8 @@ import { inferenceModel } from "./lib/inference.ts";
 // - INFERENCE_BASE_URL and INFERENCE_API_KEY: the deployment's Anthropic-compatible
 //   endpoint (lib/inference.ts), with KILN_MODEL as its model ID (default
 //   claude-fable-5-2). Workers' Claude Code jobs use it too.
-// - Neither, as in evals and local development: AI Gateway, with KILN_MODEL as a
-//   Gateway model ID.
+// - Neither, as in local development: AI Gateway, with KILN_MODEL as a Gateway
+//   model ID. Evals never take this route (evals/evals.config.ts).
 //
 // KILN_REASONING sets the reasoning level on every route.
 const DEFAULT_MODEL = "anthropic/claude-fable-5.2";

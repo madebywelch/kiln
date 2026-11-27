@@ -16,7 +16,7 @@
     "fmt": "biome check --write .",
     "test": "vitest run",
     "check": "pnpm lint && pnpm typecheck && pnpm test",
-    "eval": "EVE_MEMORY_BLOB_STORE_ID= KILN_CONFIG=\"$(cat evals/deployment.json)\" eve eval",
+    "eval": "EVE_MEMORY_BLOB_STORE_ID= AI_GATEWAY_API_KEY= VERCEL_OIDC_TOKEN= KILN_CONFIG=\"$(cat evals/deployment.json)\" eve eval",
     "workers:status": "node scripts/boat-workers.ts status",
     "workers:logs": "node scripts/boat-workers.ts logs"
   },
