@@ -139,7 +139,7 @@ pnpm eval         # the agent's real model on scripted conversations, on the inf
 | `scripts/deploy.ts` | Deploys the agent and pins the job machines' code to the same commit |
 | `scripts/boat-workers.ts` | Shows the job machines and their logs |
 | `evals/`, `test/` | Model evals and the test suite |
-| `docs/` | Slack and worker setup |
+| `docs/` | Slack and worker setup; the [decisions](docs/decisions.md) kiln rests on, [field notes](docs/field-notes.md) on the services it runs on, and [open questions](docs/open-questions.md) |
 
 ## Limits
 
