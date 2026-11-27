@@ -68,13 +68,21 @@ async function main(): Promise<void> {
   const config = existsSync(CONFIG_FILE) ? configSetting(readFileSync(CONFIG_FILE, "utf8")) : undefined;
 
   process.stdout.write(`pinning job machines to ${commit.slice(0, 7)}\n`);
-  sh("pnpm", ["exec", "vercel", "env", "add", "KILN_WORKER_CODE", "production", "--force"], code);
+  sh(
+    "pnpm",
+    ["exec", "vercel", "env", "add", "KILN_WORKER_CODE", "--environment", "production", "--force"],
+    code,
+  );
   if (config) {
     const { mcpServers, repos } = JSON.parse(config) as { mcpServers: object; repos: object };
     process.stdout.write(
       `sending kiln.config.yaml: ${Object.keys(repos).length} repos, ${Object.keys(mcpServers).length} MCP servers\n`,
     );
-    sh("pnpm", ["exec", "vercel", "env", "add", "KILN_CONFIG", "production", "--force"], config);
+    sh(
+      "pnpm",
+      ["exec", "vercel", "env", "add", "KILN_CONFIG", "--environment", "production", "--force"],
+      config,
+    );
   } else {
     process.stdout.write("no kiln.config.yaml: the repos on Vercel are left as they are\n");
   }

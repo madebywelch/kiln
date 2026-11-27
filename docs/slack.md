@@ -59,8 +59,8 @@ The agent receives Slack's Events API at `https://<deployment>/eve/v1/slack` and
 4. Set both on the project and redeploy:
 
    ```sh
-   vercel env add SLACK_BOT_TOKEN production
-   vercel env add SLACK_SIGNING_SECRET production
+   vercel env add SLACK_BOT_TOKEN --environment production
+   vercel env add SLACK_SIGNING_SECRET --environment production
    pnpm run deploy
    ```
 

@@ -24,9 +24,9 @@
     "@ai-sdk/anthropic": "^4.0.107",
     "@vercel/blob": "2.9.0",
     "@vercel/board": "0.56.1",
-    "@vercel/connect": "^2.9.5",
+    "@vercel/connect": "^2.9.6",
     "ai": "^7.0.179",
-    "eve": "1.4.0",
+    "eve": "1.5.0",
     "libsodium-wrappers": "0.7.15",
     "zod": "^4.6.7"
   },
@@ -35,7 +35,7 @@
     "@types/libsodium-wrappers": "0.7.14",
     "@types/node": "^26.6.6",
     "typescript": "^7.0.2",
-    "vercel": "^66.6.0",
+    "vercel": "^67.0.0",
     "vitest": "^5.1.1",
     "yaml": "^2.9.1"
   }
