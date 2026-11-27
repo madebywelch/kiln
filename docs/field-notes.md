@@ -36,6 +36,7 @@ Facts about the services kiln runs on, found against the real thing rather than 
 - eve names a Vercel sandbox after its session ID, so a new session means a new sandbox.
 - Its generated `schedule__<name>__list` keeps one-time schedules that already fired, as active. kiln's `list_tasks` lists what is still to come and deletes the spent ones.
 - `decide()` with no model uses a Gateway model. Channel screening (`agent/lib/ambient.ts`) still does, as does voice-note transcription.
+- Its MCP client (the bundled `@ai-sdk/mcp`) never follows a redirect. A connection whose server redirects fails to load its tools with `fetch failed`; only the function's log (`failed to load connection tools`) shows the cause, `unexpected redirect`. A server's `url` must be its final address. Mem0's is `https://mcp.mem0.ai/mcp/`: an authenticated request to `/mcp` is redirected there, but a bad key gets its 401 first, so probing with a fake key doesn't show it.
 
 ## Anthropic web search
 

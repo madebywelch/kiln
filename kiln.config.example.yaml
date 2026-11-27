@@ -60,7 +60,7 @@ mcpServers:
   # (vercel env add MCP_MEM0_API_KEY production), named MCP_..., not repo
   # secrets. A memory service, say, with its bulk deletes blocked.
   mem0:
-    url: https://mcp.mem0.ai/mcp
+    url: https://mcp.mem0.ai/mcp/       # the trailing slash matters: /mcp redirects, and eve won't follow
     headers:
       Authorization: Bearer ${MCP_MEM0_API_KEY}
     description: "Long-term memory: facts, preferences, and decisions, searched by meaning."
