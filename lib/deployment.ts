@@ -12,7 +12,10 @@
 // MCP values may name the repo's secrets as ${NAME}; the worker fills them in
 // from the machine's environment, so no secret is in the file. A hosted server
 // marked `agent` is also the agent's own connection, once per project that
-// lists it (lib/agent-connections.ts); kiln fills its ${NAME}s from boat.
+// lists it (lib/agent-connections.ts); kiln fills its ${NAME}s from boat. One
+// marked `agent: { everywhere: true }` is the agent's alone: one connection in
+// every conversation, no project lists it, jobs never get it, and its ${NAME}s
+// come from the agent's Vercel project, named with AGENT_SECRET_PREFIX.
 
 import { z } from "zod";
 import { EFFORTS, HARNESSES, KINDS } from "./config.ts";
@@ -27,18 +30,39 @@ const ToolFilterSchema = z.union([
 ]);
 export type ToolFilter = z.infer<typeof ToolFilterSchema>;
 
+/**
+ * What an everywhere server's ${NAME}s start with. They come from the agent's own environment, which also
+ * holds kiln's credentials, so a server can only name variables set for it.
+ */
+export const AGENT_SECRET_PREFIX = "MCP_";
+
+const AgentSchema = z.union([
+  z.literal(true),
+  z.strictObject({
+    /** Only some of the server's tools. */
+    tools: ToolFilterSchema.optional(),
+    /** The agent's alone, in every conversation rather than per project; jobs never get it. */
+    everywhere: z.literal(true).optional(),
+  }),
+]);
+
 export const McpServerSchema = z.union([
   z.strictObject({
     url: text,
     headers: strings.optional(),
     /** What the server is for, in a sentence: the agent reads it to pick a connection. Needed with `agent`. */
     description: text.optional(),
-    /** Also the agent's own connection, for every project that lists the server; optionally only some tools. */
-    agent: z.union([z.literal(true), z.strictObject({ tools: ToolFilterSchema })]).optional(),
+    /** Also the agent's own connection, for every project that lists the server, or `everywhere`. */
+    agent: AgentSchema.optional(),
   }),
   z.strictObject({ command: text, args: z.array(z.string()).optional(), env: strings.optional() }),
 ]);
 export type McpServer = z.infer<typeof McpServerSchema>;
+
+/** A server that is the agent's alone, in every conversation, with secrets from the agent's environment. */
+export function isEverywhere(server: McpServer): boolean {
+  return "url" in server && typeof server.agent === "object" && server.agent.everywhere === true;
+}
 
 /** A server as a job's machine gets it: without what only the agent uses. */
 export function workerServer(server: McpServer): McpServer {
@@ -97,9 +121,14 @@ export const DeploymentSchema = z
   .superRefine((config, ctx) => {
     const checkServers = (path: (string | number)[], mcp: readonly string[]) => {
       for (const server of mcp) {
-        if (!config.mcpServers[server]) {
-          ctx.addIssue({ code: "custom", path, message: `no MCP server named ${server}` });
-        }
+        const definition = config.mcpServers[server];
+        if (!definition) ctx.addIssue({ code: "custom", path, message: `no MCP server named ${server}` });
+        else if (isEverywhere(definition))
+          ctx.addIssue({
+            code: "custom",
+            path,
+            message: `${server} is the agent's everywhere server; jobs never get it, so no repo or project lists it`,
+          });
       }
     };
     for (const [key, server] of Object.entries(config.mcpServers)) {
@@ -117,6 +146,14 @@ export const DeploymentSchema = z
           path,
           message: "an agent server's url can't name a secret; put it in a header",
         });
+      if (isEverywhere(server))
+        for (const secret of secretsNamedBy({ [key]: server }))
+          if (!secret.startsWith(AGENT_SECRET_PREFIX))
+            ctx.addIssue({
+              code: "custom",
+              path,
+              message: `an everywhere server's secrets come from the agent's Vercel project and start with ${AGENT_SECRET_PREFIX}: rename ${secret}`,
+            });
     }
     for (const [repo, { mcp }] of Object.entries(config.repos)) checkServers(["repos", repo, "mcp"], mcp);
     const inProject = new Map<string, string>();

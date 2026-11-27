@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  agentHeaders,
   connectionName,
   connectionNameIssues,
   filledHeaders,
   hasSecrets,
   plannedConnections,
+  unsetAgentSecrets,
 } from "../lib/agent-connections.ts";
-import { type Deployment, DeploymentSchema, workerServer } from "../lib/deployment.ts";
+import { type Deployment, DeploymentSchema, serversFor, workerServer } from "../lib/deployment.ts";
 import { groupOfSecret } from "../lib/secrets.ts";
 
 const deployment = (raw: unknown): Deployment => DeploymentSchema.parse(raw);
@@ -116,6 +118,103 @@ describe("agent servers in kiln.config.yaml", () => {
       url: "https://s",
       headers: { A: "b" },
     });
+  });
+});
+
+describe("everywhere servers", () => {
+  const withMemory = deployment({
+    repos: { web: { github: "acme/web", description: "the site", mcp: ["linear"] } },
+    mcpServers: {
+      memory: {
+        url: "https://memory.example.com/mcp",
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: how kiln.config.yaml names a server's secret
+        headers: { Authorization: "Bearer ${MCP_MEMORY_API_KEY}" },
+        description: "Long-term memory, searched by meaning.",
+        agent: { everywhere: true, tools: { block: ["delete_all"] } },
+      },
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: how kiln.config.yaml names a server's secret
+      linear: { url: "https://mcp.linear.app/mcp", headers: { Authorization: "Bearer ${LINEAR_API_KEY}" } },
+    },
+  });
+  const memory = plannedConnections(withMemory).find((c) => c.name === "memory");
+  if (!memory) throw new Error("no memory connection");
+
+  it("are one connection named for the server, listed on no project, and never a job's", () => {
+    expect(plannedConnections(withMemory)).toHaveLength(1);
+    expect(memory).toMatchObject({
+      project: null,
+      server: "memory",
+      secrets: ["MCP_MEMORY_API_KEY"],
+      approval: "never",
+      description: "Long-term memory, searched by meaning.",
+      tools: { block: ["delete_all"] },
+    });
+    expect(serversFor(withMemory, "web")).not.toHaveProperty("memory");
+  });
+
+  it("are offered only once every secret is set on the agent, and filled from its environment", () => {
+    expect(unsetAgentSecrets(memory, {})).toEqual(["MCP_MEMORY_API_KEY"]);
+    expect(unsetAgentSecrets(memory, { MCP_MEMORY_API_KEY: "" })).toEqual(["MCP_MEMORY_API_KEY"]);
+    expect(unsetAgentSecrets(memory, { MCP_MEMORY_API_KEY: "m0-abc" })).toEqual([]);
+    expect(agentHeaders(memory, { MCP_MEMORY_API_KEY: "m0-abc" })).toEqual({
+      Authorization: "Bearer m0-abc",
+    });
+    expect(() => agentHeaders(memory, {})).toThrow(
+      "MCP_MEMORY_API_KEY isn't set on the agent's Vercel project",
+    );
+  });
+
+  it("never read a project's boat secrets", () => {
+    const all = { staging: ["MCP_MEMORY_API_KEY"], "production-read": [], "production-write": [] };
+    expect(hasSecrets(memory, all)).toBe(false);
+    expect(() => filledHeaders(memory, [])).toThrow("use agentHeaders");
+  });
+
+  it("ask a person before every call when a secret can change production", () => {
+    const admin = deployment({
+      mcpServers: {
+        admin: {
+          url: "https://admin.example.com/mcp",
+          // biome-ignore lint/suspicious/noTemplateCurlyInString: how kiln.config.yaml names a server's secret
+          headers: { Authorization: "Bearer ${MCP_PROD_WRITE_ADMIN_TOKEN}" },
+          description: "The admin panel.",
+          agent: { everywhere: true },
+        },
+      },
+    });
+    expect(plannedConnections(admin)[0]).toMatchObject({ name: "admin", approval: "always" });
+  });
+
+  it("can't take a name another connection has", () => {
+    const clash = deployment({
+      repos: { web: { github: "a/b", description: "d", mcp: ["sentry"] } },
+      mcpServers: {
+        sentry: { url: "https://s", description: "S", agent: true },
+        "sentry-web": { url: "https://t", description: "T", agent: { everywhere: true } },
+      },
+    });
+    expect(connectionNameIssues(clash)).toEqual([
+      "sentry on web: its connection name sentry-web is taken by another connection",
+    ]);
+  });
+
+  it("must name only MCP_ variables, so kiln's own credentials can't reach a server", () => {
+    const parse = (headers: Record<string, string>) =>
+      DeploymentSchema.safeParse({
+        mcpServers: { m: { url: "https://m", headers, description: "M", agent: { everywhere: true } } },
+      });
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: how kiln.config.yaml names a server's secret
+    expect(parse({ Authorization: "Bearer ${BOARD_TOKEN}" }).error?.message).toContain("rename BOARD_TOKEN");
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: how kiln.config.yaml names a server's secret
+    expect(parse({ Authorization: "Bearer ${MCP_M_KEY}" }).success).toBe(true);
+  });
+
+  it("can't be listed on a repo or project", () => {
+    const listed = DeploymentSchema.safeParse({
+      repos: { web: { github: "a/b", description: "d", mcp: ["m"] } },
+      mcpServers: { m: { url: "https://m", description: "M", agent: { everywhere: true } } },
+    });
+    expect(listed.error?.message).toContain("jobs never get it");
   });
 });
 

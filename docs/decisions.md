@@ -13,6 +13,7 @@ Choices that shaped kiln and why. The code shows what kiln does; this records th
 
 - kiln gives the agent capabilities: tools, CLIs, credentials. How it uses them (when to merge, what to check after a job) is workflow, and lives in its drive's `AGENTS.md`, agreed between the agent and its people. Workflows are not frozen in code: no state machines, watchers, or guards unless asked for.
 - No per-person permissions or allowlists. The workspace is trusted as a whole.
+- The drive is kiln's memory. A memory service the operator adds is a connection like any other, and what goes in it versus the drive is the drive's `AGENTS.md`, not code.
 
 ## Models
 
@@ -33,6 +34,7 @@ Choices that shaped kiln and why. The code shows what kiln does; this records th
 ## Secrets
 
 - Three groups by reach (staging, production-read, production-write), and a name's prefix is its group, so a name and its group can't disagree.
+- An everywhere connection's secrets live in the agent's own Vercel environment, which also holds kiln's credentials (Board, GitHub, boat, the inference endpoint). A config may name only `MCP_` variables there, so a typo or a copied example can't send one of kiln's credentials to a third-party server. No project lists an everywhere server, so jobs never get the agent's own tools, such as its memory: a Mem0-style key reaches the whole account, and per-project isolation would be gone.
 - A secret's reach is never inferred from its name, and values are never moved between groups by script. Only the person who made a credential knows how far it reaches; old names have been wrong before. People re-enter values through the Slack form, and the agent asks when a group is unclear.
 
 ## Shipping
