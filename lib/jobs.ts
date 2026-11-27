@@ -15,6 +15,7 @@ import {
   type Selection,
 } from "./config.ts";
 import type { RepoConfig } from "./deployment.ts";
+import type { ContinuedPull } from "./github-pulls.ts";
 import { JOB_SECRETS, type JobSecrets } from "./secrets.ts";
 
 export { type JobKind, KINDS };
@@ -41,6 +42,8 @@ export const RESUME_DISK = "disk";
 export const BRANCH_LABEL = "branch";
 /** A queued job with this label starts before older ones, after jobs with work to continue. */
 export const PRIORITY_LABEL = "priority";
+/** The open pull request a change job adds to: `<repo key>#<number>@<head sha>`; the branch is BRANCH_LABEL. */
+export const CONTINUES_LABEL = "continues";
 export const PRIORITY_HIGH = "high";
 /** Which of its project's secret groups a job's machine gets; absent means none. */
 export const SECRETS_LABEL = "secrets";
@@ -173,6 +176,8 @@ export interface JobSpec extends Selection {
   readonly priority?: boolean | undefined;
   /** The secret group its machine gets. Default: none. */
   readonly secrets?: JobSecrets | undefined;
+  /** A change job that adds to this open pull request, on its branch, instead of opening its own. */
+  readonly continues?: ContinuedPull | undefined;
 }
 
 export class JobError extends Error {
@@ -302,6 +307,12 @@ export function encodeJob(spec: JobSpec): EncodedJob {
   if (spec.origin?.asker) labels.asker = labelValue("asker", JSON.stringify(spec.origin.asker));
   if (spec.priority) labels[PRIORITY_LABEL] = PRIORITY_HIGH;
   if (spec.secrets && spec.secrets !== "none") labels[SECRETS_LABEL] = spec.secrets;
+  if (spec.continues) {
+    if (spec.kind !== "change") throw new JobError("only a change job continues a pull request");
+    const { repo, number, head, branch } = spec.continues;
+    labels[CONTINUES_LABEL] = labelValue("continued pull request", `${repo}#${number}@${head}`);
+    labels[BRANCH_LABEL] = labelValue("branch", branch);
+  }
   return { text: `## ${title}\n\n${brief}`, labels };
 }
 
@@ -331,6 +342,15 @@ export function decodeJob(root: {
     origin = { channelId, threadTs, ...(asker ? { asker } : {}) };
   }
 
+  let continues: ContinuedPull | undefined;
+  if (labels[CONTINUES_LABEL]) {
+    const match = /^([\w.-]+)#(\d+)@([0-9a-f]{7,40})$/.exec(labels[CONTINUES_LABEL]);
+    const branch = labels[BRANCH_LABEL];
+    if (!match || !branch)
+      throw new JobError(`label ${CONTINUES_LABEL}=${labels[CONTINUES_LABEL]} is malformed`);
+    continues = { repo: match[1] as string, number: Number(match[2]), head: match[3] as string, branch };
+  }
+
   const heading = `## ${title}\n\n`;
   const brief = root.text.startsWith(heading) ? root.text.slice(heading.length) : root.text;
 
@@ -345,6 +365,7 @@ export function decodeJob(root: {
     model: labels.model,
     secrets:
       labels[SECRETS_LABEL] === undefined ? "none" : oneOf(SECRETS_LABEL, labels[SECRETS_LABEL], JOB_SECRETS),
+    ...(continues ? { continues } : {}),
   };
 }
 

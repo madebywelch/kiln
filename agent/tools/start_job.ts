@@ -1,9 +1,16 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { postJob } from "../../lib/board-jobs.ts";
-import { defaultSelection, EFFORTS, enabledHarnesses, type Harness } from "../../lib/config.ts";
+import {
+  agentGitHubToken,
+  defaultSelection,
+  EFFORTS,
+  enabledHarnesses,
+  type Harness,
+} from "../../lib/config.ts";
 import { configuredProjects } from "../../lib/deployment.ts";
 import { drivePath } from "../../lib/drive.ts";
+import { pullRequestRepo, pullToContinue } from "../../lib/github-pulls.ts";
 import { collectJobFiles } from "../../lib/job-files.ts";
 import {
   askerOfSession,
@@ -50,7 +57,9 @@ export default defineDynamic(() => {
   return defineTool({
     description: [
       "Hand work on a repo to the worker pool, each job in a fresh clone. A change job commits to its own",
-      "branch and opens a draft pull request; an investigate job only reports. The result comes back to this",
+      "branch and opens a draft pull request, or, given `pull_request`, adds its commits to that open pull",
+      "request so the same one stays open (fixing its CI, a conflict, or a follow-up), keeping its review, labels,",
+      "and draft or ready state: use that rather than a new job whose pull request replaces it. An investigate job only reports. The result comes back to this",
       "thread when the job settles. A project is several repos cloned side by side: a job on it can change any",
       "of them, and each one it changes gets its own draft pull request. Pick the project even when the work",
       "touches only one of its repos.",
@@ -123,10 +132,32 @@ export default defineDynamic(() => {
         .string()
         .optional()
         .describe("A thread for the job's updates: its root message's ts, in channel_id or this channel."),
+      pull_request: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe(
+          "Change jobs only: the number of an open pull request on one of this repo's or project's repos to add to. " +
+            "The job checks out its branch, builds on it, and pushes there; it never force-pushes it.",
+        ),
+      pull_request_repo: z
+        .string()
+        .optional()
+        .describe(
+          "For a project: which of its repos (by key) the pull request is on. Not needed for a single repo.",
+        ),
     }),
     label: { start: ({ repo, title }) => `Start job on ${repo}: ${title}` },
     async execute(input, ctx) {
       const selection = resolveSelection(input.repo, input.kind, input, repos);
+      const continues = input.pull_request
+        ? await pullToContinue(
+            agentGitHubToken(process.env),
+            pullRequestRepo(repos[input.repo]?.repos ?? [], input.kind, input.pull_request_repo),
+            input.pull_request,
+          )
+        : undefined;
       const here = slackHere(ctx);
       const asker = askerOfSession(ctx.session.auth);
       const files = await collectJobFiles(input.files ?? [], {
@@ -150,6 +181,7 @@ export default defineDynamic(() => {
           origin: thread ? { ...thread, ...(asker ? { asker } : {}) } : undefined,
           priority: input.priority,
           secrets: input.secrets,
+          ...(continues ? { continues } : {}),
         },
         files,
       );
@@ -160,6 +192,7 @@ export default defineDynamic(() => {
         runsOn: job.runsOn,
         secrets: job.secrets,
         reportsTo: reportsTo(job.origin, here),
+        ...(continues ? { continues: `#${continues.number} (${continues.branch})` } : {}),
         ...(files.length ? { files: files.map((file) => file.name) } : {}),
       };
     },

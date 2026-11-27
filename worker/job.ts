@@ -426,11 +426,21 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string, progress:
   for (const { repo, base, dir, git } of cloned) {
     // An earlier run of this job pushed this branch; continue from it.
     const resumed = await onRemote(dir, branch);
+    // Starting a continued pull request's branch over from the base would drop everything it held.
+    if (!resumed && spec.continues?.repo === repo.key) {
+      throw new Error(
+        `${branch}, the branch of pull request #${spec.continues.number}, is no longer on GitHub; start a new job instead`,
+      );
+    }
     await git(["switch", "--quiet", "-c", branch, resumed ? `origin/${branch}` : `origin/${base}`]);
     checkouts.push({ ...repo, base, dir, git, resumed, startSha: await git(["rev-parse", "HEAD"]) });
   }
   progress.cloned = true;
   const resumed = progress.continued || checkouts.some((checkout) => checkout.resumed);
+  // A change job adding to an open pull request: its repo's checkout is on the pull request's branch.
+  const continued = spec.continues
+    ? { ...spec.continues, github: repos.find((repo) => repo.key === spec.continues?.repo)?.github ?? "" }
+    : undefined;
   const inputs = progress.continued
     ? await readdir(join(jobDir, INPUTS_DIR)).catch(() => [])
     : await fetchInputs(board, claim.task.attachments ?? [], join(jobDir, INPUTS_DIR));
@@ -446,7 +456,9 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string, progress:
         signal,
       };
       const guard = deps.mask ?? noMask;
-      if (await pushWork(checkout.git, spec.title, checkout.startSha, branch, retry, guard))
+      // A continued pull request's branch is shared with people and the pull request: never force-push over it.
+      const shared = continued !== undefined;
+      if (await pushWork(checkout.git, spec.title, checkout.startSha, branch, retry, guard, shared))
         pushed.push(checkout);
     }
     return pushed;
@@ -466,6 +478,7 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string, progress:
           branch,
           resumed,
           ...(single ? {} : { project: spec.repo, repos: repos.map(({ key, github }) => ({ key, github })) }),
+          ...(continued ? { continues: { number: continued.number, github: continued.github } } : {}),
         },
         earlier,
         deps.guidance,
@@ -551,8 +564,18 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string, progress:
   }
 
   const pushed = await pushAll();
-  // A repo gets a pull request when this run pushed to it, or an earlier run of the job did.
-  const changed = checkouts.filter((checkout) => pushed.includes(checkout) || checkout.resumed);
+  // A repo gets a pull request when this run pushed to it, or an earlier run of the job did. A continued pull
+  // request's branch was on GitHub before the job, so there it counts only when the job added commits: those
+  // after the head it was started from, or, when the branch was rewritten since and that head is gone, this run's.
+  const changed: Checkout[] = [];
+  for (const checkout of checkouts) {
+    if (continued && checkout.key === continued.repo) {
+      const added = await checkout
+        .git(["rev-list", "--count", `${continued.head}..HEAD`])
+        .then(Number, () => undefined);
+      if (added === undefined ? pushed.includes(checkout) : added > 0) changed.push(checkout);
+    } else if (pushed.includes(checkout) || checkout.resumed) changed.push(checkout);
+  }
   if (changed.length === 0) return { kind: "completed", result: "No changes made.", report };
   const urls: string[] = [];
   for (const checkout of changed) {
@@ -569,9 +592,11 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string, progress:
       }),
     );
   }
+  // A continued pull request keeps its own state, draft or ready.
+  const noun = continued ? "PR" : "Draft PR";
   return {
     kind: "completed",
-    result: urls.length === 1 ? `Draft PR: ${urls[0]}` : `Draft PRs: ${urls.join(", ")}`,
+    result: urls.length === 1 ? `${noun}: ${urls[0]}` : `${noun}s: ${urls.join(", ")}`,
     report,
   };
 }
@@ -610,6 +635,7 @@ async function pushWork(
   branch: string,
   retry: { delaysMs: readonly number[]; log: Logger; task: string; signal: AbortSignal },
   mask: Mask = noMask,
+  shared = false,
 ): Promise<boolean> {
   if ((await git(["status", "--porcelain"])) !== "") {
     await git(["add", "-A"]);
@@ -624,13 +650,22 @@ async function pushWork(
       `the job's commits hold the value of ${leaked.join(", ")}, so nothing was pushed; remove it from the commits and retry`,
     );
   }
-  // The branch belongs to this job, so overwriting it is safe.
+  // The job's own branch belongs to it, so overwriting it is safe. A shared one (a continued pull request's)
+  // only fast-forwards: if someone pushed to it during the job, the push fails rather than dropping their commits.
+  const push = shared
+    ? ["push", "--quiet", "-u", "origin", branch]
+    : ["push", "--quiet", "--force", "-u", "origin", branch];
   for (let attempt = 0; ; attempt++) {
     try {
-      await git(["push", "--quiet", "--force", "-u", "origin", branch]);
+      await git(push);
       return true;
     } catch (error) {
       const delay = retry.delaysMs[attempt];
+      if (shared && /non-fast-forward|fetch first|\[rejected\]|Updates were rejected/.test(String(error))) {
+        throw new Error(
+          `${branch} changed on GitHub while the job ran, so its commits weren't pushed over the new ones; start the job again to build on them`,
+        );
+      }
       if (delay === undefined || retry.signal.aborted) throw error;
       retry.log("git.push_retry", {
         task: retry.task,
@@ -653,6 +688,8 @@ export function buildPrompt(
     /** For a project: its key and its repos, cloned side by side in subfolders named by key. */
     readonly project?: string;
     readonly repos?: readonly { readonly key: string; readonly github: string }[];
+    /** The open pull request whose branch this is: the job adds to it. */
+    readonly continues?: { readonly number: number; readonly github: string };
   },
   earlier: readonly { readonly text: string }[],
   guidance?: string,
@@ -669,12 +706,20 @@ export function buildPrompt(
         ...repos.map((repo) => `- \`${repo.key}/\`: ${repo.github}`),
         "",
         "The job may need one of them or several; change only what it needs. Each repo may have its own CLAUDE.md or AGENTS.md: read it before changing that repo.",
-        where.resumed ? "These branches hold work from an earlier run of this job; continue from it." : "",
+        where.continues
+          ? `${where.branch} is the branch of pull request #${where.continues.number} on ${where.continues.github}: build on what it holds; your commits are added to that pull request.`
+          : where.resumed
+            ? "These branches hold work from an earlier run of this job; continue from it."
+            : "",
         "",
       ]
     : [
         `You are working on job #${where.id} from ${agentName()}, in a fresh clone of ${where.github}, on branch ${where.branch}.`,
-        where.resumed ? "This branch holds work from an earlier run of this job; continue from it." : "",
+        where.continues
+          ? `It is the branch of pull request #${where.continues.number}: build on what it holds; your commits are added to that pull request.`
+          : where.resumed
+            ? "This branch holds work from an earlier run of this job; continue from it."
+            : "",
         "",
       ];
   lines.push("# The job", "", `## ${spec.title}`, "", spec.brief, "");

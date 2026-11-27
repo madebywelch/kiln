@@ -28,6 +28,7 @@ Choices that shaped kiln and why. The code shows what kiln does; this records th
 - Worker credentials never reach the coding CLI (AGENTS.md). For the same reason kiln doesn't use boat's "GitHub repositories" environment feature: it puts the GitHub token on the machine, where the permission-free CLI could use it.
 - Unfinished work never reaches GitHub. Paused or failed work is kept on the stopped machine instead (`kept work`).
 - A job reuses its branch's pull request only when that pull request is open. A closed or merged one on a branch of the same name is earlier work whose deleted branch the job's title happened to match.
+- A job can continue an open pull request (`continues` label) rather than open one that replaces it, so its checks, review, labels, and schedules survive a fix round. Its branch is shared with people, so the worker never force-pushes it: a branch that moved during the job fails the job, and a branch deleted before it fails it too, instead of starting over from main. The agent checks the pull request when it starts the job (open, same repo, not the base branch) and records its head, so only commits after it count as the job's work.
 
 ## Secrets
 

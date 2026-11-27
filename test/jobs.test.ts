@@ -228,6 +228,25 @@ describe("encodeJob and decodeJob", () => {
     expect(() => encodeJob({ ...spec, model: "m".repeat(300) })).toThrow(/too long/);
   });
 
+  it("carries a continued pull request as its branch and a continues label", () => {
+    const continues = { repo: "web", number: 12, branch: "octo/fix-ci", head: "a1b2c3d4e5f6" };
+    const encoded = encodeJob({ ...spec, continues });
+    expect(encoded.labels).toMatchObject({ continues: "web#12@a1b2c3d4e5f6", branch: "octo/fix-ci" });
+    expect(decodeJob(encoded).continues).toEqual(continues);
+    expect(decodeJob(encodeJob(spec)).continues).toBeUndefined();
+  });
+
+  it("refuses a continued pull request on an investigate job, or a malformed continues label", () => {
+    const continues = { repo: "web", number: 12, branch: "octo/fix-ci", head: "a1b2c3d" };
+    expect(() => encodeJob({ ...spec, kind: "investigate", continues })).toThrow(JobError);
+    const encoded = encodeJob({ ...spec, continues });
+    expect(() =>
+      decodeJob({ ...encoded, labels: { ...encoded.labels, continues: "web#twelve@a1b2c3d" } }),
+    ).toThrow(/malformed/);
+    const { branch: _, ...withoutBranch } = encoded.labels;
+    expect(() => decodeJob({ ...encoded, labels: withoutBranch })).toThrow(/malformed/);
+  });
+
   it("refuses a task that is not a kiln job", () => {
     expect(() => decodeJob({ text: "hi", labels: {} })).toThrow(/not a kiln job/);
   });

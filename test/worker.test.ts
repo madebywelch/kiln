@@ -120,6 +120,8 @@ interface RunOptions {
   inference?: { baseURL: string; apiKey: string };
   mask?: Mask;
   sessionLogs?: string[];
+  /** Runs before each command the worker runs, as when someone pushes while the job works. */
+  beforeExec?: (command: string, args: readonly string[]) => void;
 }
 
 interface Record_ {
@@ -141,11 +143,13 @@ async function work(
   options: RunOptions,
 ): Promise<{ outcome: Outcome; record: Record_; runs: { args: string[]; token: string | null }[] }> {
   const recordFile = join(root, `record-${Math.random()}.json`);
-  const fakeExec: Exec = (command, args, execOptions = {}) =>
-    exec(command, args, {
+  const fakeExec: Exec = (command, args, execOptions = {}) => {
+    options.beforeExec?.(command, args);
+    return exec(command, args, {
       ...execOptions,
       env: { ...(execOptions.env ?? process.env), FAKE_MODE: options.mode, FAKE_RECORD: recordFile },
     });
+  };
   const outcome = await runJob({
     board: worker,
     claim: await claim(),
@@ -281,6 +285,95 @@ describe("branch names", () => {
     await work({ mode: "change" });
     expect(remoteFiles("octo/earlier-name")).toContain("theme.css");
     expect(() => remoteFiles(BRANCH)).toThrow();
+  });
+});
+
+describe("continuing a pull request", () => {
+  const PR_BRANCH = "octo/fix-ci";
+
+  /** An open pull request's branch on the remote: one commit past main, by someone else. */
+  async function pullRequestBranch(): Promise<string> {
+    const seed = join(root, "pr-seed");
+    git(["clone", "--quiet", remote, seed]);
+    git(["switch", "--quiet", "-c", PR_BRANCH], seed);
+    await writeFile(join(seed, "ci.yml"), "on: push\n");
+    git(["add", "-A"], seed);
+    git(["commit", "--quiet", "-m", "Earlier work"], seed);
+    git(["push", "--quiet", "origin", PR_BRANCH], seed);
+    return git(["rev-parse", "HEAD"], seed);
+  }
+  const continuing = (head: string): JobSpec => ({
+    ...spec,
+    title: "Fix CI",
+    continues: { repo: "web", number: 12, branch: PR_BRANCH, head },
+  });
+
+  it("adds its commits on top of the pull request's branch and reports that pull request", async () => {
+    const head = await pullRequestBranch();
+    const job = await postJob(team, continuing(head));
+    const { outcome, record } = await work({ mode: "change" });
+    expect(outcome).toMatchObject({ kind: "completed", result: "PR: https://github.com/acme/web/pull/7" });
+    expect(remoteFiles(PR_BRANCH)).toEqual(expect.arrayContaining(["ci.yml", "theme.css"]));
+    expect(git(["--git-dir", remote, "rev-parse", `${PR_BRANCH}~1`])).toBe(head);
+    expect(record.stdin).toContain("branch of pull request #12");
+    expect(pullRequests).toEqual([expect.objectContaining({ head: PR_BRANCH })]);
+    expect(() => remoteFiles(BRANCH)).toThrow();
+    expect((await rootOf(job.id)).labels[BRANCH_LABEL]).toBe(PR_BRANCH);
+  });
+
+  it("fails, keeping what someone pushed during the job, instead of force-pushing over it", async () => {
+    const head = await pullRequestBranch();
+    await postJob(team, continuing(head));
+    let moved = "";
+    const { outcome } = await work({
+      mode: "change",
+      beforeExec: (command, args) => {
+        if (command !== "git" || args[0] !== "push" || moved) return;
+        const other = join(root, "other");
+        git(["clone", "--quiet", "-b", PR_BRANCH, remote, other]);
+        writeFileSync(join(other, "review.md"), "fix\n");
+        git(["add", "-A"], other);
+        git(["commit", "--quiet", "-m", "Review fix"], other);
+        git(["push", "--quiet", "origin", PR_BRANCH], other);
+        moved = git(["rev-parse", "HEAD"], other);
+      },
+    });
+    expect(outcome).toMatchObject({ kind: "failed" });
+    expect(JSON.stringify(outcome)).toContain("changed on GitHub while the job ran");
+    expect(git(["--git-dir", remote, "rev-parse", PR_BRANCH])).toBe(moved);
+  });
+
+  it("reports no changes, not the pull request, when it added no commits", async () => {
+    await postJob(team, continuing(await pullRequestBranch()));
+    const { outcome } = await work({ mode: "nothing" });
+    expect(outcome).toMatchObject({ kind: "completed", result: "No changes made." });
+    expect(pullRequests).toEqual([]);
+  });
+
+  it("reports the pull request when its branch was rewritten after the job was started", async () => {
+    await pullRequestBranch();
+    // The head the agent saw is gone from the branch, so the clone doesn't have it.
+    await postJob(team, continuing("deadbeefdeadbeef"));
+    const { outcome } = await work({ mode: "change" });
+    expect(outcome).toMatchObject({ kind: "completed", result: "PR: https://github.com/acme/web/pull/7" });
+    expect(remoteFiles(PR_BRANCH)).toEqual(expect.arrayContaining(["ci.yml", "theme.css"]));
+  });
+
+  it("reports no changes when its branch was rewritten and the job added nothing", async () => {
+    await pullRequestBranch();
+    await postJob(team, continuing("deadbeefdeadbeef"));
+    const { outcome } = await work({ mode: "nothing" });
+    expect(outcome).toMatchObject({ kind: "completed", result: "No changes made." });
+  });
+
+  it("fails, rather than starting over from main, when the pull request's branch is gone", async () => {
+    const head = await pullRequestBranch();
+    git(["--git-dir", remote, "branch", "-D", PR_BRANCH]);
+    await postJob(team, continuing(head));
+    const { outcome, record } = await work({ mode: "change" });
+    expect(outcome).toMatchObject({ kind: "failed" });
+    expect(JSON.stringify(outcome)).toContain("no longer on GitHub");
+    expect(record.args).toEqual([]);
   });
 });
 
