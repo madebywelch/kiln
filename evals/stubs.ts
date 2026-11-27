@@ -102,6 +102,7 @@ export type JobInput = {
   model?: string;
   effort?: string;
   files?: string[];
+  pull_request?: number;
 };
 
 export const asJob = (input: unknown) => (input ?? {}) as JobInput;
