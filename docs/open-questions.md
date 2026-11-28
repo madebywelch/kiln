@@ -16,6 +16,12 @@ Cheap fixes, independent of the cause:
 - A shorter `idleTimeoutMs` (eve's default is 5 minutes).
 - Deleting sandboxes idle for a week, so their snapshots don't sit for 30 days.
 
+## Codex jobs and rate limits, and resuming their sessions
+
+Codex runs on the same endpoint as Claude, but only Claude Code's output is read for a rate limit (`harnessRateLimit`), and the wait, the probe, and the hold on new jobs are built for Claude (`waiting for inference` in AGENTS.md). A rate-limited Codex job fails instead; `retry_job` starts it again. Worth building once it happens: whether the endpoint's OpenAI side is limited separately from its Anthropic side decides whether a Codex limit should hold Claude jobs, and the probe would need a Codex model.
+
+Kept work keeps a Codex job's clone and changes, but not its session: `sessionOf` is undefined for Codex, so a resumed job starts over from its brief, thread, and files on disk. `codex exec resume` continues a session by ID, which `codex exec --json` prints when it starts.
+
 ## Gateway left in production
 
 Channel screening and voice-note transcription still call AI Gateway (see [field-notes.md](field-notes.md), eve). Screening could move to the inference endpoint. Transcription needs a model that takes audio, which an Anthropic-compatible endpoint doesn't serve.

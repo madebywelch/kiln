@@ -3,7 +3,7 @@ import { stubs } from "../stubs.ts";
 
 export default defineEval({
   description:
-    "A request for a model on a harness that is off is refused with a Claude model offered, not quietly swapped.",
+    "A request for a model on a harness that is off is refused with a model that runs offered, not quietly swapped.",
   async test(t) {
     const session = await t.session({ stubs });
     const turn = await session.send(
@@ -11,7 +11,7 @@ export default defineEval({
     );
     turn.expectOk();
     turn.notCalledTool("start_job");
-    // "Claude Sonnet" offers it as much as "sonnet" does.
-    turn.messageIncludes(/sonnet/i);
+    // A Claude model or Codex's Sol: either is an honest offer.
+    turn.messageIncludes(/sonnet|opus|claude|gpt-6\.2-sol|\bsol\b|codex/i);
   },
 });

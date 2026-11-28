@@ -4,6 +4,7 @@
 import { readFile } from "node:fs/promises";
 import type { Effort, Harness, Selection } from "../lib/config.ts";
 import type { McpServer } from "../lib/deployment.ts";
+import { type Inference, inferenceHost } from "../lib/inference.ts";
 
 export interface HarnessInvocation {
   readonly command: string;
@@ -24,6 +25,22 @@ export const defaultBins: HarnessBins = { claude: "claude", codex: "codex", open
 
 /** OpenCode reaches AI Gateway models through its `vercel` provider. */
 export const GATEWAY_PROVIDER = "vercel";
+
+/**
+ * Codex's settings for the deployment's inference endpoint: its OpenAI Responses API at the host's /v1,
+ * with the key read from INFERENCE_API_KEY. No ChatGPT login: the machine's own Codex config adds only
+ * MCP servers, and these settings override any provider it names.
+ */
+export function codexEndpointArgs(endpoint: Inference): string[] {
+  const provider = "model_providers.kiln";
+  return [
+    ["model_provider", "kiln"],
+    [`${provider}.name`, "kiln inference endpoint"],
+    [`${provider}.base_url`, `${inferenceHost(endpoint.baseURL)}/v1`],
+    [`${provider}.env_key`, "INFERENCE_API_KEY"],
+    [`${provider}.wire_api`, "responses"],
+  ].flatMap(([key, value]) => ["-c", `${key}=${toml(value)}`]);
+}
 
 /** Codex's and OpenCode's reasoning efforts stop at xhigh. */
 export function topEffort(effort: Effort): string {
@@ -97,6 +114,8 @@ export function harnessInvocation(
   bins: HarnessBins = defaultBins,
   /** A session to continue, from an earlier run on this machine: Claude Code only. */
   resume?: string,
+  /** The deployment's inference endpoint, which Codex runs on. Claude Code gets it through its environment. */
+  endpoint?: Inference,
 ): HarnessInvocation {
   const servers = Object.entries(mcp);
   switch (selection.harness) {
@@ -137,7 +156,10 @@ export function harnessInvocation(
       };
     }
     case "codex": {
+      if (!endpoint)
+        throw new Error("codex runs on the deployment's inference endpoint, which this worker lacks");
       const args = ["exec", "--dangerously-bypass-approvals-and-sandbox", "-C", cwd, "-o", reportFile];
+      args.push(...codexEndpointArgs(endpoint));
       args.push("-c", `model_reasoning_effort="${topEffort(selection.effort)}"`);
       if (selection.model) args.push("-m", selection.model);
       for (const [name, server] of servers) {
@@ -160,7 +182,7 @@ export function harnessInvocation(
         command: bins.codex,
         args,
         stdin: prompt,
-        env: {},
+        env: { INFERENCE_API_KEY: endpoint.apiKey },
         readReport: async () => (await readFile(reportFile, "utf8")).trim(),
         sessionOf: () => undefined,
       };

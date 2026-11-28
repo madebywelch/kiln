@@ -2,7 +2,7 @@
 
 Every job runs on its own boat.dev machine. The agent launches the machine when it starts the job and deletes it once the job settles, unless the job's work is kept: then it stops the machine and resumes it when the job is ready again (see "Kept work"). A stopped machine costs nothing. With no jobs running, nothing is billed.
 
-Workers run Claude Code on the deployment's inference endpoint (`INFERENCE_BASE_URL` and `INFERENCE_API_KEY`). `enabledHarnesses` in `lib/config.ts` lists the coding CLIs they may use; out of the box that is Claude Code. OpenCode, for AI Gateway models, is built in and switched off, and Codex waits on lending its login to per-job machines. A job for a harness that is off fails at once with that reason.
+Workers run Claude Code or Codex on the deployment's inference endpoint (`INFERENCE_BASE_URL` and `INFERENCE_API_KEY`). `enabledHarnesses` in `lib/config.ts` lists the coding CLIs they may use: Claude Code and Codex. OpenCode, for AI Gateway models, is built in and switched off. A job for a harness that is off fails at once with that reason.
 
 ## A machine's life
 
@@ -123,7 +123,9 @@ The worker blocks the job with kind `needs_secret` and labels it `needs_secrets=
 
 ## Codex
 
-Codex signs in with a ChatGPT login whose refresh token changes each time it is used. A copy handed to a short-lived machine goes stale after the first job, so per-job machines can't run Codex, and Codex jobs fail with that reason. Running it would take a long-lived machine of its own.
+Codex runs on the inference endpoint's OpenAI Responses API, at the same host's `/v1`, with the endpoint's key: no ChatGPT login, whose refresh token would go stale after one short-lived machine. The worker passes the provider on the command line (`codexEndpointArgs` in `worker/harness.ts`), over the Codex config boat writes on each machine, and gives the CLI the key as `INFERENCE_API_KEY`. Its default model is `gpt-6.2-sol`, at high effort for change jobs and medium for investigations unless the request or the repo names an effort (`harnessEfforts` in `lib/config.ts`). Up to 2 Codex jobs run at once.
+
+Two things Claude jobs have that Codex jobs don't yet (see [open-questions.md](open-questions.md)): a rate-limited Codex job fails rather than waiting for inference, and paused or failed Codex work restarts from its brief rather than continuing its session.
 
 ## GitHub credentials
 

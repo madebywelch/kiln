@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type Board, BoardError, board, type ClaimedTask } from "@vercel/board";
 import { z } from "zod";
-import { HARNESSES } from "../lib/config.ts";
+import { endpointHarnesses, HARNESSES } from "../lib/config.ts";
 import { McpServerSchema } from "../lib/deployment.ts";
 import { WORKER_SETTINGS_PATH } from "../lib/machines.ts";
 import { JOB_SECRETS } from "../lib/secrets.ts";
@@ -50,7 +50,7 @@ const Config = z
         ctx.addIssue({ code: "custom", message: "not {key, repos: [{key, github, baseBranch}]}" });
         return z.NEVER;
       }),
-    /** The deployment's inference endpoint, which a Claude job runs on. */
+    /** The deployment's inference endpoint, which Claude and Codex jobs run on. */
     INFERENCE_BASE_URL: z.string().optional(),
     INFERENCE_API_KEY: z.string().optional(),
     /** The repo's MCP servers, as JSON from the agent. */
@@ -98,11 +98,13 @@ const Config = z
     AI_GATEWAY_API_KEY: z.string().optional(),
   })
   .refine(
-    (config) => config.WORKER_HARNESS !== "claude" || (config.INFERENCE_BASE_URL && config.INFERENCE_API_KEY),
+    (config) =>
+      !endpointHarnesses.includes(config.WORKER_HARNESS) ||
+      (config.INFERENCE_BASE_URL && config.INFERENCE_API_KEY),
     {
       path: ["INFERENCE_BASE_URL"],
       message:
-        "a claude worker needs INFERENCE_BASE_URL and INFERENCE_API_KEY: the deployment's inference endpoint",
+        "this worker needs INFERENCE_BASE_URL and INFERENCE_API_KEY: the deployment's inference endpoint",
     },
   )
   .refine((config) => config.WORKER_HARNESS !== "opencode" || config.AI_GATEWAY_API_KEY, {
@@ -312,13 +314,6 @@ async function main(): Promise<void> {
     group: config.KILN_SECRETS.group,
     names: Object.keys(config.KILN_SECRETS.secrets),
   });
-  if (config.WORKER_HARNESS === "codex" && !existsSync(join(homedir(), ".codex", "auth.json"))) {
-    log("config.invalid", {
-      field: "codex login",
-      error: "log in once on this machine: codex login --device-auth",
-    });
-    process.exit(2);
-  }
   // git over https authenticates through gh, which reads GH_TOKEN.
   await run(exec, "gh", ["auth", "setup-git"]);
   const skills = await installSkills(

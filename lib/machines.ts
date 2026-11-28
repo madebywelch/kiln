@@ -8,7 +8,14 @@
 
 import type { Board, MessageView } from "@vercel/board";
 import { type Boat, BoatError, type Machine, STOPPED, variableNames } from "./boat.ts";
-import { enabledHarnesses, type Harness, keptMachineDays, machineLimits, machineType } from "./config.ts";
+import {
+  enabledHarnesses,
+  endpointHarnesses,
+  type Harness,
+  keptMachineDays,
+  machineLimits,
+  machineType,
+} from "./config.ts";
 import {
   DEFAULT_AGENT_NAME,
   type Deployment,
@@ -135,20 +142,18 @@ export function launchConfig(env: Readonly<Record<string, string | undefined>>):
 /** Why a harness can't run jobs at all, or null when it can. */
 export function harnessIssue(harness: Harness, config: LaunchConfig): string | null {
   if (!config.enabled.includes(harness)) {
-    return `${harness} is off: workers run Claude Code only (enabledHarnesses in lib/config.ts)`;
+    return `${harness} is off: workers run ${config.enabled.join(", ")} only (enabledHarnesses in lib/config.ts)`;
   }
-  if (harness === "claude") {
+  if (endpointHarnesses.includes(harness)) {
     if (!config.inference) {
-      return "claude jobs need INFERENCE_BASE_URL and INFERENCE_API_KEY on the agent's Vercel project";
+      return `${harness} jobs need INFERENCE_BASE_URL and INFERENCE_API_KEY on the agent's Vercel project`;
     }
-    return (machineLimits.claude ?? 0) < 1
-      ? "claude jobs are switched off in lib/config.ts (machineLimits)"
+    return (machineLimits[harness] ?? 0) < 1
+      ? `${harness} jobs are switched off in lib/config.ts (machineLimits)`
       : null;
   }
   const credential = KEY_CREDENTIAL[harness];
-  // Codex signs in with a ChatGPT login whose refresh token rotates on use; a copy handed to
-  // short-lived machines goes stale after the first one.
-  if (!credential) return `kiln can't run ${harness} jobs on per-job machines yet; use claude or opencode`;
+  if (!credential) return `kiln can't run ${harness} jobs on per-job machines yet`;
   if (!config.settings[credential])
     return `${harness} jobs need ${ENV_PREFIX}${credential} on the agent's Vercel project`;
   if ((machineLimits[harness] ?? 0) < 1)
@@ -195,8 +200,8 @@ async function jobSecrets(deps: MachineDeps, spec: JobSpec): Promise<JobSecretsS
 }
 
 /**
- * The worker's settings for one job: the shared ones, its harness's credential, and the job. A Claude
- * job gets the inference endpoint.
+ * The worker's settings for one job: the shared ones, its harness's credential, and the job. A job on a
+ * harness that runs on the inference endpoint (endpointHarnesses) gets the endpoint.
  */
 export function workerSettings(
   jobId: string,
@@ -223,7 +228,7 @@ export function workerSettings(
   );
   return {
     ...shared,
-    ...(harness === "claude" && config.inference
+    ...(endpointHarnesses.includes(harness) && config.inference
       ? { INFERENCE_BASE_URL: config.inference.baseURL, INFERENCE_API_KEY: config.inference.apiKey }
       : {}),
     ...(repo && project

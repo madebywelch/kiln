@@ -10,6 +10,7 @@ import {
   enabledHarnesses,
   HARNESSES,
   type Harness,
+  harnessEfforts,
   type JobKind,
   KINDS,
   type Selection,
@@ -234,7 +235,12 @@ export function resolveSelection(
   }
   const repoDefaults = repo.defaults?.[kind] ?? {};
   const global = defaultSelection[kind];
-  const effort = request.effort ?? repoDefaults.effort ?? global.effort;
+  // Asked for, then the repo's, then the harness's own for this kind, then the global default.
+  const effortFor = (harness: Harness) =>
+    request.effort ??
+    repoDefaults.effort ??
+    (harness === global.harness ? undefined : harnessEfforts[harness]?.[kind]) ??
+    global.effort;
   // The model a harness gets by default here: the repo's, then the global one for this kind, then the harness's own.
   const defaultModelFor = (harness: Harness) =>
     repoDefaults.harness === harness && repoDefaults.model !== undefined
@@ -253,13 +259,13 @@ export function resolveSelection(
     if (!harness) {
       throw new JobError(`can't tell which harness runs model "${request.model}"; name the harness too`);
     }
-    selection = { harness, model: request.model, effort };
+    selection = { harness, model: request.model, effort: effortFor(harness) };
   } else {
     const harness = request.harness ?? repoDefaults.harness ?? global.harness;
     selection = {
       harness,
       model: request.harness ? defaultModelFor(harness) : (repoDefaults.model ?? defaultModelFor(harness)),
-      effort,
+      effort: effortFor(harness),
     };
   }
   if (!enabled.includes(selection.harness)) {

@@ -256,8 +256,8 @@ describe("workerSettings", () => {
   });
 
   it("says why a harness can't run", () => {
-    expect(harnessIssue("opencode", config)).toMatch(/opencode is off: workers run Claude Code only/);
-    expect(harnessIssue("codex", everyHarness)).toMatch(/can't run codex jobs/);
+    expect(harnessIssue("opencode", config)).toMatch(/opencode is off: workers run claude, codex only/);
+    expect(harnessIssue("codex", config)).toBeNull();
     const noGateway = {
       ...(launchConfig({ ...env, WORKER_AI_GATEWAY_API_KEY: "" }) as LaunchConfig),
       enabled: everyHarness.enabled,
@@ -270,6 +270,18 @@ describe("workerSettings", () => {
       INFERENCE_API_KEY: "",
     }) as LaunchConfig;
     expect(harnessIssue("claude", noEndpoint)).toMatch(/INFERENCE_BASE_URL and INFERENCE_API_KEY/);
+    expect(harnessIssue("codex", noEndpoint)).toMatch(
+      /codex jobs need INFERENCE_BASE_URL and INFERENCE_API_KEY/,
+    );
+  });
+
+  it("gives Codex jobs the inference endpoint, as it gives Claude jobs", () => {
+    const settings = workerSettings("msg_1", "codex", config, "web");
+    expect(settings.INFERENCE_BASE_URL).toBe(
+      workerSettings("msg_1", "claude", config, "web").INFERENCE_BASE_URL,
+    );
+    expect(settings.INFERENCE_API_KEY).toBeTruthy();
+    expect(workerSettings("msg_1", "opencode", everyHarness, "web").INFERENCE_API_KEY).toBeUndefined();
   });
 });
 
@@ -339,9 +351,10 @@ describe("launchMachine", () => {
   });
 
   it("fails a job whose harness can't run, so the thread hears why", async () => {
-    const job = await postJob(team, { ...spec, harness: "codex", model: undefined });
-    const { failed } = await launchMachine(deps, job.message);
-    expect(failed).toMatch(/codex/);
+    const job = await postJob(team, { ...spec, harness: "opencode", model: "openai/gpt-6-luna-fast" });
+    // As shipped, opencode is off.
+    const { failed } = await launchMachine({ ...deps, config }, job.message);
+    expect(failed).toMatch(/opencode is off/);
     const settled = await message(job.id);
     expect(settled.task?.state).toBe("failed");
     expect(settled.labels[REPORT_LABEL]).toBe(REPORT_PENDING);

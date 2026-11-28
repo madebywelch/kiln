@@ -3,10 +3,12 @@ import { z } from "zod";
 import { postJob } from "../../lib/board-jobs.ts";
 import {
   agentGitHubToken,
+  defaultModels,
   defaultSelection,
   EFFORTS,
   enabledHarnesses,
   type Harness,
+  harnessEfforts,
 } from "../../lib/config.ts";
 import { configuredProjects } from "../../lib/deployment.ts";
 import { drivePath } from "../../lib/drive.ts";
@@ -49,7 +51,7 @@ export default defineDynamic(() => {
   });
   const HARNESS_LINES: Readonly<Record<Harness, string>> = {
     claude: "claude (Claude Code: opus, sonnet, haiku)",
-    codex: "codex (Codex: gpt-5.5 and other OpenAI names)",
+    codex: `codex (Codex: OpenAI models such as ${defaultModels.codex}, its default; ${harnessEfforts.codex?.change} effort for change jobs and ${harnessEfforts.codex?.investigate} for investigations unless the user says otherwise)`,
     opencode: "opencode (any AI Gateway model ID, billed per token)",
   };
   const harnessLines = enabledHarnesses.map((harness) => HARNESS_LINES[harness]);
@@ -68,8 +70,8 @@ export default defineDynamic(() => {
       ...repoLines,
       "",
       `Workers run ${harnessLines.join("; ")}, on the deployment's inference endpoint.`,
-      "Models billed per token (AI Gateway IDs such as deepseek/..., or another vendor's models) are off. If someone",
-      "asks for one, say so and offer a Claude model instead; don't start the job on something else.",
+      "Models billed per token (AI Gateway IDs such as deepseek/..., and vendors other than Anthropic and OpenAI) are",
+      "off. If someone asks for one, say so and offer a Claude or OpenAI model instead; don't start the job on something else.",
       "",
       `Unless the user names them: change jobs run on ${describeSelection(defaultSelection.change)} (the implementer), investigate jobs on ${describeSelection(defaultSelection.investigate)} (the researcher, fast).`,
       'Pass harness, model, or effort only when the user asked for them ("opus at max effort", "sonnet, low effort").',
@@ -92,7 +94,7 @@ export default defineDynamic(() => {
       model: z
         .string()
         .optional()
-        .describe("The harness CLI's model name or alias, e.g. opus, sonnet, gpt-5.5."),
+        .describe("The harness CLI's model name or alias, e.g. opus, sonnet, gpt-6.2-sol."),
       effort: z.enum(EFFORTS).optional(),
       files: z
         .array(z.string())

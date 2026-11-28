@@ -4,7 +4,7 @@
 import { access, appendFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, sep } from "node:path";
 import type { Attachment, Board, ClaimedTask } from "@vercel/board";
-import { keptMachineDays } from "../lib/config.ts";
+import { endpointHarnesses, keptMachineDays } from "../lib/config.ts";
 import { agentName, type McpServer, type RepoConfig } from "../lib/deployment.ts";
 import { type Inference, inferenceHost, rateLimitOf } from "../lib/inference.ts";
 import {
@@ -107,7 +107,7 @@ export interface JobDeps {
   readonly secrets?: JobSecretsSettings;
   /** Where the coding CLI keeps its own logs and sessions, masked after each run along with the job's logs. */
   readonly sessionLogs?: readonly string[];
-  /** The deployment's inference endpoint (INFERENCE_*), which a Claude job runs on. */
+  /** The deployment's inference endpoint (INFERENCE_*), which Claude and Codex jobs run on. */
   readonly inference?: Inference;
 }
 
@@ -494,16 +494,15 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string, progress:
           ANTHROPIC_API_KEY: deps.inference.apiKey,
         }
       : {};
-  const invocation = harnessInvocation(spec, prompt, jobDir, reportFile, mcp, deps.bins, session);
+  const onEndpoint = endpointHarnesses.includes(spec.harness) ? deps.inference : undefined;
+  const invocation = harnessInvocation(spec, prompt, jobDir, reportFile, mcp, deps.bins, session, onEndpoint);
   deps.log("job.harness", {
     task: id,
     harness: spec.harness,
     model: spec.model ?? "default",
     effort: spec.effort,
     ...(session ? { continuing: session } : {}),
-    ...(spec.harness === "claude" && deps.inference
-      ? { endpoint: new URL(deps.inference.baseURL).host }
-      : {}),
+    ...(onEndpoint ? { endpoint: new URL(onEndpoint.baseURL).host } : {}),
   });
   const started = Date.now();
   const result = await exec(invocation.command, invocation.args, {
@@ -518,7 +517,8 @@ async function execute(deps: JobDeps, jobDir: string, logFile: string, progress:
   progress.harnessMs = Date.now() - started;
   progress.session = invocation.sessionOf(result.stdout) ?? session;
   if (signal.aborted) throw new Error(String(signal.reason));
-  // The endpoint is rate limited: the job waits for it on this machine rather than failing.
+  // The endpoint is rate limited: the job waits for it on this machine rather than failing. Claude Code
+  // only: a rate-limited Codex job fails, and retry_job starts it again (docs/open-questions.md).
   const limited = spec.harness === "claude" ? harnessRateLimit(result.stdout) : null;
   if (limited) {
     deps.log("job.rate_limited", {

@@ -43,14 +43,16 @@ describe("parseConfig", () => {
     expect(parseConfig({ ...base, BOARD_PROFILE: `c${"x".repeat(32)}` }).success).toBe(false);
   });
 
-  it("starts a claude worker only with the whole inference endpoint", () => {
+  it("starts a claude or codex worker only with the whole inference endpoint", () => {
     const { INFERENCE_BASE_URL: _url, INFERENCE_API_KEY: _key, ...noEndpoint } = base;
     expect(parseConfig(base).success).toBe(true);
     const parsed = parseConfig({ ...noEndpoint, INFERENCE_BASE_URL: "https://llm.example.com" });
     expect(parsed.error?.issues.map((issue) => issue.path.join("."))).toEqual(["INFERENCE_BASE_URL"]);
-    expect(parseConfig({ ...noEndpoint, BOARD_PROFILE: "codex-1", WORKER_HARNESS: "codex" }).success).toBe(
-      true,
-    );
+    const codex = { BOARD_PROFILE: "codex-1", WORKER_HARNESS: "codex" };
+    expect(
+      parseConfig({ ...noEndpoint, ...codex }).error?.issues.map((issue) => issue.path.join(".")),
+    ).toEqual(["INFERENCE_BASE_URL"]);
+    expect(parseConfig({ ...base, ...codex }).success).toBe(true);
   });
 
   it("refuses a harness the worker cannot run", () => {

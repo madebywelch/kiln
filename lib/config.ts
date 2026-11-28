@@ -3,9 +3,15 @@
 // MCP servers, are its own business: they live in kiln.config.yaml (see
 // lib/deployment.ts), never here.
 
-/** claude runs on the deployment's inference endpoint; codex needs a ChatGPT login; opencode runs AI Gateway models. */
+/** claude and codex run on the deployment's inference endpoint; opencode runs AI Gateway models. */
 export const HARNESSES = ["claude", "codex", "opencode"] as const;
 export type Harness = (typeof HARNESSES)[number];
+
+/**
+ * The harnesses that run on the deployment's inference endpoint (INFERENCE_*): Claude Code through its
+ * Anthropic API, Codex through its OpenAI Responses API at the same host's /v1.
+ */
+export const endpointHarnesses: readonly Harness[] = ["claude", "codex"];
 
 // The union of effort levels the harnesses accept. Codex and OpenCode have no
 // `max`; their adapters send `xhigh` instead (see worker/harness.ts).
@@ -19,7 +25,7 @@ export type JobKind = (typeof KINDS)[number];
 export interface Selection {
   readonly harness: Harness;
   /**
-   * The harness's model name. Claude and Codex take their CLI's names or aliases (opus, gpt-5.5);
+   * The harness's model name. Claude and Codex take their CLI's names or aliases (opus, gpt-6.2-sol);
    * OpenCode takes an AI Gateway model ID (openai/gpt-6-luna-fast). Undefined: the CLI's default.
    */
   readonly model: string | undefined;
@@ -27,11 +33,11 @@ export interface Selection {
 }
 
 /**
- * The harnesses workers may run: Claude Code, on the deployment's inference endpoint (INFERENCE_*).
- * opencode runs AI Gateway models on WORKER_AI_GATEWAY_API_KEY, so it is off; add it here to allow that.
- * Codex joins once its login can be lent to per-job machines.
+ * The harnesses workers may run: Claude Code and Codex, both on the deployment's inference endpoint
+ * (INFERENCE_*). opencode runs AI Gateway models on WORKER_AI_GATEWAY_API_KEY, so it is off; add it
+ * here to allow that.
  */
-export const enabledHarnesses: readonly Harness[] = ["claude"];
+export const enabledHarnesses: readonly Harness[] = ["claude", "codex"];
 
 /** The default when neither the request nor the repo says otherwise: a fast model researches, a heavy one implements. */
 export const defaultSelection: Readonly<Record<JobKind, Selection>> = {
@@ -42,12 +48,20 @@ export const defaultSelection: Readonly<Record<JobKind, Selection>> = {
 /** The model a harness runs when only the harness is named. Undefined: the CLI's configured default. */
 export const defaultModels: Readonly<Record<Harness, string | undefined>> = {
   claude: "opus",
-  codex: undefined,
+  codex: "gpt-6.2-sol",
   opencode: "openai/gpt-6-luna-fast",
 };
 
+/**
+ * A harness's own effort by kind of job, for when it isn't the global default's harness and neither the
+ * request nor the repo names an effort: Codex implements at high and researches at medium.
+ */
+export const harnessEfforts: Readonly<Partial<Record<Harness, Readonly<Record<JobKind, Effort>>>>> = {
+  codex: { change: "high", investigate: "medium" },
+};
+
 /** Jobs that may run at once on each harness, each on its own boat machine. */
-export const machineLimits: Readonly<Partial<Record<Harness, number>>> = { opencode: 3, claude: 4 };
+export const machineLimits: Readonly<Partial<Record<Harness, number>>> = { opencode: 3, claude: 4, codex: 2 };
 
 /** Days a failed job's stopped machine is kept, with its work, for retry_job to continue from. */
 export const keptMachineDays = 3;

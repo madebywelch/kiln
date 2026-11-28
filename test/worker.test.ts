@@ -638,10 +638,23 @@ describe("investigate jobs on codex", () => {
       model: undefined,
       effort: "max",
     });
-    const { outcome, record } = await work({ mode: "change" });
+    const { outcome, record } = await work({
+      mode: "change",
+      inference: { baseURL: "https://llm.example.com/v1/", apiKey: "sk-endpoint" },
+    });
     expect(outcome).toMatchObject({ kind: "completed", result: "Added snow to the landing page." });
     expect(record.args[0]).toBe("exec");
     expect(record.args).toEqual(expect.arrayContaining(["-c", 'model_reasoning_effort="xhigh"', "-"]));
+    // On the endpoint's OpenAI Responses API, with its key and no ChatGPT login.
+    expect(record.args).toEqual(
+      expect.arrayContaining([
+        'model_provider="kiln"',
+        'model_providers.kiln.base_url="https://llm.example.com/v1"',
+        'model_providers.kiln.env_key="INFERENCE_API_KEY"',
+        'model_providers.kiln.wire_api="responses"',
+      ]),
+    );
+    expect(record.env).toMatchObject({ INFERENCE_API_KEY: "sk-endpoint", ANTHROPIC_API_KEY: null });
     expect(record.args).not.toContain("-m");
     expect(record.stdin).toContain("Do not commit, push, or open pull requests.");
     expect(pullRequests).toEqual([]);
@@ -979,7 +992,17 @@ describe("harness adapters", () => {
         local: { type: "stdio", command: "npx", args: ["-y", "srv"], env: { TOKEN: "k1" } },
       },
     });
-    const codex = harnessInvocation({ ...selection, harness: "codex" }, "p", "/w", "/r", mcp);
+    const endpoint = { baseURL: "https://llm.example.com", apiKey: "sk-endpoint" };
+    const codex = harnessInvocation(
+      { ...selection, harness: "codex" },
+      "p",
+      "/w",
+      "/r",
+      mcp,
+      undefined,
+      undefined,
+      endpoint,
+    );
     expect(codex.args).toEqual(
       expect.arrayContaining([
         'mcp_servers.docs.url="https://docs.example/mcp"',
@@ -990,6 +1013,12 @@ describe("harness adapters", () => {
       ]),
     );
     expect(() => resolveMcp({}, ["ghost"], {})).toThrow(/not defined/);
+  });
+
+  it("refuses to run Codex without the inference endpoint, rather than fall back to a login", () => {
+    expect(() =>
+      harnessInvocation({ harness: "codex", model: "gpt-6.2-sol", effort: "high" }, "p", "/w", "/r"),
+    ).toThrow(/inference endpoint/);
   });
 
   it("turns off Claude Code's co-author trailer and PR attribution on every run", () => {

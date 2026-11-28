@@ -20,7 +20,7 @@ Choices that shaped kiln and why. The code shows what kiln does; this records th
 - Model access is vendor-agnostic. No vendor SDKs or vendor-only request fields in kiln's core.
 - The agent runs on the deployment's inference endpoint (`INFERENCE_BASE_URL`, `INFERENCE_API_KEY`). Evals run there too, never on AI Gateway: `pnpm eval` blocks Gateway outright.
 - The agent's model and reasoning are the operator's choice. Don't change `KILN_MODEL` or `KILN_REASONING`, or add production overrides for them, to save cost; raise the cost instead.
-- Workers run Claude Code on the inference endpoint, never AI Gateway.
+- Workers run Claude Code or Codex on the inference endpoint, never AI Gateway. Codex uses the endpoint's OpenAI Responses API and key, never a ChatGPT login: a login's refresh token rotates on use, so a copy on short-lived machines goes stale.
 - A job's harness and model never change during its life. When the endpoint runs out, the job waits (`waiting for inference`); kiln never downgrades it to a cheaper model.
 
 ## Workers

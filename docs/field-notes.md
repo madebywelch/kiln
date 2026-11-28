@@ -23,6 +23,12 @@ Facts about the services kiln runs on, found against the real thing rather than 
 
 - It writes its session `.jsonl` even when the first model call fails, so `--resume` has a session after a 429 on the first request.
 
+## Codex
+
+- boat's machines ship Codex (0.172 on 2026-11-27) with a `~/.codex/config.toml` that boat manages, holding only its computer-use MCP server: no model provider, no login. kiln's `-c` overrides sit on top of it.
+- `-c model_provider="kiln"` with `model_providers.kiln.{base_url, env_key, wire_api="responses"}` runs `codex exec` on any OpenAI Responses endpoint with an API key, no `auth.json` needed. Checked against the deployment's endpoint with `gpt-6.2-sol`: `codex exec` printed `provider: kiln` and `model: gpt-6.2-sol` and answered.
+- An endpoint that is Anthropic-compatible for Claude can serve OpenAI models through the same Messages API too, translating them. Claude Code could drive a GPT model that way, but Codex is the CLI GPT models are tuned for, so kiln uses the endpoint's Responses API for them.
+
 ## Vercel
 
 - Sensitive environment variables can't be pulled: `vercel env pull` gives a placeholder. Local runs that need one (the inference endpoint, for evals) take it in `.env.local` by hand.

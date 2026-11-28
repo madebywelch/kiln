@@ -80,12 +80,15 @@ describe("resolveSelection", () => {
     });
   });
 
-  it("runs workers on Claude Code only by default, refusing other harnesses' models with the reason", () => {
+  it("runs workers on Claude Code and Codex by default, refusing other harnesses' models with the reason", () => {
     expect(() =>
       resolveSelection("web", "investigate", { model: "deepseek/deepseek-v4.1-flash" }, registry),
-    ).toThrow(/opencode \(deepseek\/deepseek-v4.1-flash\) is off: workers run claude only/);
-    expect(() => resolveSelection("web", "change", { harness: "codex" }, registry)).toThrow(/codex is off/);
-    expect(() => resolveSelection("api", "change", {}, registry)).toThrow(/codex .* is off/);
+    ).toThrow(/opencode \(deepseek\/deepseek-v4.1-flash\) is off: workers run claude, codex only/);
+    expect(() => resolveSelection("web", "change", { harness: "opencode" }, registry)).toThrow(
+      /opencode .* is off/,
+    );
+    expect(resolveSelection("web", "change", { harness: "codex" }, registry).harness).toBe("codex");
+    expect(resolveSelection("api", "change", {}, registry).harness).toBe("codex");
     expect(resolveSelection("web", "investigate", {}, registry)).toEqual({
       harness: "claude",
       model: "sonnet",
@@ -157,7 +160,7 @@ describe("resolveSelection", () => {
   it("gives a named harness its own default model", () => {
     expect(resolveSelection("web", "change", { harness: "codex" }, registry, HARNESSES)).toEqual({
       harness: "codex",
-      model: undefined,
+      model: "gpt-6.2-sol",
       effort: "high",
     });
     expect(resolveSelection("web", "change", { harness: "opencode" }, registry, HARNESSES).model).toBe(
@@ -170,6 +173,30 @@ describe("resolveSelection", () => {
     expect(resolveSelection("api", "change", { harness: "codex" }, registry, HARNESSES).model).toBe(
       "gpt-5.5",
     );
+  });
+});
+
+describe("Codex's own efforts", () => {
+  it("implement at high and research at medium, unless the request or the repo names an effort", () => {
+    const sol = { harness: "codex", model: "gpt-6.2-sol" };
+    expect(resolveSelection("web", "change", { harness: "codex" }, registry)).toEqual({
+      ...sol,
+      effort: "high",
+    });
+    expect(resolveSelection("web", "investigate", { harness: "codex" }, registry)).toEqual({
+      ...sol,
+      effort: "medium",
+    });
+    expect(resolveSelection("web", "investigate", { model: "gpt-6.2-sol" }, registry).effort).toBe("medium");
+    expect(
+      resolveSelection("web", "investigate", { harness: "codex", effort: "xhigh" }, registry).effort,
+    ).toBe("xhigh");
+    // The repo's own effort wins over the harness's.
+    expect(resolveSelection("api", "change", {}, registry).effort).toBe("xhigh");
+  });
+
+  it("leave Claude's defaults alone", () => {
+    expect(resolveSelection("web", "investigate", { harness: "claude" }, registry).effort).toBe("high");
   });
 });
 
